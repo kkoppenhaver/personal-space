@@ -1,0 +1,9 @@
+.debug*
+node_modules/
+dist/
+.DS_Store
+.env
+.env.local
+.wrangler/
+worker/.dev.vars
+*.log

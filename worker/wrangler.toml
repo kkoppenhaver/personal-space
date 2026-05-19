@@ -1,0 +1,15 @@
+name = "paper-airplane-llm"
+main = "src/index.js"
+compatibility_date = "2026-05-01"
+
+# Allowed origins for CORS — add your deployed game URL(s) here.
+[vars]
+ALLOWED_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
+
+# Workers KV namespace for the LLM response cache.
+[[kv_namespaces]]
+binding = "LLM_CACHE"
+id = "6b065833231e41809f62ed443335e9d6"
+
+# Secrets (set via `wrangler secret put`):
+#   ANTHROPIC_API_KEY
