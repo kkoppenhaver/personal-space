@@ -71,6 +71,12 @@ export const TUNING = {
   // reduce overshoot and the post-input wobble.
   // (PITCH_RATE/BANK_RATE below override the older values.)
 
+  // LLM approach commitment thresholds. Tier 2 ("approach") fires for a
+  // planet when EITHER the plane is in its atmosphere OR it is roughly
+  // aimed at the planet from close enough to count as committed.
+  APPROACH_DOT: 0.85,         // dot(fwd, toPlanetUnit) ≥ this
+  APPROACH_DISTANCE: 1500,    // metres beyond planet.radius
+
   // World
   PLANET_RADIUS: 100,
   PLANET_SEED: 1337,

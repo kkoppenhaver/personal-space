@@ -1,6 +1,6 @@
-# paper-airplane LLM Worker
+# Personal Space LLM Worker
 
-Cloudflare Worker that proxies LLM calls for the paper-airplane game. Holds the Anthropic API key, enforces JSON schemas via tool-use, and caches responses in Workers KV so revisits to a planet return identical names/lore.
+Cloudflare Worker that proxies LLM calls for Personal Space. Holds the Anthropic API key, enforces JSON schemas via tool-use, and caches responses in Workers KV so revisits to a planet return identical names/lore.
 
 ## Setup
 
@@ -18,14 +18,9 @@ wrangler secret put ANTHROPIC_API_KEY
 wrangler deploy
 ```
 
-After `wrangler deploy` you'll see a URL like `https://paper-airplane-llm.<your-account>.workers.dev`. Copy it.
+Production deploys hit `https://api.personalspace.fun` via the custom-domain route in `wrangler.toml`. Workers Builds (Cloudflare's GitHub integration) handles `git push` deploys.
 
-After deploy, copy the worker URL (e.g. `https://paper-airplane-llm.your-account.workers.dev`) and either:
-
-- Append `?worker=https://...` to the game URL, or
-- `localStorage.setItem('paper-airplane:worker', 'https://...')` in the dev console.
-
-The game runs fine without a worker — it falls back to deterministic placeholder content.
+The game runs fine without a worker — it falls back to deterministic placeholder content. In dev you can override the production URL with `?worker=http://localhost:8787` or `localStorage.setItem('paper-airplane:worker', 'https://...')`.
 
 ## Endpoints
 

@@ -1,4 +1,4 @@
-# Paper Airplane — Running Plan
+# Personal Space — Running Plan
 
 A single-player browser game: pilot a paper airplane through an LLM-coauthored procedurally generated universe. Tiny planets (Le Petit Prince scale), LLM names places, you keep a logbook of where you've been.
 
@@ -56,7 +56,7 @@ Goal: deliver the "infinite universe" promise from the original brainstorm. Mult
 | # | Task | File(s) | Done? |
 |---|------|---------|-------|
 | 13 | SolarSystem class | `src/world/SolarSystem.js`, refactor `main.js` | ☑ |
-| 14 | Multi-planet PlanetNav + Tier 1 ping HUD strip | `src/ui/PlanetNav.js`, `src/ui/HUD.js`, `main.js` | ☐ (PlanetNav already iterates all planets — needs per-planet pings + color/gating) |
+| 14 | Multi-planet PlanetNav + Tier 1 ping HUD strip | `src/ui/PlanetNav.js`, `src/ui/HUD.js`, `main.js` | ☑ |
 | 15 | Origin.js — floating-origin rebasing | `src/world/Origin.js` (new) | ☐ |
 | 16 | Galaxy.js — system streaming | `src/world/Galaxy.js` (new) | ☐ |
 | 17 | Logbook revisit-by-coordinates | `src/ui/Logbook.js`, `main.js` | ☐ |
@@ -64,6 +64,10 @@ Goal: deliver the "infinite universe" promise from the original brainstorm. Mult
 **Task 13 notes (done):** `SolarSystem` builds a seeded sun + 3–6 planets at log-spaced orbits (200m–5km) with small inclination jitter. Each planet owns its own `Atmosphere` and `LandingZone`. `activePlanetFor(pos)` resolves the "current" planet (atmosphere-containing → else closest). Collision events look up the planet via a `colliderHandle → planet` Map. Crashes, recovery, landing-zone claims, and atmosphere-crossing toasts all dispatch off the active planet, and switching between atmospheres emits exit-then-enter toasts cleanly. `system.defaultSpawn()` puts the plane outside planet[0]'s atmosphere on the deep-space side, aimed tangentially.
 
 **Bonus (done):** Held throttle on **SPACE** (`TUNING.THROTTLE_BOOST = 17`, ramp halflife 0.35s, capped at `MAX_SPEED=45`). Replaces the old tap-flick boost — `flickEdge` is still drained but only consumed by `Plane.beginLaunch` for takeoff from the ground.
+
+**Bonus (done):** Basic pause menu (ESC). `GameLoop.setPaused(bool)` skips `onFixedStep` and zeroes the accumulator so resume doesn't fire a catch-up burst. Independent `window.keydown` listener so it works while the sim is frozen; `input.drain()` on resume prevents stale edges. DOM overlay with title, resume button, and controls summary.
+
+**Task 14 notes (done):** Tier 1 pings fan out to every planet at boot; each result becomes a chip in the `#pings` strip labeled with a slot name (`P{i+1}`) until Tier 2 names it. Tier 2 ("approach") is commitment-gated per fixed step: fires once when the plane is either inside the planet's atmosphere or aimed at it (`dot(fwd, toPlanet) ≥ APPROACH_DOT=0.85`) within `radius + APPROACH_DISTANCE=1500m`. Per-planet landing-pad nav indicators replace the single shared proxy; each one's `visible()` checks its own atmosphere, so only the pad of the planet you're currently in shows up. HUD state row updates with the active planet's name on every planet change.
 
 ### Task 13 — SolarSystem.js
 

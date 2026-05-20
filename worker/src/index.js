@@ -1,4 +1,4 @@
-// Cloudflare Worker — Anthropic API proxy for the paper-airplane game.
+// Cloudflare Worker — Anthropic API proxy for Personal Space.
 // Routes:
 //   POST /tier1  → claude-haiku-4-5     → { teaser }
 //   POST /tier2  → claude-sonnet-4-6    → full planet meta

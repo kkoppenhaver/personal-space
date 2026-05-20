@@ -90,21 +90,29 @@ async function main() {
     });
   }
 
-  // Single pad nav indicator that follows whichever planet is "active" — only
-  // visible while the plane is in that planet's atmosphere. Task 14 will fan
-  // this out to per-planet indicators.
-  const padProxy = new THREE.Object3D();
-  scene.add(padProxy);
-  planetNav.track('pad', {
-    object: padProxy,
-    label: 'LANDING',
-    color: '#ffd66b',
-    getDistance: () => activePlanet.landingZone.distanceFrom(plane.position()),
-    visible: () => activeAtmosphere.contains(plane.position()),
-  });
+  // Per-planet landing-pad nav indicators. Each pad is gated to "only show
+  // when the plane is in *that* planet's atmosphere" — keeps the screen clean
+  // since only the planet you're currently in is actionable for landing.
+  for (let i = 0; i < system.planets.length; i++) {
+    const p = system.planets[i];
+    const atm = system.atmospheres[i];
+    const proxy = new THREE.Object3D();
+    proxy.position.copy(p.landingZone.worldPosition());
+    scene.add(proxy);
+    planetNav.track(`pad:${i}`, {
+      object: proxy,
+      label: 'LANDING',
+      color: '#ffd66b',
+      getDistance: () => p.landingZone.distanceFrom(plane.position()),
+      visible: () => atm.contains(plane.position()),
+    });
+  }
 
   // 8. LLM client (with offline fallback)
-  const workerURL = (new URLSearchParams(location.search)).get('worker') || localStorage.getItem('paper-airplane:worker') || '';
+  const workerURL = (new URLSearchParams(location.search)).get('worker')
+    || localStorage.getItem('paper-airplane:worker')
+    || import.meta.env.VITE_WORKER_URL
+    || '';
   const llm = new LLMClient({ workerURL });
 
   // Resolve initial active planet/atmosphere from spawn position.
@@ -117,20 +125,43 @@ async function main() {
 
   hud.setState(prevInside ? 'IN ATMOSPHERE' : 'IN SPACE');
 
-  // Eager Tier 1 + Tier 2 prefetch for the starting planet so naming is ready
-  // by the time the player approaches. Task 14 expands to every planet.
+  // --- LLM naming: per-planet pings + commitment-gated approach. ---
+  //
+  // pings[i] mirrors what's shown for planet i in the HUD #pings strip. Slot
+  // is filled when Tier 1 resolves; the `name` field is overwritten when
+  // Tier 2 names the planet. `approachSent[i]` deduplicates the per-step
+  // approach test so we only fire once per planet per session.
   const sunCss = `#${system.sunColor.getHexString()}`;
-  llm.ping(activePlanet.seed, { starColor: sunCss }).then(r => {
-    if (r?.teaser) hud.setPings([{ name: 'AHEAD', teaser: r.teaser }]);
-  }).catch(() => {});
-  llm.approach(activePlanet.seed, { radius: activePlanet.radius }).then(meta => {
-    if (meta) {
-      activePlanet.applyLLM(meta);
-      hud.setPlanetName(meta.name);
-      const idx = system.planets.indexOf(activePlanet);
-      if (idx >= 0) planetNav.setLabel(`planet:${idx}`, (meta.name || 'AHEAD').toUpperCase());
-    }
-  }).catch(() => {});
+  const pings = new Array(system.planets.length).fill(null);
+  const approachSent = new Array(system.planets.length).fill(false);
+
+  const refreshPings = () => hud.setPings(pings.filter(Boolean));
+
+  for (let i = 0; i < system.planets.length; i++) {
+    const p = system.planets[i];
+    llm.ping(p.seed, { starColor: sunCss }).then(r => {
+      if (!r?.teaser) return;
+      pings[i] = { name: p.meta?.name?.toUpperCase() || `P${i + 1}`, teaser: r.teaser };
+      refreshPings();
+    }).catch(() => {});
+  }
+
+  const tryApproach = (i) => {
+    if (approachSent[i]) return;
+    approachSent[i] = true;
+    const p = system.planets[i];
+    llm.approach(p.seed, { radius: p.radius }).then(meta => {
+      if (!meta) return;
+      p.applyLLM(meta);
+      const label = (meta.name || `P${i + 1}`).toUpperCase();
+      planetNav.setLabel(`planet:${i}`, label);
+      if (pings[i]) {
+        pings[i].name = label;
+        refreshPings();
+      }
+      if (p === activePlanet) hud.setPlanetName(meta.name);
+    }).catch(() => { approachSent[i] = false; /* allow retry on real failure */ });
+  };
 
   // 9. Resize
   window.addEventListener('resize', () => {
@@ -216,6 +247,25 @@ async function main() {
         activeAtmosphere = a.atmosphere;
       }
 
+      // Commitment-gated Tier 2 (approach). Fire once per planet when the
+      // player either enters its atmosphere or is clearly headed at it from
+      // close enough. `applyLLM` is idempotent; the gate keeps us from
+      // spamming the worker on every frame.
+      {
+        const planePos = plane.position();
+        const planeFwd = plane.forward();
+        for (let i = 0; i < system.planets.length; i++) {
+          if (approachSent[i]) continue;
+          const p = system.planets[i];
+          if (system.atmospheres[i].contains(planePos)) { tryApproach(i); continue; }
+          const toPlanet = p.center.clone().sub(planePos);
+          const distance = toPlanet.length();
+          if (distance > p.radius + TUNING.APPROACH_DISTANCE) continue;
+          toPlanet.divideScalar(distance || 1);
+          if (planeFwd.dot(toPlanet) >= TUNING.APPROACH_DOT) tryApproach(i);
+        }
+      }
+
       // Physics + flight
       const planeRho = activeAtmosphere.density(plane.position());
       flight.update(plane, ev, dt, activeAtmosphere, activePlanet);
@@ -279,6 +329,7 @@ async function main() {
           toast.show('↑ ENTERING SPACE ↑', 1500);
         }
       }
+      if (planetChanged) hud.setPlanetName(activePlanet.meta?.name || null);
       prevInside = insideNow;
       prevActivePlanet = activePlanet;
 
@@ -306,9 +357,6 @@ async function main() {
           if (lore?.surfaceLore) hud.setLandmark(lore.surfaceLore);
         }).catch(() => {});
       }
-
-      // Keep pad nav proxy synced to the active planet's pad.
-      padProxy.position.copy(activePlanet.landingZone.worldPosition());
 
       // Update HUD
       hud.setSpeed(plane.velocity().length());
