@@ -9,6 +9,7 @@ import { FlightController } from './game/FlightController.js';
 import { CameraRig } from './game/CameraRig.js';
 
 import { SolarSystem } from './world/SolarSystem.js';
+import { Origin } from './world/Origin.js';
 
 import { HUD } from './ui/HUD.js';
 import { Toast } from './ui/Toast.js';
@@ -57,6 +58,10 @@ async function main() {
   });
   scene.add(system.group);
 
+  // Floating-origin tracker. Once the plane drifts past threshold, every world
+  // body shifts together to keep render coords near (0,0,0).
+  const origin = new Origin();
+
   // 5. Plane — spawn outside the first planet's atmosphere, aimed for a
   // tangential approach so atmosphere entry carries lateral velocity.
   const plane = new Plane({ rapier: RAPIER, world });
@@ -93,12 +98,14 @@ async function main() {
   // Per-planet landing-pad nav indicators. Each pad is gated to "only show
   // when the plane is in *that* planet's atmosphere" — keeps the screen clean
   // since only the planet you're currently in is actionable for landing.
+  // Parented under the planet group (using local surfacePoint) so the indicator
+  // follows the planet through floating-origin rebases for free.
   for (let i = 0; i < system.planets.length; i++) {
     const p = system.planets[i];
     const atm = system.atmospheres[i];
     const proxy = new THREE.Object3D();
-    proxy.position.copy(p.landingZone.worldPosition());
-    scene.add(proxy);
+    proxy.position.copy(p.landingZone.surfacePoint);
+    p.group.add(proxy);
     planetNav.track(`pad:${i}`, {
       object: proxy,
       label: 'LANDING',
@@ -178,7 +185,10 @@ async function main() {
 
       if (ev.logbookEdge) logbook.toggle();
       if (ev.resetEdge) {
-        plane.spawn(spawnPos, spawnFwd, TUNING.CRUISE_SPEED);
+        // Pull a fresh spawn from the current system — planet centers may have
+        // shifted in render space due to floating-origin rebases.
+        const s = system.defaultSpawn();
+        plane.spawn(s.pos, s.fwd, TUNING.CRUISE_SPEED);
         flight.reset();
         const a = system.activePlanetFor(plane.position());
         activePlanet = a.planet;
@@ -372,6 +382,17 @@ async function main() {
 
       // Debug telemetry overlay — uses the live Input state (post-drain)
       debugHUD.update(plane, activePlanet, activeAtmosphere, input, flight);
+
+      // Floating-origin rebase. Runs after physics + sync so every per-step
+      // computation above sees consistent positions; the shift applies to both
+      // the plane and every planet body together so the player never sees a
+      // pop. Galaxy coordinates (origin.galaxyOrigin) update so Task 16 can
+      // map render → galaxy when streaming systems.
+      const shift = origin.maybeRebase(plane.position());
+      if (shift) {
+        plane.translate(shift);
+        system.translate(shift);
+      }
     },
 
     onRender: (dt) => {
@@ -413,7 +434,7 @@ async function main() {
 
   // Debug hooks
   window.__GAME = {
-    plane, system, flight, cameraRig,
+    plane, system, flight, cameraRig, origin,
     get planet() { return activePlanet; },
     get atmosphere() { return activeAtmosphere; },
     inspect() {
@@ -437,7 +458,8 @@ async function main() {
       };
     },
     snapshot() {
-      plane.spawn(spawnPos, spawnFwd, TUNING.CRUISE_SPEED);
+      const s = system.defaultSpawn();
+      plane.spawn(s.pos, s.fwd, TUNING.CRUISE_SPEED);
       flight.reset();
       return 'spawned';
     },

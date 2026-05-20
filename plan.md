@@ -57,7 +57,7 @@ Goal: deliver the "infinite universe" promise from the original brainstorm. Mult
 |---|------|---------|-------|
 | 13 | SolarSystem class | `src/world/SolarSystem.js`, refactor `main.js` | ☑ |
 | 14 | Multi-planet PlanetNav + Tier 1 ping HUD strip | `src/ui/PlanetNav.js`, `src/ui/HUD.js`, `main.js` | ☑ |
-| 15 | Origin.js — floating-origin rebasing | `src/world/Origin.js` (new) | ☐ |
+| 15 | Origin.js — floating-origin rebasing | `src/world/Origin.js` (new) | ☑ |
 | 16 | Galaxy.js — system streaming | `src/world/Galaxy.js` (new) | ☐ |
 | 17 | Logbook revisit-by-coordinates | `src/ui/Logbook.js`, `main.js` | ☐ |
 
@@ -68,6 +68,8 @@ Goal: deliver the "infinite universe" promise from the original brainstorm. Mult
 **Bonus (done):** Basic pause menu (ESC). `GameLoop.setPaused(bool)` skips `onFixedStep` and zeroes the accumulator so resume doesn't fire a catch-up burst. Independent `window.keydown` listener so it works while the sim is frozen; `input.drain()` on resume prevents stale edges. DOM overlay with title, resume button, and controls summary.
 
 **Task 14 notes (done):** Tier 1 pings fan out to every planet at boot; each result becomes a chip in the `#pings` strip labeled with a slot name (`P{i+1}`) until Tier 2 names it. Tier 2 ("approach") is commitment-gated per fixed step: fires once when the plane is either inside the planet's atmosphere or aimed at it (`dot(fwd, toPlanet) ≥ APPROACH_DOT=0.85`) within `radius + APPROACH_DISTANCE=1500m`. Per-planet landing-pad nav indicators replace the single shared proxy; each one's `visible()` checks its own atmosphere, so only the pad of the planet you're currently in shows up. HUD state row updates with the active planet's name on every planet change.
+
+**Task 15 notes (done):** `src/world/Origin.js` tracks `galaxyOrigin` (the galaxy-space coordinate currently mapped to render `(0,0,0)`) and a 5km `threshold`. After each fixed step, `origin.maybeRebase(plane.position())` returns a shift vector when the plane exceeds threshold; the same shift is applied to `plane.translate()` and `system.translate()`. `Planet.translate` updates `center`, `group.position`, and the Rapier body. `Atmosphere.translate` re-syncs mesh position + the `uPlanetCenter` shader uniform from the (already-moved) planet. `SolarSystem.translate` walks every planet/atmosphere pair, shifts the sun, and leaves the starfield at scene origin (skybox treatment). Pad nav proxies are now parented under `planet.group` using local `surfacePoint` so they follow rebases for free. Reset and `__GAME.snapshot()` pull a fresh `system.defaultSpawn()` each call since planet centers move in render space. `origin` is exposed on `window.__GAME` for console inspection; `origin.toGalaxy(renderPos)` is the conversion Task 16/17 will use for system streaming and per-entry coords.
 
 ### Task 13 — SolarSystem.js
 
@@ -121,6 +123,11 @@ Refactor checklist:
 - Store `galaxyCoord` and `systemSeed` per logbook entry (already store seed; add coord).
 - Existing Worker KV cache makes content deterministic per seed — same coord → same name/lore.
 - Verification: visit planet, write down its name, fly to next system, fly back, see same name.
+
+### Open questions — Logbook
+
+- **Persistence.** Today the logbook is `localStorage` only — wipes per-browser, doesn't sync. Decide: stay local? Cloud-backed (Worker + KV/D1) with anonymous user id? Export/import JSON? Account-based?
+- **Contents.** What goes in each entry beyond name + biome + timestamp? Candidates: thumbnail/screenshot of the planet (canvas snapshot at claim), full lore text, landmark list, claim coords, time-to-land, path traced. Pick what shows up on the entry detail page.
 
 ---
 

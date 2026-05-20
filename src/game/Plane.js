@@ -141,6 +141,14 @@ export class Plane {
       this.lastSafeFwd.copy(this.forward());
     }
   }
+
+  // Add `delta` to the plane's render position. Velocity and rotation are
+  // frame-invariant under a pure translation so they don't shift.
+  translate(delta) {
+    const t = this.body.translation();
+    this.body.setTranslation({ x: t.x + delta.x, y: t.y + delta.y, z: t.z + delta.z }, true);
+    this.lastSafePos.add(delta);
+  }
 }
 
 function buildPaperPlaneMesh() {

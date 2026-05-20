@@ -88,6 +88,15 @@ export class Planet {
     return r - h;
   }
 
+  // Add `delta` to this planet's render position. Updates the Three group,
+  // the Rapier body, and the cached center. Children (landmarks, features,
+  // landing zone) auto-follow because they're parented under `this.group`.
+  translate(delta) {
+    this.center.add(delta);
+    this.group.position.copy(this.center);
+    this.body.setTranslation({ x: this.center.x, y: this.center.y, z: this.center.z }, true);
+  }
+
   applyLLM(meta) {
     this.meta = meta;
     if (!meta) return;

@@ -66,6 +66,16 @@ export class Atmosphere {
     return this.planet.center.clone().sub(pos).normalize();
   }
 
+  // Call after the owning planet has been translated. Re-syncs the
+  // atmosphere mesh's render position and the shader's world-space center
+  // uniform from the planet's current center.
+  translate(_delta) {
+    this.mesh.position.copy(this.planet.center);
+    if (this.mat.uniforms.uPlanetCenter) {
+      this.mat.uniforms.uPlanetCenter.value.copy(this.planet.center);
+    }
+  }
+
   tick(planePos, camera) {
     // Tint atmosphere color based on (future) palette
     if (this.planet.palette && this.planet.palette.sky) {

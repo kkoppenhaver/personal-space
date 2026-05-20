@@ -173,6 +173,16 @@ export class SolarSystem {
     return this._planetByColliderHandle.get(handle) || null;
   }
 
+  // Shift every world body in this system by `delta`. The starfield stays at
+  // scene origin (treated as a skybox) so the player remains centered in it.
+  translate(delta) {
+    for (let i = 0; i < this.planets.length; i++) {
+      this.planets[i].translate(delta);
+      this.atmospheres[i].translate(delta);
+    }
+    this.sun.position.add(delta);
+  }
+
   // Default plane spawn: outside planet[0]'s atmosphere, aimed tangentially so
   // entry carries lateral momentum (not a radial nose-dive).
   defaultSpawn() {
