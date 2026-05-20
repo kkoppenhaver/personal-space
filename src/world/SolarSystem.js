@@ -21,10 +21,22 @@ const SUN_PALETTE = [
 ];
 
 export class SolarSystem {
-  constructor({ rapier, world, seed }) {
+  constructor({
+    rapier,
+    world,
+    seed,
+    // Galaxy-space center of this system's sun. Static for the system's lifetime
+    // (Galaxy cells are immutable). Used by Galaxy.js for cull/spawn decisions.
+    galaxyOrigin = new THREE.Vector3(),
+    // Render-space center of this system's sun at construction. Updated in
+    // place by translate() during floating-origin rebases.
+    renderOrigin = new THREE.Vector3(),
+  } = {}) {
     this.seed = seed >>> 0;
     this.rapier = rapier;
     this.world = world;
+    this.galaxyOrigin = galaxyOrigin.clone();
+    this.renderOrigin = renderOrigin.clone();
 
     this.group = new THREE.Group();
     this.planets = [];
@@ -35,6 +47,7 @@ export class SolarSystem {
 
     this.sunColor = new THREE.Color(SUN_PALETTE[Math.floor(rand() * SUN_PALETTE.length)]);
     this.sun = this._buildSun(this.sunColor);
+    this.sun.position.copy(this.renderOrigin);
     this.group.add(this.sun);
 
     const planetCount = PLANET_COUNT_MIN + Math.floor(rand() * (PLANET_COUNT_MAX - PLANET_COUNT_MIN + 1));
@@ -68,11 +81,11 @@ export class SolarSystem {
       // Inclination — wider than before so planets are visibly stacked above
       // and below the system plane, not all in one disc.
       const incl = (prand() - 0.5) * 0.9;
-      const center = new THREE.Vector3(
+      const center = this.renderOrigin.clone().add(new THREE.Vector3(
         Math.cos(theta) * Math.cos(incl) * orbitR,
         Math.sin(incl) * orbitR,
         Math.sin(theta) * Math.cos(incl) * orbitR,
-      );
+      ));
 
       const radius = TUNING.PLANET_RADIUS * (0.8 + prand() * 0.6);
 
@@ -86,9 +99,6 @@ export class SolarSystem {
 
       this._planetByColliderHandle.set(planet.collider.handle, { planet, atmosphere, index: i });
     }
-
-    this.starfield = this._buildStarfield(this.sunColor);
-    this.group.add(this.starfield);
   }
 
   _buildSun(color) {
@@ -112,39 +122,6 @@ export class SolarSystem {
     group.add(outerHalo);
 
     return group;
-  }
-
-  _buildStarfield(tintColor) {
-    const count = 2400;
-    const radius = 9000;
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    const rand = mulberry32(hashSeeds(this.seed, 0x57a5));
-    const tint = new THREE.Color(tintColor).lerp(new THREE.Color(0xffffff), 0.55);
-
-    for (let i = 0; i < count; i++) {
-      const u = rand(), v = rand();
-      const theta = 2 * Math.PI * u, phi = Math.acos(2 * v - 1);
-      const r = radius * (0.7 + 0.3 * rand());
-      positions[i * 3 + 0] = r * Math.sin(phi) * Math.cos(theta);
-      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-      positions[i * 3 + 2] = r * Math.cos(phi);
-      const k = 0.80 + 0.20 * rand();
-      colors[i * 3 + 0] = tint.r * k;
-      colors[i * 3 + 1] = tint.g * k;
-      colors[i * 3 + 2] = tint.b * k;
-    }
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    const mat = new THREE.PointsMaterial({
-      vertexColors: true,
-      size: 1.6,
-      sizeAttenuation: false,
-      transparent: true,
-      opacity: 0.9,
-    });
-    return new THREE.Points(geom, mat);
   }
 
   // Which planet "owns" this world-space position?
@@ -173,9 +150,10 @@ export class SolarSystem {
     return this._planetByColliderHandle.get(handle) || null;
   }
 
-  // Shift every world body in this system by `delta`. The starfield stays at
-  // scene origin (treated as a skybox) so the player remains centered in it.
+  // Shift every world body in this system by `delta`. Galaxy.js owns the
+  // shared starfield so it's not touched here.
   translate(delta) {
+    this.renderOrigin.add(delta);
     for (let i = 0; i < this.planets.length; i++) {
       this.planets[i].translate(delta);
       this.atmospheres[i].translate(delta);
@@ -183,11 +161,30 @@ export class SolarSystem {
     this.sun.position.add(delta);
   }
 
+  // Tear down everything this system added to the scene + Rapier world. Used
+  // by Galaxy.js when a system passes the cull radius.
+  dispose() {
+    for (const planet of this.planets) {
+      this.world.removeRigidBody(planet.body);
+    }
+    if (this.group.parent) this.group.parent.remove(this.group);
+    this.group.traverse((child) => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) {
+        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+        else child.material.dispose();
+      }
+    });
+    this.planets.length = 0;
+    this.atmospheres.length = 0;
+    this._planetByColliderHandle.clear();
+  }
+
   // Default plane spawn: outside planet[0]'s atmosphere, aimed tangentially so
   // entry carries lateral momentum (not a radial nose-dive).
   defaultSpawn() {
     const p = this.planets[0];
-    const radial = p.center.clone();
+    const radial = p.center.clone().sub(this.renderOrigin);
     if (radial.lengthSq() < 1e-3) radial.set(1, 0, 0);
     radial.normalize();
 

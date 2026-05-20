@@ -8,7 +8,7 @@ import { Plane } from './game/Plane.js';
 import { FlightController } from './game/FlightController.js';
 import { CameraRig } from './game/CameraRig.js';
 
-import { SolarSystem } from './world/SolarSystem.js';
+import { Galaxy } from './world/Galaxy.js';
 import { Origin } from './world/Origin.js';
 
 import { HUD } from './ui/HUD.js';
@@ -50,125 +50,139 @@ async function main() {
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
   const eventQueue = new RAPIER.EventQueue(true);
 
-  // 4. Build solar system (sun + 3–6 planets, each with atmosphere + landing pad)
-  const system = new SolarSystem({
-    rapier: RAPIER,
-    world,
-    seed: TUNING.PLANET_SEED,
-  });
-  scene.add(system.group);
-
   // Floating-origin tracker. Once the plane drifts past threshold, every world
   // body shifts together to keep render coords near (0,0,0).
   const origin = new Origin();
 
-  // 5. Plane — spawn outside the first planet's atmosphere, aimed for a
-  // tangential approach so atmosphere entry carries lateral velocity.
+  // 4. Plane allocation (spawn deferred — needs galaxy.defaultSpawn() below)
   const plane = new Plane({ rapier: RAPIER, world });
-  const { pos: spawnPos, fwd: spawnFwd } = system.defaultSpawn();
-  plane.spawn(spawnPos, spawnFwd, TUNING.CRUISE_SPEED);
   scene.add(plane.group);
 
-  camera.position.copy(spawnPos.clone().addScaledVector(spawnFwd, -14)).add(new THREE.Vector3(0, 1.8, 0));
-
-  // 6. Flight + camera
+  // 5. Flight + camera
   const input = new Input();
   const flight = new FlightController({ rapier: RAPIER });
   const cameraRig = new CameraRig({ camera });
 
-  // 7. UI
+  // 6. UI
   const toast = new Toast();
   const hud = new HUD();
   const logbook = new Logbook();
   const debugHUD = new DebugHUD();
   const planetNav = new PlanetNav(canvas);
 
-  // Track every planet in the system. Color is shared for now; Task 14 will
-  // color-vary and gate by Tier 1 ping completion.
-  for (let i = 0; i < system.planets.length; i++) {
-    const p = system.planets[i];
-    planetNav.track(`planet:${i}`, {
-      object: p.group,
-      label: (p.meta?.name || `P${i + 1}`).toUpperCase(),
-      color: i === 0 ? '#ff6f3c' : '#9ec8ff',
-      getDistance: () => Math.max(0, plane.position().distanceTo(p.center) - p.radius),
-    });
-  }
-
-  // Per-planet landing-pad nav indicators. Each pad is gated to "only show
-  // when the plane is in *that* planet's atmosphere" — keeps the screen clean
-  // since only the planet you're currently in is actionable for landing.
-  // Parented under the planet group (using local surfacePoint) so the indicator
-  // follows the planet through floating-origin rebases for free.
-  for (let i = 0; i < system.planets.length; i++) {
-    const p = system.planets[i];
-    const atm = system.atmospheres[i];
-    const proxy = new THREE.Object3D();
-    proxy.position.copy(p.landingZone.surfacePoint);
-    p.group.add(proxy);
-    planetNav.track(`pad:${i}`, {
-      object: proxy,
-      label: 'LANDING',
-      color: '#ffd66b',
-      getDistance: () => p.landingZone.distanceFrom(plane.position()),
-      visible: () => atm.contains(plane.position()),
-    });
-  }
-
-  // 8. LLM client (with offline fallback)
+  // 7. LLM client (with offline fallback)
   const workerURL = (new URLSearchParams(location.search)).get('worker')
     || localStorage.getItem('paper-airplane:worker')
     || import.meta.env.VITE_WORKER_URL
     || '';
   const llm = new LLMClient({ workerURL });
 
-  // Resolve initial active planet/atmosphere from spawn position.
-  let { planet: activePlanet, atmosphere: activeAtmosphere } = system.activePlanetFor(plane.position());
+  // --- LLM naming: per-planet pings + commitment-gated approach. ---
+  //
+  // Streaming makes planets come and go, so per-planet state is keyed by
+  // planet seed instead of by index. `pings` doubles as the HUD ping strip
+  // backing store; iteration order is insertion order.
+  const pings = new Map();           // seed -> { name, teaser, planet }
+  const approachSent = new Set();    // seed of planets we've already tried Tier 2 on
+  const PING_HUD_LIMIT = 5;          // chip strip caps at the N nearest planets
+  const refreshPings = () => {
+    const sorted = Array.from(pings.values())
+      .map(p => ({ ...p, d: plane.position().distanceTo(p.planet.center) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, PING_HUD_LIMIT);
+    hud.setPings(sorted);
+  };
+
+  // 8. Galaxy — streaming solar systems based on player galaxy position.
+  // The home cell (0,0,0) is always populated so we have a stable spawn point.
+  const galaxy = new Galaxy({
+    rapier: RAPIER,
+    world,
+    scene,
+    origin,
+    seed: TUNING.PLANET_SEED,
+    onSystemSpawned: (sys) => {
+      // Per-planet HUD ping + nav track. Keyed by planet seed so they survive
+      // pings-list iteration order and any future despawn/respawn churn.
+      const sunCss = `#${sys.sunColor.getHexString()}`;
+      for (let i = 0; i < sys.planets.length; i++) {
+        const p = sys.planets[i];
+        const atm = sys.atmospheres[i];
+
+        planetNav.track(`planet:${p.seed}`, {
+          object: p.group,
+          label: (p.meta?.name || `P${i + 1}`).toUpperCase(),
+          color: '#9ec8ff',
+          getDistance: () => Math.max(0, plane.position().distanceTo(p.center) - p.radius),
+        });
+
+        // Pad indicator parented to the planet group so floating-origin
+        // rebases (and any future per-system motion) carry it along for free.
+        const proxy = new THREE.Object3D();
+        proxy.position.copy(p.landingZone.surfacePoint);
+        p.group.add(proxy);
+        planetNav.track(`pad:${p.seed}`, {
+          object: proxy,
+          label: 'LANDING',
+          color: '#ffd66b',
+          getDistance: () => p.landingZone.distanceFrom(plane.position()),
+          visible: () => atm.contains(plane.position()),
+        });
+
+        // Tier 1 teaser ping. KV cache makes revisits instant.
+        const label = `P${i + 1}`;
+        llm.ping(p.seed, { starColor: sunCss }).then(r => {
+          if (!r?.teaser) return;
+          pings.set(p.seed, { name: p.meta?.name?.toUpperCase() || label, teaser: r.teaser, planet: p });
+          refreshPings();
+        }).catch(() => {});
+      }
+    },
+    onSystemDespawned: (sys) => {
+      for (const p of sys.planets) {
+        planetNav.untrack(`planet:${p.seed}`);
+        planetNav.untrack(`pad:${p.seed}`);
+        pings.delete(p.seed);
+        approachSent.delete(p.seed);
+      }
+      refreshPings();
+    },
+  });
+
+  // Tier 2 (approach). Idempotent per-seed thanks to the Set guard; failures
+  // delete the seed so a real retry can re-arm later.
+  const tryApproach = (planet) => {
+    if (approachSent.has(planet.seed)) return;
+    approachSent.add(planet.seed);
+    llm.approach(planet.seed, { radius: planet.radius }).then(meta => {
+      if (!meta) return;
+      planet.applyLLM(meta);
+      const label = (meta.name || `P?`).toUpperCase();
+      planetNav.setLabel(`planet:${planet.seed}`, label);
+      const existing = pings.get(planet.seed);
+      if (existing) {
+        existing.name = label;
+        refreshPings();
+      }
+      if (planet === activePlanet) hud.setPlanetName(meta.name);
+    }).catch(() => { approachSent.delete(planet.seed); });
+  };
+
+  // 9. Spawn the plane at the home system.
+  const { pos: spawnPos0, fwd: spawnFwd0 } = galaxy.defaultSpawn();
+  plane.spawn(spawnPos0, spawnFwd0, TUNING.CRUISE_SPEED);
+  camera.position.copy(spawnPos0.clone().addScaledVector(spawnFwd0, -14)).add(new THREE.Vector3(0, 1.8, 0));
+
+  // Resolve initial active planet/atmosphere/system from spawn position.
+  let { planet: activePlanet, atmosphere: activeAtmosphere, system: activeSystem } = galaxy.activePlanetFor(plane.position());
 
   // Crossings
   let prevInside = activeAtmosphere.contains(plane.position());
   let prevActivePlanet = activePlanet;
   let crashRespawnAt = 0;
+  let pingRefreshCounter = 0;
 
   hud.setState(prevInside ? 'IN ATMOSPHERE' : 'IN SPACE');
-
-  // --- LLM naming: per-planet pings + commitment-gated approach. ---
-  //
-  // pings[i] mirrors what's shown for planet i in the HUD #pings strip. Slot
-  // is filled when Tier 1 resolves; the `name` field is overwritten when
-  // Tier 2 names the planet. `approachSent[i]` deduplicates the per-step
-  // approach test so we only fire once per planet per session.
-  const sunCss = `#${system.sunColor.getHexString()}`;
-  const pings = new Array(system.planets.length).fill(null);
-  const approachSent = new Array(system.planets.length).fill(false);
-
-  const refreshPings = () => hud.setPings(pings.filter(Boolean));
-
-  for (let i = 0; i < system.planets.length; i++) {
-    const p = system.planets[i];
-    llm.ping(p.seed, { starColor: sunCss }).then(r => {
-      if (!r?.teaser) return;
-      pings[i] = { name: p.meta?.name?.toUpperCase() || `P${i + 1}`, teaser: r.teaser };
-      refreshPings();
-    }).catch(() => {});
-  }
-
-  const tryApproach = (i) => {
-    if (approachSent[i]) return;
-    approachSent[i] = true;
-    const p = system.planets[i];
-    llm.approach(p.seed, { radius: p.radius }).then(meta => {
-      if (!meta) return;
-      p.applyLLM(meta);
-      const label = (meta.name || `P${i + 1}`).toUpperCase();
-      planetNav.setLabel(`planet:${i}`, label);
-      if (pings[i]) {
-        pings[i].name = label;
-        refreshPings();
-      }
-      if (p === activePlanet) hud.setPlanetName(meta.name);
-    }).catch(() => { approachSent[i] = false; /* allow retry on real failure */ });
-  };
 
   // 9. Resize
   window.addEventListener('resize', () => {
@@ -185,12 +199,12 @@ async function main() {
 
       if (ev.logbookEdge) logbook.toggle();
       if (ev.resetEdge) {
-        // Pull a fresh spawn from the current system — planet centers may have
-        // shifted in render space due to floating-origin rebases.
-        const s = system.defaultSpawn();
+        // Always reset to the home system (cell 0,0,0). Planet centers may
+        // have shifted in render space due to floating-origin rebases.
+        const s = galaxy.defaultSpawn();
         plane.spawn(s.pos, s.fwd, TUNING.CRUISE_SPEED);
         flight.reset();
-        const a = system.activePlanetFor(plane.position());
+        const a = galaxy.activePlanetFor(plane.position());
         activePlanet = a.planet;
         activeAtmosphere = a.atmosphere;
         prevInside = activeAtmosphere.contains(plane.position());
@@ -221,7 +235,7 @@ async function main() {
         flight.reset();
         crashRespawnAt = 0;
         toast.show('RESPAWN', 1000, '#ffd86b');
-        const a = system.activePlanetFor(plane.position());
+        const a = galaxy.activePlanetFor(plane.position());
         activePlanet = a.planet;
         activeAtmosphere = a.atmosphere;
         prevInside = activeAtmosphere.contains(plane.position());
@@ -249,30 +263,29 @@ async function main() {
         }
       }
 
-      // Resolve the currently-active planet (whichever one's atmosphere we're
-      // in, else the closest one). All subsequent per-frame logic uses this.
+      // Resolve the currently-active planet across all loaded systems.
+      // Atmosphere wins; else nearest surface. All per-frame logic uses this.
       {
-        const a = system.activePlanetFor(plane.position());
+        const a = galaxy.activePlanetFor(plane.position());
         activePlanet = a.planet;
         activeAtmosphere = a.atmosphere;
+        activeSystem = a.system;
       }
 
-      // Commitment-gated Tier 2 (approach). Fire once per planet when the
-      // player either enters its atmosphere or is clearly headed at it from
-      // close enough. `applyLLM` is idempotent; the gate keeps us from
-      // spamming the worker on every frame.
+      // Commitment-gated Tier 2 (approach). Fires once per planet across every
+      // loaded system. The seed-keyed `approachSent` Set survives despawn so
+      // we don't re-fire when a system streams back in.
       {
         const planePos = plane.position();
         const planeFwd = plane.forward();
-        for (let i = 0; i < system.planets.length; i++) {
-          if (approachSent[i]) continue;
-          const p = system.planets[i];
-          if (system.atmospheres[i].contains(planePos)) { tryApproach(i); continue; }
-          const toPlanet = p.center.clone().sub(planePos);
+        for (const ref of galaxy.allPlanets()) {
+          if (approachSent.has(ref.planet.seed)) continue;
+          if (ref.atmosphere.contains(planePos)) { tryApproach(ref.planet); continue; }
+          const toPlanet = ref.planet.center.clone().sub(planePos);
           const distance = toPlanet.length();
-          if (distance > p.radius + TUNING.APPROACH_DISTANCE) continue;
+          if (distance > ref.planet.radius + TUNING.APPROACH_DISTANCE) continue;
           toPlanet.divideScalar(distance || 1);
-          if (planeFwd.dot(toPlanet) >= TUNING.APPROACH_DOT) tryApproach(i);
+          if (planeFwd.dot(toPlanet) >= TUNING.APPROACH_DOT) tryApproach(ref.planet);
         }
       }
 
@@ -289,7 +302,7 @@ async function main() {
         if (h1 !== plane.collider.handle && h2 !== plane.collider.handle) return;
         if (plane.state === 'crashed' || plane.state === 'grounded') return;
         const otherHandle = h1 === plane.collider.handle ? h2 : h1;
-        const hit = system.planetForColliderHandle(otherHandle);
+        const hit = galaxy.planetForColliderHandle(otherHandle);
         if (!hit) return;
         const v = plane.velocity();
         const radialUp = plane.position().clone().sub(hit.planet.center).normalize();
@@ -343,9 +356,12 @@ async function main() {
       prevInside = insideNow;
       prevActivePlanet = activePlanet;
 
-      // Landing-pad claim — check every planet's zone, since the player can
-      // visit any of them. Fires once per planet per session.
-      for (const p of system.planets) {
+      // Landing-pad claim — sweep every loaded planet (claims are sticky in
+      // the LandingZone itself, so a despawn+respawn of a system loses the
+      // claim flag for now; Task 17 will move claim/visit state to the
+      // logbook and key it by galaxy coord so it survives streaming).
+      for (const ref of galaxy.allPlanets()) {
+        const p = ref.planet;
         if (p.landingZone.claimed) continue;
         if (!p.landingZone.isLanded(plane)) continue;
         p.landingZone.markClaimed();
@@ -384,15 +400,24 @@ async function main() {
       debugHUD.update(plane, activePlanet, activeAtmosphere, input, flight);
 
       // Floating-origin rebase. Runs after physics + sync so every per-step
-      // computation above sees consistent positions; the shift applies to both
-      // the plane and every planet body together so the player never sees a
-      // pop. Galaxy coordinates (origin.galaxyOrigin) update so Task 16 can
-      // map render → galaxy when streaming systems.
+      // computation above sees consistent positions; the shift applies to the
+      // plane and every loaded system together so the player never sees a pop.
       const shift = origin.maybeRebase(plane.position());
       if (shift) {
         plane.translate(shift);
-        system.translate(shift);
+        galaxy.translate(shift);
       }
+
+      // Galaxy streaming pass. Spawns systems entering SPAWN_RADIUS (bounded
+      // to MAX_SPAWNS_PER_STEP), despawns systems past CULL_RADIUS. Runs after
+      // rebase so the spawn renderOrigin computation uses the up-to-date
+      // origin.galaxyOrigin.
+      galaxy.update(plane.position());
+
+      // Re-sort the HUD ping strip every ~half-second so the visible chips
+      // track the player's position as they fly between systems.
+      pingRefreshCounter = (pingRefreshCounter + 1) % 30;
+      if (pingRefreshCounter === 0) refreshPings();
     },
 
     onRender: (dt) => {
@@ -401,7 +426,8 @@ async function main() {
       // Sky color blend (sun tint near the surface)
       const r = activeAtmosphere.density(plane.position());
       const skyA = new THREE.Color(0x04060c);
-      const skyB = new THREE.Color(0x8bb8dc).lerp(system.sunColor, 0.25);
+      const tintSun = activeSystem?.sunColor || new THREE.Color(0xfff2d6);
+      const skyB = new THREE.Color(0x8bb8dc).lerp(tintSun, 0.25);
       scene.background = null;
       renderer.setClearColor(new THREE.Color().lerpColors(skyA, skyB, r), 1.0);
       scene.fog.density = 0.00018 * r + 0.00004;
@@ -434,9 +460,10 @@ async function main() {
 
   // Debug hooks
   window.__GAME = {
-    plane, system, flight, cameraRig, origin,
+    plane, galaxy, flight, cameraRig, origin,
     get planet() { return activePlanet; },
     get atmosphere() { return activeAtmosphere; },
+    get system() { return activeSystem; },
     inspect() {
       const v = plane.velocity();
       const f = plane.forward();
@@ -454,11 +481,11 @@ async function main() {
         mass: plane.mass.toFixed(4),
         I: plane.angularInertia.toFixed(5),
         activePlanetSeed: activePlanet.seed,
-        activePlanetIdx: system.planets.indexOf(activePlanet),
+        loadedSystems: galaxy.systems.size,
       };
     },
     snapshot() {
-      const s = system.defaultSpawn();
+      const s = galaxy.defaultSpawn();
       plane.spawn(s.pos, s.fwd, TUNING.CRUISE_SPEED);
       flight.reset();
       return 'spawned';

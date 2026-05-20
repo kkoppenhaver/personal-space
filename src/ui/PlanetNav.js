@@ -13,8 +13,9 @@ const NDC = new THREE.Vector3();
 const POS = new THREE.Vector3();
 
 export class PlanetNav {
-  constructor(canvas) {
+  constructor(canvas, { maxShown = 6 } = {}) {
     this.canvas = canvas;
+    this.maxShown = maxShown;
     this.targets = new Map(); // id → { object, label, color, getDistance }
     this.container = document.createElement('div');
     this.container.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:5;';
@@ -68,11 +69,28 @@ export class PlanetNav {
     const w = this.canvas.clientWidth || innerWidth;
     const h = this.canvas.clientHeight || innerHeight;
 
+    // First pass: collect every target that isn't gated off, compute distance,
+    // then keep only the nearest `maxShown`. Stops the HUD from drowning in
+    // markers once Galaxy is streaming many systems.
+    const candidates = [];
+    for (const [id, target] of this.targets) {
+      const el = this.markers.get(id);
+      if (!el) { continue; }
+      if (target.visible && !target.visible()) { el.style.display = 'none'; continue; }
+      const d = target.getDistance ? target.getDistance() : Infinity;
+      candidates.push({ id, target, el, d });
+    }
+    candidates.sort((a, b) => a.d - b.d);
+    const visibleIds = new Set();
+    for (let i = 0; i < Math.min(this.maxShown, candidates.length); i++) {
+      visibleIds.add(candidates[i].id);
+    }
+
     for (const [id, target] of this.targets) {
       const el = this.markers.get(id);
       if (!el) continue;
-      // Per-target visibility gate (e.g. only show pad indicator in atmosphere).
       if (target.visible && !target.visible()) { el.style.display = 'none'; continue; }
+      if (!visibleIds.has(id)) { el.style.display = 'none'; continue; }
       el.style.display = '';
       target.object.getWorldPosition(POS);
 

@@ -41,6 +41,13 @@ export function buildInstancedFeatures({ geometry, elevations, radius, seed, pal
     }
   }
 
+  // Bounding sphere that encompasses every instance. InstancedMesh defaults to
+  // culling based on the per-instance geometry (1m for a rock) — once the
+  // planet's render center passes outside the frustum the entire features
+  // cloud pops out. Setting an explicit bound covering the planet's surface
+  // band keeps the cloud rendered until the camera actually looks away.
+  const featureBound = new THREE.Sphere(new THREE.Vector3(0, 0, 0), radius * 1.1);
+
   // ROCKS: low-poly tetrahedron
   if (rockTransforms.length > 0) {
     const g = new THREE.TetrahedronGeometry(1.0, 0);
@@ -58,6 +65,7 @@ export function buildInstancedFeatures({ geometry, elevations, radius, seed, pal
       inst.setMatrixAt(i, dummy.matrix);
     });
     inst.instanceMatrix.needsUpdate = true;
+    inst.boundingSphere = featureBound.clone();
     group.add(inst);
   }
 
@@ -78,6 +86,7 @@ export function buildInstancedFeatures({ geometry, elevations, radius, seed, pal
       inst.setMatrixAt(i, dummy.matrix);
     });
     inst.instanceMatrix.needsUpdate = true;
+    inst.boundingSphere = featureBound.clone();
     group.add(inst);
   }
 
