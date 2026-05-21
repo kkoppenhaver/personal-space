@@ -92,6 +92,15 @@ export class SolarSystem {
       const planet = new Planet({ rapier, world, seed: planetSeed, radius, center });
       const atmosphere = new Atmosphere({ planet, radius: radius + TUNING.ATM_TOP });
 
+      // Disable per-mesh frustum culling under each planet. Tiny landmark and
+      // landing-pad geometries can have bounding spheres that briefly fall
+      // outside the camera frustum even when the planet itself is clearly in
+      // view, which causes pops at frustum edges. The GPU still clips via NDC,
+      // so the cost of "no culling" here is only the matrix pipeline for ~10
+      // meshes per planet — negligible.
+      planet.group.traverse((child) => { child.frustumCulled = false; });
+      atmosphere.mesh.frustumCulled = false;
+
       this.planets.push(planet);
       this.atmospheres.push(atmosphere);
       this.group.add(planet.group);

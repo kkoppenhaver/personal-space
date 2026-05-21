@@ -138,8 +138,13 @@ export class Galaxy {
     }
 
     // Despawn pass — any loaded system whose galaxy origin is beyond
-    // CULL_RADIUS. Iterate via Array.from so we can mutate the map.
+    // CULL_RADIUS. Iterate via Array.from so we can mutate the map. Never
+    // despawn the last remaining system — the active-planet resolver and
+    // various per-step code paths assume at least one loaded system at all
+    // times. Better to keep a "stale" system loaded for one extra step than
+    // to crash trying to read .planet from a null active result.
     for (const [key, sys] of Array.from(this.systems.entries())) {
+      if (this.systems.size === 1) break;
       const d = sys.galaxyOrigin.distanceTo(planeGalaxy);
       if (d > CULL_RADIUS) this._despawn(key);
     }
