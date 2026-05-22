@@ -2,8 +2,7 @@ import * as THREE from 'three';
 import { buildPlanetGeometry, makeTerrainSampler } from './TerrainGen.js';
 import { pickLandmarkSlots, buildLandmarkMeshes } from './Landmarks.js';
 import { buildInstancedFeatures } from './Features.js';
-import { LandingZone } from './LandingZone.js';
-import { mulberry32 } from './Seed.js';
+import { Coverage } from './Coverage.js';
 
 export class Planet {
   constructor({ rapier, world, seed, radius, center = new THREE.Vector3(0, 0, 0) }) {
@@ -36,30 +35,25 @@ export class Planet {
     });
     this.landmarkGroup = buildLandmarkMeshes(this.landmarks, this.palette);
 
-    // Landing zone — picks a spot AND flattens the terrain around it. Must
-    // run BEFORE features + collider so they see the flattened geometry.
-    this.landingZone = new LandingZone({ planet: this, seed });
-    this.geometry.attributes.position.needsUpdate = true;
-    this.geometry.computeVertexNormals();
+    // Coverage tracker — what fraction of the surface the player has
+    // surveyed from this planet's atmosphere. Drives the claim trigger.
+    this.coverage = new Coverage();
+    this.claimed = false;
 
-    // Instanced scale features (now on flattened terrain in the pad zone)
+    // Instanced scale features (rocks, flora) covering the whole surface
+    // now that there's no flattened pad zone to dodge.
     this.featuresGroup = buildInstancedFeatures({
       geometry: this.geometry,
       elevations: this.elevations,
       radius,
       seed,
       palette: this.palette,
-      excludeZone: {
-        center: this.landingZone.surfacePoint,
-        radius: this.landingZone.flattenRadiusOuter,
-      },
     });
 
     this.group = new THREE.Group();
     this.group.add(this.mesh);
     this.group.add(this.landmarkGroup);
     this.group.add(this.featuresGroup);
-    this.group.add(this.landingZone.group);
     this.group.position.copy(this.center);
 
     // Rapier trimesh collider

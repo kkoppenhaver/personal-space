@@ -126,6 +126,17 @@ Refactor checklist:
 - Existing Worker KV cache makes content deterministic per seed — same coord → same name/lore.
 - Verification: visit planet, write down its name, fly to next system, fly back, see same name.
 
+### Claim mechanic (2026-05-22)
+
+Landing-pad-as-claim was retired. New mechanic:
+
+- Each planet owns a `Coverage` tracker — 128 Fibonacci-sphere points, "seen" once the plane's nadir is within `CLAIM_COVERAGE_DOT` (~60° cone) of the point.
+- Per fixed step, the active atmosphere ticks its planet's coverage. Crossing `TUNING.CLAIM_COVERAGE` (0.5) fires the claim toast + entry + lore + thumbnail.
+- Exit atmosphere before threshold → coverage resets to zero for that planet. No resume.
+- `LandingZone` removed entirely. Side effect: the crater-through-the-planet runway bug is gone with it.
+- HUD shows a live progress bar (`#claim-bar`) while surveying.
+- ThumbnailCapture's settle-window path is retained for callers but the claim flow uses `snapshotNow()` because the plane is still aloft at claim time.
+
 ### Open questions — Logbook
 
 Resolved during the cloud-memoir plan (see `docs/plans/2026-05-20-001-feat-logbook-cloud-memoir-plan.md`):
@@ -145,8 +156,8 @@ Loosely ordered by impact, not necessarily build order.
 - **Shareable seeds.** "Copy link to current location" → URL with `?seed=<galaxySeed>&coord=<x,y,z>` → recipient lands in same universe at same spot. Worker KV makes names identical for them.
 - **Performance pass.** Planet LOD swap at distance, frustum-cull instanced features, worker-thread noise gen, atlas instance for features.
 - **More art directions.** The original brainstorm had four candidate aesthetic directions (full papercraft, Ghibli-painterly, hand-drawn sketched, stylized realism). We're closest to "Ghibli-painterly low-poly w/ paper-plane protagonist" now. Could expose a runtime toggle.
-- **Better landing feel.** Touch-down particles. Visible "claimed" flag/banner on the runway. A short pause + bigger lore reveal on claim.
-- **Mini-tutorial.** First-time atmosphere entry shows a hint about pitch input. First landing shows takeoff hint.
+- **Survey feedback.** Small particle puffs or a low chime on each new cell discovered; satisfying "ding" when the bar fills.
+- **Mini-tutorial.** First-time atmosphere entry shows a hint about pitch input + the survey mechanic.
 - **Logbook UI polish.** Per-entry detail page with full lore. Sortable. Maybe a tiny rendering of each planet.
 
 ---
@@ -195,4 +206,4 @@ All live-editable from the dev console as `window.TUNING.<KEY> = value`.
 - Debug HUD covers a useful chunk of viewport. Either dismiss it later or hide-by-default with a `?debug=1` toggle.
 - The runway is always oriented along the planet's "east" tangent at the chosen surface point — not aligned with any meaningful approach corridor. Could make it directionally meaningful later (face the prevailing wind).
 - Auto-roll's anti-inversion guard occasionally produces a small wobble when planeUp is right at ±90° from radialUp. Rarely encountered.
-- Runway flattening punches a giant hole in the planet. `LandingZone` projects vertices onto the tangent plane through the surface point inside the inner radius, which collapses the curved surface — viewed from elsewhere on the planet, it reads as a crater/hole through to the other side. Fix needs the flattened region to stay attached to the surrounding terrain (smooth blend out to the rim) instead of dropping straight to a flat plane.
+- ~~Runway flattening punches a giant hole in the planet.~~ Resolved 2026-05-22 by removing the landing pad entirely along with the move to coverage-based claims.

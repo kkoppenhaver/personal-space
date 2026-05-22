@@ -33,6 +33,12 @@
     #landmark { position: absolute; top: 38%; left: 0; right: 0; text-align: center; font-size: 16px; letter-spacing: 0.1em; opacity: 0; transition: opacity 0.6s; }
     #landmark.show { opacity: 0.9; }
 
+    #claim-bar { position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%); width: 320px; opacity: 0; transition: opacity 0.4s; pointer-events: none; text-align: center; }
+    #claim-bar.show { opacity: 1; }
+    #claim-bar-label { font-size: 11px; letter-spacing: 0.18em; opacity: 0.85; margin-bottom: 4px; text-shadow: 0 0 8px rgba(0,0,0,0.6); }
+    #claim-bar-track { height: 4px; background: rgba(244,237,224,0.18); border: 1px solid rgba(244,237,224,0.25); border-radius: 2px; overflow: hidden; }
+    #claim-bar-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), #ffd86b); transition: width 0.18s linear; }
+
     #logbook-toggle { position: absolute; top: 14px; left: 14px; background: rgba(20,16,12,0.55); border: 1px solid rgba(244,237,224,0.18); border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer; color: var(--paper); }
 
     #logbook { position: absolute; top: 0; left: 0; bottom: 0; width: 320px; background: rgba(20,16,12,0.92); border-right: 1px solid rgba(244,237,224,0.18); transform: translateX(-100%); transition: transform 0.3s; padding: 14px; overflow-y: auto; font-size: 12px; backdrop-filter: blur(8px); }
@@ -129,6 +135,10 @@
       <div><span class="label">STATE</span><span class="val" id="stat-state">—</span></div>
     </div>
     <div id="landmark"></div>
+    <div id="claim-bar">
+      <div id="claim-bar-label"></div>
+      <div id="claim-bar-track"><div id="claim-bar-fill"></div></div>
+    </div>
     <div id="toast"></div>
     <div id="flash"></div>
     <div id="pings"></div>

@@ -71,6 +71,15 @@ export const TUNING = {
   // reduce overshoot and the post-input wobble.
   // (PITCH_RATE/BANK_RATE below override the older values.)
 
+  // Claim mechanic. The player claims a planet by surveying it from the
+  // atmosphere: each fixed step, any cell of a Fibonacci sphere whose
+  // direction is within CLAIM_COVERAGE_DOT of the plane's nadir is marked
+  // seen. Once CLAIM_COVERAGE fraction of cells is seen, the planet enters
+  // the logbook. Exiting atmosphere before threshold resets the seen set.
+  CLAIM_COVERAGE: 0.50,
+  CLAIM_COVERAGE_DOT: 0.5,    // ≈ 60° cone around nadir per tick
+  CLAIM_COVERAGE_CELLS: 128,  // Fibonacci sphere sample count
+
   // LLM approach commitment thresholds. Tier 2 ("approach") fires for a
   // planet when EITHER the plane is in its atmosphere OR it is roughly
   // aimed at the planet from close enough to count as committed.
