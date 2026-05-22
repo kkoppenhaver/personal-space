@@ -16,7 +16,7 @@ import { mulberry32, hashSeeds } from './Seed.js';
 //     appear right now; updated in place by SolarSystem.translate during
 //     floating-origin rebases)
 
-const CELL_SIZE = 15000;       // 15 km per cell — comfortably bigger than a system (ORBIT_MAX = 5km)
+export const CELL_SIZE = 15000;  // 15 km per cell — comfortably bigger than a system (ORBIT_MAX = 5km)
 const SPAWN_RADIUS = 22500;    // load cells within 1.5 cells of the player
 const CULL_RADIUS = 35000;     // keep cells loaded a bit longer so backtracking is cheap
 const SYSTEM_DENSITY = 0.45;   // fraction of cells that contain a system (after density seed)
@@ -93,6 +93,25 @@ export class Galaxy {
       if (d < bestDist) { bestDist = d; best = ref; }
     }
     return best;
+  }
+
+  // Resolve a planet back to its full identity tuple — the canonical key the
+  // cloud logbook uses to dedupe across devices. Returns null if the planet
+  // isn't in any currently-loaded system (which shouldn't happen at claim
+  // time but we don't crash if it does).
+  identityForPlanet(planet) {
+    for (const [cellKey, sys] of this.systems.entries()) {
+      const idx = sys.planets.indexOf(planet);
+      if (idx === -1) continue;
+      const [ix, iy, iz] = cellKey.split(',').map(Number);
+      return {
+        galaxy_seed: this.seed,
+        cell_x: ix, cell_y: iy, cell_z: iz,
+        planet_index: idx,
+        planet_seed: planet.seed,
+      };
+    }
+    return null;
   }
 
   planetForColliderHandle(handle) {

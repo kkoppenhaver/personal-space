@@ -21,8 +21,10 @@ import { LLMClient } from './llm/LLMClient.js';
 
 import { AuthClient } from './auth/AuthClient.js';
 import { LogbookStore } from './logbook/LogbookStore.js';
-import { LogbookSync } from './logbook/LogbookSync.js';
+import { LogbookSync, patchEntryRemote } from './logbook/LogbookSync.js';
 import { migrateLocalStorageIfNeeded } from './logbook/migrate.js';
+import { ThumbnailCapture } from './logbook/ThumbnailCapture.js';
+import { FlightStats } from './game/FlightStats.js';
 
 async function main() {
   // 1. Init Rapier WASM
@@ -30,7 +32,11 @@ async function main() {
 
   // 2. Three.js scene
   const canvas = document.getElementById('canvas');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  // preserveDrawingBuffer enables the thumbnail-capture fallback path:
+  // ThumbnailCapture renders to an offscreen target normally, but if that
+  // ever fails we can read pixels out of the live canvas instead. The
+  // documented perf cost is small at our scene complexity.
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight, false);
   renderer.setClearColor(0x05060a);
@@ -87,6 +93,11 @@ async function main() {
   const logbook = new Logbook({ store: logbookStore });
   const debugHUD = new DebugHUD();
   const planetNav = new PlanetNav(canvas);
+
+  // 7b. Per-attempt flight stats (top speed, time-to-land, crashes, distance).
+  // Reset on spawn/respawn; captured at claim time.
+  const flightStats = new FlightStats();
+  const thumbnailCapture = new ThumbnailCapture({ renderer, scene, camera });
 
   // 7. LLM client (with offline fallback)
   const workerURL = (new URLSearchParams(location.search)).get('worker')
@@ -189,6 +200,7 @@ async function main() {
   // 9. Spawn the plane at the home system.
   const { pos: spawnPos0, fwd: spawnFwd0 } = galaxy.defaultSpawn();
   plane.spawn(spawnPos0, spawnFwd0, TUNING.CRUISE_SPEED);
+  flightStats.startAttempt();
   camera.position.copy(spawnPos0.clone().addScaledVector(spawnFwd0, -14)).add(new THREE.Vector3(0, 1.8, 0));
 
   // Resolve initial active planet/atmosphere/system from spawn position.
@@ -222,6 +234,7 @@ async function main() {
         const s = galaxy.defaultSpawn();
         plane.spawn(s.pos, s.fwd, TUNING.CRUISE_SPEED);
         flight.reset();
+        flightStats.resetAttempt();
         const a = galaxy.activePlanetFor(plane.position());
         activePlanet = a.planet;
         activeAtmosphere = a.atmosphere;
@@ -251,6 +264,9 @@ async function main() {
         respawnFwd.normalize();
         plane.respawnAt(respawnPos, respawnFwd, TUNING.CRUISE_SPEED);
         flight.reset();
+        // Crash → respawn keeps the crash count climbing for this attempt; the
+        // next claim's logbook entry then records "took 3 crashes to land".
+        flightStats.resetAttempt({ incrementCrashes: true });
         crashRespawnAt = 0;
         toast.show('RESPAWN', 1000, '#ffd86b');
         const a = galaxy.activePlanetFor(plane.position());
@@ -277,6 +293,7 @@ async function main() {
           fwdRecover.normalize();
           plane.respawnAt(recoverPos, fwdRecover, TUNING.CRUISE_SPEED);
           flight.reset();
+          flightStats.resetAttempt();
           toast.show('RECOVERED', 1000, '#ffd86b');
         }
       }
@@ -374,10 +391,14 @@ async function main() {
       prevInside = insideNow;
       prevActivePlanet = activePlanet;
 
-      // Landing-pad claim — sweep every loaded planet (claims are sticky in
-      // the LandingZone itself, so a despawn+respawn of a system loses the
-      // claim flag for now; Task 17 will move claim/visit state to the
-      // logbook and key it by galaxy coord so it survives streaming).
+      // Tick per-attempt stats + any pending thumbnail capture jobs.
+      flightStats.tick(dt, plane.velocity().length());
+      thumbnailCapture.tick();
+
+      // Landing-pad claim — two-phase save: the entry is written immediately,
+      // then Tier 3 lore + the thumbnail backfill it asynchronously. Identity
+      // ownership lives on the entry (via the LogbookStore), so a system
+      // streaming away before lore returns no longer drops it on the floor.
       for (const ref of galaxy.allPlanets()) {
         const p = ref.planet;
         if (p.landingZone.claimed) continue;
@@ -385,21 +406,57 @@ async function main() {
         p.landingZone.markClaimed();
         const name = p.meta?.name || `Unnamed-${p.seed}`;
         toast.show(`${name.toUpperCase()} · CLAIMED`, 2200, '#ffd66b');
-        logbook.add({
-          seed: p.seed,
-          name,
-          biome: p.meta?.biome || 'unknown',
+
+        const identity = galaxy.identityForPlanet(p);
+        const stats = flightStats.capture();
+        const entryInput = {
+          id: cryptoUUID(),
+          ...identity,
+          planet_name: name,
+          biome: p.meta?.biome || null,
           palette: p.meta?.palette || null,
-          landmarks: p.meta?.landmarks || [],
-          visitedAt: Date.now(),
-        });
+          landmarks: p.meta?.landmarks || null,
+          lore: null,
+          lore_status: 'pending',
+          claimed_at: Date.now(),
+          stats,
+        };
+        const entryPromise = logbookStore.add(entryInput);
+
+        // Tier 3 — ownership keyed by entry, not Planet. Survives streaming.
         llm.land(p.seed, {
           name: p.meta?.name,
           biome: p.meta?.biome,
           landmarks: p.meta?.landmarks,
-        }).then(lore => {
+        }).then(async (lore) => {
+          const entry = await entryPromise;
           if (lore?.surfaceLore) hud.setLandmark(lore.surfaceLore);
-        }).catch(() => {});
+          if (!entry) return;
+          const patch = {
+            lore: lore?.surfaceLore || null,
+            lore_status: lore?.surfaceLore ? 'ready' : 'failed',
+            landmarks: lore?.landmarkLore
+              ? mergeLandmarkLore(p.meta?.landmarks, lore.landmarkLore)
+              : (p.meta?.landmarks || null),
+          };
+          await logbookStore.update(entry.id, patch);
+          // Best-effort remote PATCH; if it 404s (entry not POSTed yet), the
+          // next sync tick re-POSTs with the updated fields.
+          patchEntryRemote(entry.id, {
+            lore: patch.lore, lore_status: patch.lore_status,
+            landmarks: patch.landmarks,
+          });
+        }).catch(async () => {
+          const entry = await entryPromise;
+          if (entry) await logbookStore.update(entry.id, { lore_status: 'failed' });
+        });
+
+        // Thumbnail — wait for the settle window, then attach + sync.
+        thumbnailCapture.capture({ plane }).then(async (blob) => {
+          if (!blob) return;
+          const entry = await entryPromise;
+          if (entry) await logbookStore.attachThumbnail(entry.id, blob);
+        });
       }
 
       // Update HUD
@@ -479,7 +536,7 @@ async function main() {
   // Debug hooks
   window.__GAME = {
     plane, galaxy, flight, cameraRig, origin,
-    auth, logbookStore, logbookSync,
+    auth, logbookStore, logbookSync, flightStats, thumbnailCapture,
     get planet() { return activePlanet; },
     get atmosphere() { return activeAtmosphere; },
     get system() { return activeSystem; },
@@ -512,6 +569,24 @@ async function main() {
   };
 
   loop.start();
+}
+
+// Per-entry id for new logbook entries. crypto.randomUUID is universally
+// available in modern browsers; fallback path stays for old WebKit.
+function cryptoUUID() {
+  if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+}
+
+// Combine Tier 2 landmarks (name, slotId, kind) with Tier 3 lore blurbs
+// (slotId, blurb) into a single array suitable for the logbook detail view.
+function mergeLandmarkLore(landmarks, landmarkLore) {
+  if (!Array.isArray(landmarks)) return Array.isArray(landmarkLore) ? landmarkLore : null;
+  const byId = new Map((landmarkLore || []).map((l) => [l.slotId, l.blurb]));
+  return landmarks.map((lm) => ({ ...lm, blurb: byId.get(lm.slotId) || null }));
 }
 
 main().catch(err => {
