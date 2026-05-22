@@ -7,6 +7,8 @@ import { cors } from 'hono/cors';
 
 import { llm } from './routes/llm.js';
 import { auth } from './routes/auth.js';
+import { logbook } from './routes/logbook.js';
+import { account } from './routes/account.js';
 
 const app = new Hono();
 
@@ -26,6 +28,8 @@ app.route('/', llm);
 
 // Accounts + logbook API under /api/*.
 app.route('/api/auth', auth);
+app.route('/api/logbook', logbook);
+app.route('/api/account', account);
 
 app.notFound((c) => c.json({ error: 'not_found' }, 404));
 app.onError((err, c) => {
