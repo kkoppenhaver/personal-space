@@ -19,6 +19,11 @@ import { DebugHUD } from './ui/DebugHUD.js';
 
 import { LLMClient } from './llm/LLMClient.js';
 
+import { AuthClient } from './auth/AuthClient.js';
+import { LogbookStore } from './logbook/LogbookStore.js';
+import { LogbookSync } from './logbook/LogbookSync.js';
+import { migrateLocalStorageIfNeeded } from './logbook/migrate.js';
+
 async function main() {
   // 1. Init Rapier WASM
   await RAPIER.init();
@@ -63,10 +68,23 @@ async function main() {
   const flight = new FlightController({ rapier: RAPIER });
   const cameraRig = new CameraRig({ camera });
 
-  // 6. UI
+  // 6. Auth + logbook store (cloud-backed; bootstraps in background).
+  // Defensive: a broken IDB (incognito, quota) shouldn't block boot.
+  const auth = new AuthClient();
+  const logbookStore = new LogbookStore();
+  try {
+    await logbookStore.resetTransientSyncing();
+    await migrateLocalStorageIfNeeded(logbookStore);
+  } catch (e) {
+    console.warn('logbook IDB unavailable; entries will not persist:', e);
+  }
+  const logbookSync = new LogbookSync({ store: logbookStore, auth });
+  auth.bootstrap().then(() => logbookSync.start()).catch((e) => console.warn('auth bootstrap failed:', e));
+
+  // 7. UI
   const toast = new Toast();
   const hud = new HUD();
-  const logbook = new Logbook();
+  const logbook = new Logbook({ store: logbookStore });
   const debugHUD = new DebugHUD();
   const planetNav = new PlanetNav(canvas);
 
@@ -461,6 +479,7 @@ async function main() {
   // Debug hooks
   window.__GAME = {
     plane, galaxy, flight, cameraRig, origin,
+    auth, logbookStore, logbookSync,
     get planet() { return activePlanet; },
     get atmosphere() { return activeAtmosphere; },
     get system() { return activeSystem; },
