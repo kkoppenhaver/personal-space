@@ -11,11 +11,13 @@ export class Logbook {
   /**
    * @param {{ store: import('../logbook/LogbookStore.js').LogbookStore }} opts
    */
-  constructor({ store }) {
+  constructor({ store, sync = null }) {
     this.store = store;
+    this.sync = sync;
     this.panel = document.getElementById('logbook');
     this.list = document.getElementById('logbook-list');
     this.btn = document.getElementById('logbook-toggle');
+    this.statusPill = document.getElementById('logbook-status');
     this.detailId = null;          // when set, render detail view for this id
     this._thumbCache = new WeakMap(); // blob → object URL
 
@@ -23,7 +25,16 @@ export class Logbook {
     if (this.list) this.list.addEventListener('click', (e) => this._onListClick(e));
 
     this.store.addEventListener('change', () => this.render());
+    if (this.sync) this.sync.addEventListener('change', () => this._renderStatus());
+    this._renderStatus();
     this.render();
+  }
+
+  _renderStatus() {
+    if (!this.statusPill || !this.sync) return;
+    const online = this.sync.online;
+    this.statusPill.textContent = online ? '' : 'OFFLINE';
+    this.statusPill.className = online ? 'status hidden' : 'status offline';
   }
 
   // Back-compat shim for the current claim site in main.js.

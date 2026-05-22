@@ -8,6 +8,12 @@ routes = [
   { pattern = "api.personalspace.fun", custom_domain = true }
 ]
 
+# Anonymous-user GC: daily at 03:00 UTC. Deletes users with anonymous=1 and
+# claim_count=0 created more than 30 days ago. CASCADE handles entries +
+# sessions + passkeys (none of which exist for unused anon users anyway).
+[triggers]
+crons = ["0 3 * * *"]
+
 [vars]
 ALLOWED_ORIGINS = "https://personalspace.fun,https://www.personalspace.fun,http://localhost:5173,http://127.0.0.1:5173"
 WEBAUTHN_RP_ID = "personalspace.fun"

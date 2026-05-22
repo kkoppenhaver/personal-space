@@ -13,13 +13,23 @@ import { apiPost, apiPatch, apiPut, ApiError } from '../net/api.js';
 
 const TICK_MS = 4000;
 
-export class LogbookSync {
+export class LogbookSync extends EventTarget {
   constructor({ store, auth }) {
+    super();
     this.store = store;
     this.auth = auth;
     this._timer = null;
     this._running = false;
     this._kicked = false;
+    this.online = true;      // last sync attempt succeeded
+    this.lastError = null;
+  }
+
+  _setOnline(v, err = null) {
+    if (this.online === v) return;
+    this.online = v;
+    this.lastError = err;
+    this.dispatchEvent(new Event('change'));
   }
 
   start() {
@@ -67,12 +77,14 @@ export class LogbookSync {
         const res = await apiPost('/api/logbook', payload);
         await this.store.markSynced(entry.id, res.id, res.canonical === true);
         entry = await this.store.get(res.id) || entry;
+        this._setOnline(true);
       } catch (e) {
         await this.store.markFailed(entry.id, e);
         if (e instanceof ApiError && (e.status === 401 || e.status === 413 || e.status === 422)) {
           // Don't keep retrying obviously-broken cases.
           return;
         }
+        if (!(e instanceof ApiError)) this._setOnline(false, e);
         return; // try again next tick
       }
     }
@@ -90,8 +102,10 @@ export class LogbookSync {
           timeoutMs: 10000,
         });
         await this.store.markThumbnailSynced(entry.id);
+        this._setOnline(true);
       } catch (e) {
         await this.store.markThumbnailFailed(entry.id);
+        if (!(e instanceof ApiError)) this._setOnline(false, e);
       }
     }
   }

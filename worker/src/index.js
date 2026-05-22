@@ -37,4 +37,24 @@ app.onError((err, c) => {
   return c.json({ error: 'internal' }, 500);
 });
 
-export default app;
+// scheduled handler — Worker cron triggers from wrangler.toml [triggers].
+async function scheduled(event, env, ctx) {
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  try {
+    const res = await env.DB
+      .prepare(`DELETE FROM users WHERE anonymous = 1 AND claim_count = 0 AND created_at < ?1`)
+      .bind(cutoff).run();
+    console.log(`anon_gc deleted=${res.meta?.changes ?? 0} cutoff=${new Date(cutoff).toISOString()}`);
+  } catch (e) {
+    console.error('anon_gc failed:', e);
+  }
+  // Also purge stale expired sessions so the table doesn't grow unbounded.
+  try {
+    await env.DB.prepare(`DELETE FROM sessions WHERE expires_at < ?1`).bind(Date.now()).run();
+  } catch {}
+}
+
+export default {
+  fetch: app.fetch.bind(app),
+  scheduled,
+};

@@ -93,7 +93,7 @@ async function main() {
   // 7. UI
   const toast = new Toast();
   const hud = new HUD();
-  const logbook = new Logbook({ store: logbookStore });
+  const logbook = new Logbook({ store: logbookStore, sync: logbookSync });
   const debugHUD = new DebugHUD();
   const planetNav = new PlanetNav(canvas);
 
@@ -449,6 +449,13 @@ async function main() {
         };
         const entryPromise = logbookStore.add(entryInput);
         upsell.noteClaim();
+        // Soft-cap nudge once we cross 500 entries. Hard cap (2000) lives on
+        // the server; this is just a heads-up.
+        logbookStore.getAll().then((all) => {
+          if (all.length === 500) toast.show('LOGBOOK · 500 ENTRIES', 2200, '#d4b06e');
+          else if (all.length === 1500) toast.show('LOGBOOK · 1500 ENTRIES — APPROACHING CAP', 3000, '#d4b06e');
+          else if (all.length === 1900) toast.show('LOGBOOK · NEAR LIMIT (2000)', 3500, '#d26e72');
+        }).catch(() => {});
 
         // Tier 3 — ownership keyed by entry, not Planet. Survives streaming.
         llm.land(p.seed, {
