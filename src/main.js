@@ -240,6 +240,7 @@ async function main() {
       const ev = input.drain();
 
       if (ev.logbookEdge) logbook.toggle();
+      if (ev.debugEdge) debugHUD.toggle();
       if (ev.resetEdge) {
         // Always reset to the home system (cell 0,0,0). Planet centers may
         // have shifted in render space due to floating-origin rebases.

@@ -30,10 +30,18 @@ export class DebugHUD {
       min-width: 280px;
       backdrop-filter: blur(4px);
     `;
+    this.el.style.display = 'none';
+    this.visible = false;
     document.body.appendChild(this.el);
   }
 
+  toggle() {
+    this.visible = !this.visible;
+    this.el.style.display = this.visible ? '' : 'none';
+  }
+
   update(plane, planet, atmosphere, input, flight) {
+    if (!this.visible) return;
     const pos = plane.position();
     const v = plane.velocity();
     const fwd = plane.forward();

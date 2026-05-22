@@ -9,9 +9,11 @@ export class Input {
     this.throttle = false;   // hold W — extra speed, especially useful in space
     this.resetEdge = false;
     this.logbookEdge = false;
+    this.debugEdge = false;
     this._flickHeld = false;
     this._resetHeld = false;
     this._logbookHeld = false;
+    this._debugHeld = false;
 
     window.addEventListener('keydown', (e) => this._onKey(e, true));
     window.addEventListener('keyup', (e) => this._onKey(e, false));
@@ -28,10 +30,12 @@ export class Input {
       flickEdge: this.flickEdge,
       resetEdge: this.resetEdge,
       logbookEdge: this.logbookEdge,
+      debugEdge: this.debugEdge,
     };
     this.flickEdge = false;
     this.resetEdge = false;
     this.logbookEdge = false;
+    this.debugEdge = false;
     return ev;
   }
 
@@ -43,6 +47,7 @@ export class Input {
     this._flickHeld = false;
     this._resetHeld = false;
     this._logbookHeld = false;
+    this._debugHeld = false;
   }
 
   _onKey(e, down) {
@@ -73,6 +78,10 @@ export class Input {
       case 'KeyL':
         if (down && !this._logbookHeld) this.logbookEdge = true;
         this._logbookHeld = down;
+        break;
+      case 'Backquote':
+        if (down && !this._debugHeld) this.debugEdge = true;
+        this._debugHeld = down;
         break;
       default: break;
     }
