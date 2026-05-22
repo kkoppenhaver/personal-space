@@ -1,7 +1,7 @@
 ---
 title: Logbook as cloud-backed memoir (accounts + D1 + R2)
 type: feat
-status: active
+status: completed
 date: 2026-05-20
 supersedes: plan.md Phase 2 / Task 17 "Logbook revisit-by-coordinates"
 ---
