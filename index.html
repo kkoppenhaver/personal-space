@@ -37,11 +37,36 @@
 
     #logbook { position: absolute; top: 0; left: 0; bottom: 0; width: 320px; background: rgba(20,16,12,0.92); border-right: 1px solid rgba(244,237,224,0.18); transform: translateX(-100%); transition: transform 0.3s; padding: 14px; overflow-y: auto; font-size: 12px; backdrop-filter: blur(8px); }
     #logbook.open { transform: translateX(0); }
-    #logbook h2 { margin: 0 0 10px 0; font-size: 14px; letter-spacing: 0.18em; color: var(--accent); }
-    #logbook .entry { border-bottom: 1px solid rgba(244,237,224,0.08); padding: 10px 0; }
+    #logbook h2 { margin: 0 0 10px 0; font-size: 14px; letter-spacing: 0.18em; color: var(--accent); display: flex; justify-content: space-between; align-items: center; }
+    #logbook h2 .status { font-size: 9px; padding: 2px 6px; border-radius: 3px; letter-spacing: 0.16em; }
+    #logbook h2 .status.hidden { display: none; }
+    #logbook h2 .status.offline { background: rgba(210,110,114,0.18); color: #f3b9bc; border: 1px solid rgba(210,110,114,0.5); }
+    #logbook .entry { border-bottom: 1px solid rgba(244,237,224,0.08); padding: 10px 0; cursor: pointer; }
+    #logbook .entry:hover { background: rgba(244,237,224,0.04); }
+    #logbook .entry .row { display: flex; justify-content: space-between; align-items: center; }
     #logbook .entry .name { color: var(--accent); font-weight: bold; }
     #logbook .entry .biome { opacity: 0.6; }
     #logbook .entry .ts { opacity: 0.4; font-size: 10px; margin-top: 4px; }
+    #logbook .entry .sync { font-size: 11px; line-height: 1; }
+    #logbook .sync-ok { color: #6ed28d; }
+    #logbook .sync-pending { color: #d4b06e; }
+    #logbook .sync-failed { color: #d26e72; }
+    #logbook .sync-muted { color: rgba(244,237,224,0.3); }
+    #logbook .section-divider { font-size: 10px; letter-spacing: 0.18em; opacity: 0.4; margin: 16px 0 6px; }
+    #logbook .back-btn { background: none; border: 1px solid rgba(244,237,224,0.2); color: var(--paper); font: inherit; padding: 4px 10px; border-radius: 4px; cursor: pointer; margin-bottom: 10px; }
+    #logbook .thumb { display: block; width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 6px; margin-bottom: 10px; background: #111; }
+    #logbook .thumb.placeholder { /* gradient already set inline */ }
+    #logbook .detail-title { color: var(--accent); font-size: 16px; font-weight: bold; }
+    #logbook .detail-biome { opacity: 0.6; margin-bottom: 12px; }
+    #logbook .lore { line-height: 1.55; }
+    #logbook .lore.muted { opacity: 0.5; font-style: italic; }
+    #logbook .landmark { margin: 6px 0; }
+    #logbook .landmark .lname { color: var(--accent); font-size: 11px; }
+    #logbook .landmark .lblurb { opacity: 0.75; }
+    #logbook .stats { margin-top: 4px; }
+    #logbook .stat-row { display: flex; justify-content: space-between; font-size: 11px; line-height: 1.8; }
+    #logbook .stat-label { opacity: 0.55; letter-spacing: 0.08em; }
+    #logbook .detail-ts { opacity: 0.4; font-size: 10px; margin-top: 14px; }
 
     #boot { position: absolute; inset: 0; background: #000; color: var(--paper); display: flex; align-items: center; justify-content: center; font-size: 14px; letter-spacing: 0.2em; }
     #boot.hidden { display: none; }
@@ -56,6 +81,42 @@
     #pause-menu .controls { font-size: 11px; opacity: 0.55; line-height: 1.8; letter-spacing: 0.08em; }
     #pause-menu button { background: rgba(255,111,60,0.15); border: 1px solid rgba(255,111,60,0.55); color: var(--accent); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.18em; padding: 8px 18px; border-radius: 6px; cursor: pointer; margin-bottom: 18px; }
     #pause-menu button:hover { background: rgba(255,111,60,0.28); }
+
+    /* Account drawer + auth modal */
+    #account-toggle { position: absolute; top: 14px; left: 138px; background: rgba(20,16,12,0.55); border: 1px solid rgba(244,237,224,0.18); border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer; color: var(--paper); }
+    #account { position: absolute; top: 0; right: 0; bottom: 0; width: 320px; background: rgba(20,16,12,0.92); border-left: 1px solid rgba(244,237,224,0.18); transform: translateX(100%); transition: transform 0.3s; padding: 14px; overflow-y: auto; font-size: 12px; backdrop-filter: blur(8px); }
+    #account.open { transform: translateX(0); }
+    #account h2 { margin: 0 0 10px 0; font-size: 14px; letter-spacing: 0.18em; color: var(--accent); }
+    #account p { margin: 8px 0; line-height: 1.5; }
+    #account p.muted { opacity: 0.7; }
+    #account p.small { font-size: 11px; opacity: 0.55; }
+    #account button { display: block; width: 100%; background: rgba(255,111,60,0.12); border: 1px solid rgba(255,111,60,0.45); color: var(--paper); font: inherit; padding: 8px 12px; border-radius: 4px; cursor: pointer; margin: 6px 0; letter-spacing: 0.08em; }
+    #account button:hover { background: rgba(255,111,60,0.22); }
+    #account button.danger { border-color: rgba(210,110,114,0.6); color: #f3b9bc; }
+    #account hr { border: 0; border-top: 1px solid rgba(244,237,224,0.12); margin: 14px 0; }
+
+    #auth-modal { position: absolute; inset: 0; background: rgba(8,6,4,0.55); backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; z-index: 60; }
+    #auth-modal.show { display: flex; }
+    #auth-modal .card { background: rgba(20,16,12,0.96); border: 1px solid rgba(244,237,224,0.22); border-radius: 10px; padding: 22px 26px; min-width: 320px; max-width: 360px; box-shadow: 0 12px 40px rgba(0,0,0,0.55); }
+    #auth-modal h1 { margin: 0 0 14px 0; font-size: 18px; letter-spacing: 0.22em; color: var(--accent); }
+    #auth-modal .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+    #auth-modal .tabs button { flex: 1; background: rgba(244,237,224,0.06); border: 1px solid rgba(244,237,224,0.18); color: var(--paper); font: inherit; padding: 6px 8px; border-radius: 4px; cursor: pointer; letter-spacing: 0.08em; font-size: 11px; }
+    #auth-modal .tabs button.active { background: rgba(255,111,60,0.22); border-color: rgba(255,111,60,0.6); color: var(--accent); }
+    #auth-modal .pane { display: block; }
+    #auth-modal .pane p { font-size: 12px; line-height: 1.55; opacity: 0.85; }
+    #auth-modal input[type=email] { width: 100%; box-sizing: border-box; padding: 10px; background: rgba(244,237,224,0.05); border: 1px solid rgba(244,237,224,0.2); color: var(--paper); font: inherit; border-radius: 4px; margin: 8px 0; }
+    #auth-modal .cta { background: rgba(255,111,60,0.2); border: 1px solid rgba(255,111,60,0.6); color: var(--accent); font: inherit; padding: 10px 14px; border-radius: 4px; cursor: pointer; width: 100%; letter-spacing: 0.12em; }
+    #auth-modal .cta:hover { background: rgba(255,111,60,0.32); }
+    #auth-modal .ghost { background: none; border: 0; color: var(--paper); opacity: 0.55; cursor: pointer; font-size: 11px; margin-top: 12px; }
+    #auth-modal .status { min-height: 20px; font-size: 11px; margin: 8px 0; letter-spacing: 0.04em; }
+    #auth-modal .status-ok { color: #6ed28d; }
+    #auth-modal .status-err { color: #d26e72; }
+    #auth-modal .switch { font-size: 11px; opacity: 0.6; margin-top: 8px; }
+    #auth-modal .switch a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+    #upsell-banner { position: absolute; left: 50%; bottom: 56px; transform: translateX(-50%); background: rgba(20,16,12,0.92); border: 1px solid rgba(255,111,60,0.55); border-radius: 8px; padding: 10px 14px; display: flex; gap: 10px; align-items: center; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 40; }
+    #upsell-banner button { background: rgba(255,111,60,0.2); border: 1px solid rgba(255,111,60,0.6); color: var(--accent); font: inherit; padding: 5px 10px; border-radius: 4px; cursor: pointer; letter-spacing: 0.08em; font-size: 11px; }
+    #upsell-banner button:hover { background: rgba(255,111,60,0.32); }
   </style>
 </head>
 <body>
@@ -72,8 +133,36 @@
     <div id="flash"></div>
     <div id="pings"></div>
     <button id="logbook-toggle">LOGBOOK · L</button>
-    <aside id="logbook"><h2>LOGBOOK</h2><div id="logbook-list"></div></aside>
+    <button id="account-toggle">ACCOUNT</button>
+    <aside id="logbook"><h2>LOGBOOK<span id="logbook-status" class="status hidden"></span></h2><div id="logbook-list"></div></aside>
+    <aside id="account"><h2>ACCOUNT</h2><div id="account-body"></div><p class="small muted"><a href="/privacy.html" target="_blank" style="color:inherit">What we store →</a></p></aside>
     <div id="controls-help">↑↓ pitch · ←→ bank · SPACE throttle · SHIFT brake · R reset · L log · ESC pause</div>
+    <div id="auth-modal">
+      <div class="card">
+        <h1>PERSONAL SPACE</h1>
+        <div class="tabs">
+          <button data-tab="signup" class="active">NEW · PASSKEY</button>
+          <button data-tab="signin">RETURNING</button>
+          <button data-tab="email">EMAIL LINK</button>
+        </div>
+        <div data-pane="signup" class="pane">
+          <p>Save your logbook to this device with a passkey. No password. Uses your fingerprint, face, or PIN.</p>
+          <button class="cta" data-act="passkey-signup">CREATE PASSKEY</button>
+        </div>
+        <div data-pane="signin" class="pane" style="display:none">
+          <p>Sign in with a passkey you previously saved on this device or with the same account.</p>
+          <button class="cta" data-act="passkey-signin">SIGN IN WITH PASSKEY</button>
+        </div>
+        <div data-pane="email" class="pane" style="display:none">
+          <p>Enter your email and we'll send a one-time sign-in link. Useful if you've lost your passkey or are on a new device.</p>
+          <input id="auth-email-input" type="email" autocomplete="email" placeholder="you@example.com" />
+          <button class="cta" data-act="email-link">SEND LINK</button>
+        </div>
+        <div id="auth-status" class="status"></div>
+        <button class="ghost" data-act="close">CLOSE</button>
+      </div>
+    </div>
+
     <div id="pause-menu">
       <div class="card">
         <h1>PAUSED</h1>

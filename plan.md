@@ -59,7 +59,7 @@ Goal: deliver the "infinite universe" promise from the original brainstorm. Mult
 | 14 | Multi-planet PlanetNav + Tier 1 ping HUD strip | `src/ui/PlanetNav.js`, `src/ui/HUD.js`, `main.js` | ☑ |
 | 15 | Origin.js — floating-origin rebasing | `src/world/Origin.js` (new) | ☑ |
 | 16 | Galaxy.js — system streaming | `src/world/Galaxy.js` (new) | ☑ |
-| 17 | Logbook revisit-by-coordinates | `src/ui/Logbook.js`, `main.js` | ☐ |
+| 17 | ~~Logbook revisit-by-coordinates~~ — superseded by [logbook-cloud-memoir plan](docs/plans/2026-05-20-001-feat-logbook-cloud-memoir-plan.md) | `src/ui/Logbook.js`, `src/logbook/*`, `worker/*` | ☑ |
 
 **Task 13 notes (done):** `SolarSystem` builds a seeded sun + 3–6 planets at log-spaced orbits (200m–5km) with small inclination jitter. Each planet owns its own `Atmosphere` and `LandingZone`. `activePlanetFor(pos)` resolves the "current" planet (atmosphere-containing → else closest). Collision events look up the planet via a `colliderHandle → planet` Map. Crashes, recovery, landing-zone claims, and atmosphere-crossing toasts all dispatch off the active planet, and switching between atmospheres emits exit-then-enter toasts cleanly. `system.defaultSpawn()` puts the plane outside planet[0]'s atmosphere on the deep-space side, aimed tangentially.
 
@@ -128,8 +128,10 @@ Refactor checklist:
 
 ### Open questions — Logbook
 
-- **Persistence.** Today the logbook is `localStorage` only — wipes per-browser, doesn't sync. Decide: stay local? Cloud-backed (Worker + KV/D1) with anonymous user id? Export/import JSON? Account-based?
-- **Contents.** What goes in each entry beyond name + biome + timestamp? Candidates: thumbnail/screenshot of the planet (canvas snapshot at claim), full lore text, landmark list, claim coords, time-to-land, path traced. Pick what shows up on the entry detail page.
+Resolved during the cloud-memoir plan (see `docs/plans/2026-05-20-001-feat-logbook-cloud-memoir-plan.md`):
+- **Persistence.** Account-based via D1 + R2 on the existing Cloudflare Worker. Passkey-primary (SimpleWebAuthn) with email magic-link recovery (Resend). Anonymous users from day one; sign-up = upgrade in place.
+- **Contents.** Each entry stores identity tuple (galaxy_seed + cell + planet_index + planet_seed), name, biome, palette, landmarks, full Tier 3 lore, thumbnail (R2), and flight stats (time-to-land, top speed, crashes, distance).
+- **Direction.** Pure memoir/scrapbook — no revisit UI. Identity tuple is recorded for future-proofing and dedupe but never surfaced as navigation.
 
 ---
 

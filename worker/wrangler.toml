@@ -1,20 +1,82 @@
 name = "personal-space-llm"
 main = "src/index.js"
 compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
 
 # Production custom domain. Requires personalspace.fun to be on Cloudflare DNS.
 routes = [
   { pattern = "api.personalspace.fun", custom_domain = true }
 ]
 
-# Allowed origins for CORS.
+# Anonymous-user GC: daily at 03:00 UTC. Deletes users with anonymous=1 and
+# claim_count=0 created more than 30 days ago. CASCADE handles entries +
+# sessions + passkeys (none of which exist for unused anon users anyway).
+[triggers]
+crons = ["0 3 * * *"]
+
 [vars]
 ALLOWED_ORIGINS = "https://personalspace.fun,https://www.personalspace.fun,http://localhost:5173,http://127.0.0.1:5173"
+WEBAUTHN_RP_ID = "personalspace.fun"
+WEBAUTHN_RP_NAME = "Personal Space"
+# Comma-separated list of origins WebAuthn should accept ceremonies from.
+WEBAUTHN_ORIGINS = "https://personalspace.fun,http://localhost:5173,http://127.0.0.1:5173"
+SESSION_COOKIE_DOMAIN = ".personalspace.fun"
+# Resend "from" address. Must be on a verified domain.
+RESEND_FROM = "Personal Space <noreply@personalspace.fun>"
+PUBLIC_GAME_URL = "https://personalspace.fun"
 
-# Workers KV namespace for the LLM response cache.
+# ---- Bindings ----
+
+# Existing: LLM response cache (unchanged).
 [[kv_namespaces]]
 binding = "LLM_CACHE"
 id = "6b065833231e41809f62ed443335e9d6"
 
+# NEW: short-lived WebAuthn challenges (5-min TTL). Replace `id` after running
+#   wrangler kv namespace create AUTH_CHALLENGES
+[[kv_namespaces]]
+binding = "AUTH_CHALLENGES"
+id = "84183d6c50c249428fb4717155700c29"
+
+# NEW: D1 — users, passkeys, sessions, email tokens, logbook entries.
+# Run `wrangler d1 create personal-space` and paste the returned uuid here.
+[[d1_databases]]
+binding = "DB"
+database_name = "personal-space"
+database_id = "41a5ed2d-1f4e-4a45-a733-2c402495c64a"
+
+# NEW: R2 — thumbnail JPEGs (~50KB each).
+# Run `wrangler r2 bucket create personal-space-thumbs` then leave name as is.
+[[r2_buckets]]
+binding = "THUMBS"
+bucket_name = "personal-space-thumbs"
+
+# NEW: Rate limit binding for auth + abuse-prone endpoints.
+# https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
+# Rate Limit binding's simple form supports period = 10 or 60 only.
+# For longer windows (per-hour caps), layer a Durable Object — out of scope
+# for v1. Per-minute limits comfortably catch abuse; sustained higher rates
+# still get short-circuited by the per-IP general AUTH_LIMITER.
+
+[[unsafe.bindings]]
+name = "AUTH_LIMITER"
+type = "ratelimit"
+namespace_id = "2001"
+simple = { limit = 10, period = 60 }
+
+[[unsafe.bindings]]
+name = "EMAIL_LIMITER"
+type = "ratelimit"
+namespace_id = "2002"
+simple = { limit = 3, period = 60 }
+
+[[unsafe.bindings]]
+name = "THUMB_LIMITER"
+type = "ratelimit"
+namespace_id = "2003"
+simple = { limit = 5, period = 60 }
+
 # Secrets (set via `wrangler secret put`):
-#   ANTHROPIC_API_KEY
+#   ANTHROPIC_API_KEY   (existing — LLM proxy)
+#   SESSION_SECRET      (new — HMAC for signed session cookies; >=32 random bytes)
+#   RESEND_API_KEY      (new — magic link sender)
