@@ -171,19 +171,6 @@ async function main() {
           getDistance: () => Math.max(0, plane.position().distanceTo(p.center) - p.radius),
         });
 
-        // Pad indicator parented to the planet group so floating-origin
-        // rebases (and any future per-system motion) carry it along for free.
-        const proxy = new THREE.Object3D();
-        proxy.position.copy(p.landingZone.surfacePoint);
-        p.group.add(proxy);
-        planetNav.track(`pad:${p.seed}`, {
-          object: proxy,
-          label: 'LANDING',
-          color: '#ffd66b',
-          getDistance: () => p.landingZone.distanceFrom(plane.position()),
-          visible: () => atm.contains(plane.position()),
-        });
-
         // Tier 1 teaser ping. KV cache makes revisits instant.
         const label = `P${i + 1}`;
         llm.ping(p.seed, { starColor: sunCss }).then(r => {
@@ -196,7 +183,6 @@ async function main() {
     onSystemDespawned: (sys) => {
       for (const p of sys.planets) {
         planetNav.untrack(`planet:${p.seed}`);
-        planetNav.untrack(`pad:${p.seed}`);
         pings.delete(p.seed);
         approachSent.delete(p.seed);
       }
@@ -417,21 +403,40 @@ async function main() {
       prevInside = insideNow;
       prevActivePlanet = activePlanet;
 
-      // Tick per-attempt stats + any pending thumbnail capture jobs.
+      // Tick per-attempt stats.
       flightStats.tick(dt, plane.velocity().length());
-      thumbnailCapture.tick();
 
-      // Landing-pad claim — two-phase save: the entry is written immediately,
-      // then Tier 3 lore + the thumbnail backfill it asynchronously. Identity
-      // ownership lives on the entry (via the LogbookStore), so a system
-      // streaming away before lore returns no longer drops it on the floor.
-      for (const ref of galaxy.allPlanets()) {
-        const p = ref.planet;
-        if (p.landingZone.claimed) continue;
-        if (!p.landingZone.isLanded(plane)) continue;
-        p.landingZone.markClaimed();
-        const name = p.meta?.name || `Unnamed-${p.seed}`;
-        toast.show(`${name.toUpperCase()} · CLAIMED`, 2200, '#ffd66b');
+      // Coverage-based claim. While the plane is in atmosphere, accumulate
+      // surveyed cells on the active planet. Crossing the threshold fires
+      // the claim. Leaving an atmosphere mid-survey wipes that planet's
+      // progress — there's no resuming from the outside.
+      {
+        const planePos = plane.position();
+        let claimCandidate = null;
+        for (const ref of galaxy.allPlanets()) {
+          if (ref.planet.claimed) continue;
+          if (ref.atmosphere.contains(planePos)) {
+            ref.planet.coverage.tick(planePos, ref.planet.center);
+            if (ref.planet === activePlanet && ref.planet.coverage.pct() >= TUNING.CLAIM_COVERAGE) {
+              claimCandidate = ref.planet;
+            }
+          } else if (ref.planet.coverage.pct() > 0) {
+            ref.planet.coverage.reset();
+          }
+        }
+
+        // Update HUD progress bar for the planet we're currently surveying.
+        if (activePlanet && !activePlanet.claimed && activeAtmosphere?.contains(planePos)) {
+          hud.setClaimProgress(activePlanet.meta?.name || `P${activePlanet.seed}`, activePlanet.coverage.pct());
+        } else {
+          hud.setClaimProgress(null, 0);
+        }
+
+        if (claimCandidate) {
+          const p = claimCandidate;
+          p.claimed = true;
+          const name = p.meta?.name || `Unnamed-${p.seed}`;
+          toast.show(`${name.toUpperCase()} · CLAIMED`, 2200, '#ffd66b');
 
         const identity = galaxy.identityForPlanet(p);
         const stats = flightStats.capture();
@@ -485,13 +490,15 @@ async function main() {
           if (entry) await logbookStore.update(entry.id, { lore_status: 'failed' });
         });
 
-        // Thumbnail — wait for the settle window, then attach + sync.
-        thumbnailCapture.capture({ plane }).then(async (blob) => {
+        // Thumbnail — capture immediately. The plane is still flying, the
+        // camera is already framed on the planet, no settle window needed.
+        thumbnailCapture.snapshotNow().then(async (blob) => {
           if (!blob) return;
           const entry = await entryPromise;
           if (entry) await logbookStore.attachThumbnail(entry.id, blob);
         });
-      }
+        }  // end if (claimCandidate)
+      }  // end coverage block
 
       // Update HUD
       hud.setSpeed(plane.velocity().length());

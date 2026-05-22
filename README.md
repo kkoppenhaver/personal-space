@@ -45,17 +45,17 @@ src/
     Input.js                 Keyboard handling
     Plane.js                 Rapier ball body + paper plane mesh
     FlightController.js      Kinematic cruise + attitude
-    FlightStats.js           Per-attempt top speed / distance / crashes / time-to-land
+    FlightStats.js           Per-attempt top speed / distance / crashes / time-to-claim
     Aero.js                  Orbital tracking and auto-roll math
     CameraRig.js             Atmosphere/space chase camera with blend
     Tuning.js                All flight + LLM tuning constants
   world/
     Galaxy.js                Sparse hash grid; streams systems in and out
-    SolarSystem.js           Sun + 3–6 planets, each with atmosphere + pad
+    SolarSystem.js           Sun + 3–6 planets, each with atmosphere + coverage tracker
     Planet.js                Subdivided icosahedron + trimesh collider
     TerrainGen.js            Multi-octave value noise displacement
     Atmosphere.js            Translucent shell + rho function
-    LandingZone.js           Runway, beacon, terrain flattening, claim trigger
+    Coverage.js              Fibonacci-sphere surface sampling; per-planet survey progress
     Landmarks.js             Hero spire picks from elevation peaks
     Features.js              ~1200 instanced rocks + flora per planet
     Origin.js                Floating-origin rebasing (5km threshold)
@@ -103,13 +103,23 @@ A tiered LLM scheduler keeps prompts cheap and responsive:
 
 - **Tier 1 (Haiku)** — fires on system spawn, one per planet. Returns a one-line teaser; cheap enough to do for every planet in view.
 - **Tier 2 (Sonnet)** — commitment-gated. Per fixed step, for each not-yet-named planet, fires once when you're inside its atmosphere *or* aimed at it (`dot(fwd, toPlanet) ≥ 0.85`) within `radius + 1500m`. Returns name, biome, palette, landmark names.
-- **Tier 3 (Sonnet, more tokens)** — fires when you actually claim the pad. Returns surface lore that goes into the logbook entry (and a one-time HUD fly-out).
+- **Tier 3 (Sonnet, more tokens)** — fires the moment you claim a planet by surveying its surface (see below). Returns lore that goes into the logbook entry (and a one-time HUD fly-out).
 
 Cache key is `(tier, seed, normalizedContext)`, so revisiting any planet returns identical content. With a worker, the cache lives in Workers KV; without one, it lives in `localStorage` under `paper-airplane:llmcache:v1`.
 
+## Claiming a planet
+
+You claim a planet by surveying its surface from the atmosphere. While the plane is inside a planet's atmosphere shell, a 128-point Fibonacci-distributed sample of the surface is tracked; each tick, every sample point within ~60° of the plane's nadir is marked "seen". The progress bar on the HUD shows the running coverage percentage.
+
+- **At 50% coverage**, the planet enters your logbook (`TUNING.CLAIM_COVERAGE`).
+- **Leaving atmosphere before 50% resets the coverage** for that planet. There's no resuming from the outside — commit to the survey or come back later.
+- **Once claimed, the entry is permanent** regardless of future coverage.
+
+The math is cheap (one dot product per cell per fixed step) and rewards actually flying around the planet rather than parking in a stable orbit. Tune the threshold live with `window.TUNING.CLAIM_COVERAGE = 0.4` for a more forgiving run, or `0.7` for a demanding one.
+
 ## Accounts & logbook
 
-The logbook is a cloud-backed memoir of every planet you've claimed — captured at the moment of landing and preserved forever, across devices, with no obligation to remember a password.
+The logbook is a cloud-backed memoir of every planet you've claimed — captured at the moment of survey-complete and preserved forever, across devices, with no obligation to remember a password.
 
 **Anonymous by default.** On first launch the game silently mints a server-side anonymous user and a session cookie. You can claim planets immediately; entries sync in the background.
 
