@@ -200,10 +200,10 @@ All live-editable from the dev console as `window.TUNING.<KEY> = value`.
 
 ## Known issues / loose ends
 
-- The Cloudflare Worker has no rate limiting yet — runs on Anthropic API budget. Add a per-IP token bucket via Durable Object if hosting publicly.
+- ~~The Cloudflare Worker has no rate limiting yet — runs on Anthropic API budget.~~ Partially resolved 2026-05-22: Workers Rate Limit bindings now cover `/api/auth/*`, email magic-link requests, and thumbnail uploads (PR #1). LLM tier endpoints (`/tier1/2/3`) still have no rate limit, so the Anthropic-budget exposure remains for the LLM proxy.
 - Worker allows any origin matching the allowlist — defeats casual scrapers but not determined ones. Acceptable for personal use.
-- Planet seed is hardcoded to `1337` in `Tuning.js`. Phase 2 makes this dynamic per system/planet.
+- ~~Planet seed is hardcoded to `1337` in `Tuning.js`. Phase 2 makes this dynamic per system/planet.~~ Resolved by Tasks 13-16 (galaxy streaming) — seeds are now derived per-planet from cell coordinates.
 - Debug HUD covers a useful chunk of viewport. Either dismiss it later or hide-by-default with a `?debug=1` toggle.
-- The runway is always oriented along the planet's "east" tangent at the chosen surface point — not aligned with any meaningful approach corridor. Could make it directionally meaningful later (face the prevailing wind).
+- ~~The runway is always oriented along the planet's "east" tangent at the chosen surface point — not aligned with any meaningful approach corridor.~~ Resolved 2026-05-22: runways removed entirely with the move to coverage-based claims (PR #3).
 - Auto-roll's anti-inversion guard occasionally produces a small wobble when planeUp is right at ±90° from radialUp. Rarely encountered.
 - ~~Runway flattening punches a giant hole in the planet.~~ Resolved 2026-05-22 by removing the landing pad entirely along with the move to coverage-based claims.
