@@ -40,6 +40,7 @@ export class ThumbnailCapture {
   /**
    * Begin watching the plane for a settle window. Resolves with a Blob (JPEG)
    * or null if the capture fails. Never rejects.
+   * (Retained for callers that still want a "settle, then shoot" flow.)
    */
   capture({ plane }) {
     return new Promise((resolve) => {
@@ -50,6 +51,21 @@ export class ThumbnailCapture {
         resolve,
       });
     });
+  }
+
+  /**
+   * Immediate snapshot. Returns the JPEG blob (or null on failure).
+   * Used by the coverage-based claim: the plane is still flying through
+   * atmosphere when this fires, and the camera framing is already good
+   * because the player just spent ~30 seconds looking at the planet.
+   */
+  async snapshotNow() {
+    try {
+      return await this._snapshot();
+    } catch (e) {
+      console.warn('thumbnail snapshotNow failed:', e);
+      return null;
+    }
   }
 
   /** Call once per fixed step. Advances pending captures + resolves them. */

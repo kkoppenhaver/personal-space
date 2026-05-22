@@ -8,9 +8,34 @@ export class HUD {
     this.state = document.getElementById('stat-state');
     this.pings = document.getElementById('pings');
     this.landmark = document.getElementById('landmark');
+    this.claimBar = document.getElementById('claim-bar');
+    this.claimFill = document.getElementById('claim-bar-fill');
+    this.claimLabel = document.getElementById('claim-bar-label');
     this._landmarkHideAt = 0;
     this._landmarkTimer();
     this._planetName = null;
+    this._claimVisible = false;
+  }
+
+  /**
+   * Drive the in-atmosphere claim progress bar.
+   * @param {string|null} name Planet name. null hides the bar.
+   * @param {number} pct 0..1 fraction of surface surveyed.
+   */
+  setClaimProgress(name, pct) {
+    if (!this.claimBar || !this.claimFill || !this.claimLabel) return;
+    const shouldShow = !!name && pct > 0;
+    if (shouldShow) {
+      this.claimFill.style.width = `${Math.min(100, pct * 100).toFixed(1)}%`;
+      this.claimLabel.textContent = `${name.toUpperCase()} · SURVEYING ${Math.round(pct * 100)}%`;
+      if (!this._claimVisible) {
+        this.claimBar.classList.add('show');
+        this._claimVisible = true;
+      }
+    } else if (this._claimVisible) {
+      this.claimBar.classList.remove('show');
+      this._claimVisible = false;
+    }
   }
 
   setSpeed(v) { if (this.speed) this.speed.textContent = `${v.toFixed(1)} m/s`; }
