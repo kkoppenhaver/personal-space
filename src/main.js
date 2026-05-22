@@ -20,6 +20,9 @@ import { DebugHUD } from './ui/DebugHUD.js';
 import { LLMClient } from './llm/LLMClient.js';
 
 import { AuthClient } from './auth/AuthClient.js';
+import { Upsell } from './auth/Upsell.js';
+import { AuthModal } from './ui/AuthModal.js';
+import { AccountDrawer } from './ui/AccountDrawer.js';
 import { LogbookStore } from './logbook/LogbookStore.js';
 import { LogbookSync, patchEntryRemote } from './logbook/LogbookSync.js';
 import { migrateLocalStorageIfNeeded } from './logbook/migrate.js';
@@ -98,6 +101,29 @@ async function main() {
   // Reset on spawn/respawn; captured at claim time.
   const flightStats = new FlightStats();
   const thumbnailCapture = new ThumbnailCapture({ renderer, scene, camera });
+
+  // 7c. Account UI: sign-up modal + drawer + 3rd-claim upsell.
+  const authModal = new AuthModal({ auth, toast });
+  const accountDrawer = new AccountDrawer({ auth, onOpenAuth: () => authModal.open('signup'), toast });
+  const upsell = new Upsell({ auth, onOpenAuth: () => authModal.open('signup') });
+
+  // If the player just clicked an email magic link, the worker has already
+  // set the session cookie and bounced us back here with ?signin=ok / err.
+  // Surface a tiny toast so they know what happened.
+  {
+    const url = new URL(location.href);
+    const signin = url.searchParams.get('signin');
+    if (signin) {
+      if (signin === 'ok') {
+        toast.show('SIGNED IN', 2000, '#6ed28d');
+        auth.refresh().then(() => accountDrawer.render());
+      } else {
+        toast.show(`SIGN-IN: ${signin.toUpperCase()}`, 2500, '#d26e72');
+      }
+      url.searchParams.delete('signin');
+      history.replaceState({}, '', url.pathname + (url.search || '') + url.hash);
+    }
+  }
 
   // 7. LLM client (with offline fallback)
   const workerURL = (new URLSearchParams(location.search)).get('worker')
@@ -422,6 +448,7 @@ async function main() {
           stats,
         };
         const entryPromise = logbookStore.add(entryInput);
+        upsell.noteClaim();
 
         // Tier 3 — ownership keyed by entry, not Planet. Survives streaming.
         llm.land(p.seed, {

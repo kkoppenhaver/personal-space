@@ -14,6 +14,7 @@
   "type": "module",
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.19.3",
+    "@simplewebauthn/browser": "^13.3.0",
     "three": "^0.184.0",
     "vite": "^8.0.13"
   }

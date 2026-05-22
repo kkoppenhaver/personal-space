@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Personal Space · Privacy</title>
+  <style>
+    body { background: #0a0808; color: #f4ede0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.6; padding: 40px 24px; max-width: 720px; margin: 0 auto; }
+    h1 { color: #ff6f3c; letter-spacing: 0.18em; font-size: 18px; }
+    h2 { color: #ff6f3c; letter-spacing: 0.12em; font-size: 13px; margin-top: 28px; }
+    a { color: #ff6f3c; }
+    code { background: rgba(244,237,224,0.06); padding: 2px 5px; border-radius: 3px; }
+    .muted { opacity: 0.65; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <p class="muted"><a href="/">← back to the cosmos</a></p>
+  <h1>WHAT PERSONAL SPACE STORES</h1>
+
+  <p>Personal Space is a small browser game. We try to keep data collection
+  minimal and explainable in one screen.</p>
+
+  <h2>If you play anonymously</h2>
+  <p>On your first visit we mint a server-side <b>anonymous user id</b> and
+  a session cookie scoped to <code>.personalspace.fun</code>. Nothing
+  personal is attached — no email, no IP retained beyond rate-limiting.</p>
+  <p>Each time you claim a planet, we store: the planet's identity (a
+  galaxy seed + grid coordinates + planet index), name, biome, palette,
+  the LLM-generated lore, a small thumbnail, and the flight stats from
+  that attempt.</p>
+
+  <h2>If you sign up</h2>
+  <p>If you create a <b>passkey</b>, we store the credential's public key
+  on our server (paired to your user id). The private key never leaves
+  your device.</p>
+  <p>If you add an <b>email</b>, we store the email address so future
+  sign-in links can reach you. We never send marketing email.</p>
+
+  <h2>Infrastructure</h2>
+  <p>Everything lives on Cloudflare: D1 (structured rows), R2 (thumbnails),
+  KV (LLM cache + short-lived auth challenges). The LLM proxy talks to
+  Anthropic's API; the lore text we keep is the JSON it returns. Magic
+  links go through Resend.</p>
+
+  <h2>Your data, your call</h2>
+  <p>From the account drawer in the game:</p>
+  <ul>
+    <li><b>Download my data</b> — JSON dump of your user row, entries, and
+    passkey metadata.</li>
+    <li><b>Delete account</b> — drops your user row and cascades to entries,
+    passkeys, sessions, and R2 thumbnails. There is no undo.</li>
+    <li><b>Forget this browser</b> — clears localStorage and IndexedDB on
+    this device. Doesn't touch cloud data.</li>
+  </ul>
+
+  <h2>Questions</h2>
+  <p>Personal Space is built by Keanan Koppenhaver. Open an issue at the
+  <a href="https://github.com/keanan/paper-airplane" target="_blank">repo</a>
+  or email <code>privacy@personalspace.fun</code>.</p>
+
+  <p class="muted">Last updated: 2026-05-22.</p>
+</body>
+</html>

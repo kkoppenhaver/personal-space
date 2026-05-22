@@ -242,7 +242,10 @@ auth.post('/email/request', async (c) => {
      VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
   ).bind(tokenHash, email, userId, purpose, now, expiresAt).run();
 
-  const link = `${c.env.PUBLIC_GAME_URL}/?auth=${encodeURIComponent(rawToken)}`;
+  // Link points at the worker's verify endpoint; clicking sets the session
+  // cookie and redirects to the game with ?signin=ok. Cookie's Domain is
+  // .personalspace.fun so it survives the redirect across subdomains.
+  const link = `${new URL(c.req.url).origin}/api/auth/email/verify?token=${encodeURIComponent(rawToken)}`;
   c.executionCtx.waitUntil(sendMagicLink(c, email, link));
 
   return c.json({ ok: true });
