@@ -426,8 +426,10 @@ async function main() {
         }
 
         // Update HUD progress bar for the planet we're currently surveying.
+        // Rescale raw coverage to the claim threshold so a full bar = ready to claim.
         if (activePlanet && !activePlanet.claimed && activeAtmosphere?.contains(planePos)) {
-          hud.setClaimProgress(activePlanet.meta?.name || `P${activePlanet.seed}`, activePlanet.coverage.pct());
+          const progress = Math.min(1, activePlanet.coverage.pct() / TUNING.CLAIM_COVERAGE);
+          hud.setClaimProgress(activePlanet.meta?.name || `P${activePlanet.seed}`, progress);
         } else {
           hud.setClaimProgress(null, 0);
         }
