@@ -11,6 +11,7 @@ import { CameraRig } from './game/CameraRig.js';
 import { Galaxy } from './world/Galaxy.js';
 import { Origin } from './world/Origin.js';
 import { hashString } from './world/Seed.js';
+import { API_BASE } from './net/api.js';
 
 import { HUD } from './ui/HUD.js';
 import { Toast } from './ui/Toast.js';
@@ -133,10 +134,12 @@ async function main() {
   }
 
   // 7. LLM client (with offline fallback)
+  // Same resolution as api.js: explicit ?worker= or localStorage override
+  // first, then API_BASE (which handles dev→empty / prod→api.personalspace.fun).
   const workerURL = (new URLSearchParams(location.search)).get('worker')
     || localStorage.getItem('paper-airplane:worker')
     || import.meta.env.VITE_WORKER_URL
-    || '';
+    || API_BASE;
   const llm = new LLMClient({ workerURL });
 
   // --- LLM naming: per-planet pings + commitment-gated approach. ---
