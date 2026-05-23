@@ -46,7 +46,7 @@ export async function resolveSession(c) {
 
   const row = await c.env.DB
     .prepare(`SELECT s.id AS session_id, s.expires_at,
-                     u.id, u.email, u.anonymous, u.created_at, u.claim_count
+                     u.id, u.email, u.anonymous, u.created_at, u.claim_count, u.last_position
               FROM sessions s JOIN users u ON u.id = s.user_id
               WHERE s.id = ?1`)
     .bind(id)
@@ -59,6 +59,11 @@ export async function resolveSession(c) {
     .prepare(`UPDATE sessions SET last_seen_at = ?1 WHERE id = ?2`)
     .bind(Date.now(), id).run().catch(() => {}));
 
+  let lastPosition = null;
+  if (row.last_position) {
+    try { lastPosition = JSON.parse(row.last_position); } catch {}
+  }
+
   return {
     sessionId: row.session_id,
     user: {
@@ -67,6 +72,7 @@ export async function resolveSession(c) {
       anonymous: row.anonymous === 1,
       created_at: row.created_at,
       claim_count: row.claim_count ?? 0,
+      last_position: lastPosition,
     },
   };
 }

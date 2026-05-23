@@ -8,10 +8,10 @@ import { Plane } from './game/Plane.js';
 import { FlightController } from './game/FlightController.js';
 import { CameraRig } from './game/CameraRig.js';
 
-import { Galaxy } from './world/Galaxy.js';
+import { Galaxy, CELL_SIZE } from './world/Galaxy.js';
 import { Origin } from './world/Origin.js';
 import { hashString } from './world/Seed.js';
-import { API_BASE } from './net/api.js';
+import { API_BASE, apiPost } from './net/api.js';
 
 import { HUD } from './ui/HUD.js';
 import { Toast } from './ui/Toast.js';
@@ -30,6 +30,21 @@ import { LogbookSync, patchEntryRemote } from './logbook/LogbookSync.js';
 import { migrateLocalStorageIfNeeded } from './logbook/migrate.js';
 import { ThumbnailCapture } from './logbook/ThumbnailCapture.js';
 import { FlightStats } from './game/FlightStats.js';
+
+// Validate a server-returned saved position. Returns null for missing,
+// malformed, or non-finite data so we fall through to the default home spawn.
+function readSavedPosition(saved) {
+  if (!saved || !Array.isArray(saved.pos) || !Array.isArray(saved.fwd)) return null;
+  if (saved.pos.length !== 3 || saved.fwd.length !== 3) return null;
+  const all = [...saved.pos, ...saved.fwd];
+  if (!all.every(Number.isFinite)) return null;
+  return saved;
+}
+
+// Galaxy-space cell key, matching Galaxy._cellKeyOf semantics.
+function cellKeyOf(pos) {
+  return `${Math.floor(pos[0] / CELL_SIZE)},${Math.floor(pos[1] / CELL_SIZE)},${Math.floor(pos[2] / CELL_SIZE)}`;
+}
 
 async function main() {
   // 1. Init Rapier WASM
@@ -97,6 +112,14 @@ async function main() {
   await auth.bootstrap();
   logbookSync.start();
   const galaxySeed = auth.user?.id ? hashString(auth.user.id) : TUNING.PLANET_SEED;
+
+  // If the user has a saved position, set origin.galaxyOrigin BEFORE building
+  // Galaxy so the home cell — and every subsequent streamed cell — is placed
+  // relative to where the plane will spawn (render 0,0,0).
+  const savedPosition = readSavedPosition(auth.user?.last_position);
+  if (savedPosition) {
+    origin.galaxyOrigin.set(savedPosition.pos[0], savedPosition.pos[1], savedPosition.pos[2]);
+  }
 
   // 7. UI
   const toast = new Toast();
@@ -221,9 +244,26 @@ async function main() {
     }).catch(() => { approachSent.delete(planet.seed); });
   };
 
-  // 9. Spawn the plane at the home system.
-  const { pos: spawnPos0, fwd: spawnFwd0 } = galaxy.defaultSpawn();
+  // 9. Spawn the plane — restored position if we have one, otherwise the
+  // home system's default spawn (above planet[0], aimed tangentially).
+  let spawnPos0, spawnFwd0;
+  if (savedPosition) {
+    spawnPos0 = new THREE.Vector3(0, 0, 0); // galaxyOrigin already set above
+    spawnFwd0 = new THREE.Vector3(savedPosition.fwd[0], savedPosition.fwd[1], savedPosition.fwd[2]).normalize();
+  } else {
+    ({ pos: spawnPos0, fwd: spawnFwd0 } = galaxy.defaultSpawn());
+  }
   plane.spawn(spawnPos0, spawnFwd0, TUNING.CRUISE_SPEED);
+
+  // Position-sync state: track the last galaxy-space position we wrote and
+  // the cell it belonged to. Save triggers: cell change, OR moved >500m and
+  // ≥10s since last save. beforeunload also fires one keepalive save below.
+  const positionSync = {
+    lastSavedGalaxyPos: savedPosition ? new THREE.Vector3(...savedPosition.pos) : null,
+    lastSavedCellKey: savedPosition ? cellKeyOf(savedPosition.pos) : null,
+    lastSaveAt: 0,
+    inflight: false,
+  };
   flightStats.startAttempt();
   camera.position.copy(spawnPos0.clone().addScaledVector(spawnFwd0, -14)).add(new THREE.Vector3(0, 1.8, 0));
 
@@ -237,6 +277,18 @@ async function main() {
   let pingRefreshCounter = 0;
 
   hud.setState(prevInside ? 'IN ATMOSPHERE' : 'IN SPACE');
+
+  // 9a. beforeunload — fire one keepalive save so the player resumes near
+  // where the tab closed instead of where the last debounce wrote.
+  window.addEventListener('beforeunload', () => {
+    if (!auth.user?.id) return;
+    const g = origin.toGalaxy(plane.position());
+    const fwd = plane.forward();
+    apiPost('/api/account/position', {
+      pos: [g.x, g.y, g.z],
+      fwd: [fwd.x, fwd.y, fwd.z],
+    }, { keepalive: true, timeoutMs: 1000 }).catch(() => {});
+  });
 
   // 9. Resize
   window.addEventListener('resize', () => {
@@ -549,6 +601,32 @@ async function main() {
       // track the player's position as they fly between systems.
       pingRefreshCounter = (pingRefreshCounter + 1) % 30;
       if (pingRefreshCounter === 0) refreshPings();
+
+      // Position persistence — save the player's galaxy-space coords on cell
+      // boundary crossings + every ~10s while moving. Authenticated only;
+      // failures are silent (next attempt overwrites).
+      if (auth.user?.id && !positionSync.inflight) {
+        const planeGalaxy = origin.toGalaxy(plane.position());
+        const cellKey = cellKeyOf([planeGalaxy.x, planeGalaxy.y, planeGalaxy.z]);
+        const now = performance.now();
+        const movedFar = positionSync.lastSavedGalaxyPos
+          ? planeGalaxy.distanceTo(positionSync.lastSavedGalaxyPos) > 500
+          : true;
+        const stale = now - positionSync.lastSaveAt > 10000;
+        const cellChanged = cellKey !== positionSync.lastSavedCellKey;
+        if (cellChanged || (movedFar && stale)) {
+          const fwd = plane.forward();
+          positionSync.inflight = true;
+          apiPost('/api/account/position', {
+            pos: [planeGalaxy.x, planeGalaxy.y, planeGalaxy.z],
+            fwd: [fwd.x, fwd.y, fwd.z],
+          }).then(() => {
+            positionSync.lastSavedGalaxyPos = planeGalaxy.clone();
+            positionSync.lastSavedCellKey = cellKey;
+            positionSync.lastSaveAt = now;
+          }).catch(() => {}).finally(() => { positionSync.inflight = false; });
+        }
+      }
     },
 
     onRender: (dt) => {
