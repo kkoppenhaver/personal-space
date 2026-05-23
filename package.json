@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "postinstall": "node tools/copy-decoders.js",
+    "build:catalog": "node tools/embed-catalog.js"
   },
   "keywords": [],
   "author": "",
@@ -17,5 +19,8 @@
     "@simplewebauthn/browser": "^13.3.0",
     "three": "^0.184.0",
     "vite": "^8.0.13"
+  },
+  "devDependencies": {
+    "@huggingface/transformers": "^4.2.0"
   }
 }

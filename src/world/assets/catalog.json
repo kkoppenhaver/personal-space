@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "generated_at": "2026-05-23T18:40:41.177Z",
+  "model": "Xenova/all-MiniLM-L6-v2",
+  "dtype": "q8",
+  "dim": 384,
+  "assets": []
+}
