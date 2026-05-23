@@ -20,6 +20,17 @@ export function hashSeeds(...nums) {
   return h >>> 0;
 }
 
+// FNV-1a over the UTF-16 code units of a string. Deterministic across runs and
+// platforms; collisions are fine here since we only use it to seed a PRNG.
+export function hashString(s) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 // Cheap value-noise. Smooth enough for terrain, fast enough for instancing.
 export function makeNoise3(seed) {
   const rand = mulberry32(seed);
