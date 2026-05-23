@@ -25,7 +25,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(method, path, { body, timeoutMs = DEFAULT_TIMEOUT_MS, raw, contentType } = {}) {
+export async function api(method, path, { body, timeoutMs = DEFAULT_TIMEOUT_MS, raw, contentType, keepalive } = {}) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeoutMs);
   try {
@@ -35,6 +35,7 @@ export async function api(method, path, { body, timeoutMs = DEFAULT_TIMEOUT_MS, 
       signal: ctl.signal,
       headers: {},
     };
+    if (keepalive) init.keepalive = true;
     if (body !== undefined) {
       if (raw) {
         init.body = body;

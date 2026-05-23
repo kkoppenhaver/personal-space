@@ -43,6 +43,26 @@ account.get('/export', async (c) => {
   return c.json(payload);
 });
 
+// Persist player's last-known galaxy-space position so they can resume where
+// they left off. Body: { pos: [x,y,z], fwd: [x,y,z] }. Server stamps ts.
+// Reasonable client cadence: throttled to ≥10s + on cell change + on unload.
+account.post('/position', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json().catch(() => null);
+  if (!body || !isVec3(body.pos) || !isVec3(body.fwd)) {
+    return c.json({ error: 'invalid' }, 400);
+  }
+  const blob = JSON.stringify({ pos: body.pos, fwd: body.fwd, ts: Date.now() });
+  await c.env.DB
+    .prepare(`UPDATE users SET last_position = ?1 WHERE id = ?2`)
+    .bind(blob, user.id).run();
+  return c.json({ ok: true });
+});
+
+function isVec3(v) {
+  return Array.isArray(v) && v.length === 3 && v.every((n) => Number.isFinite(n));
+}
+
 account.post('/delete', async (c) => {
   const user = c.get('user');
   const sessionId = c.get('sessionId');
