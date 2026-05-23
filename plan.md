@@ -168,7 +168,7 @@ Loosely ordered by impact, not necessarily build order.
 - **Performance pass.** Planet LOD swap at distance, frustum-cull instanced features, worker-thread noise gen, atlas instance for features.
 - **More art directions.** The original brainstorm had four candidate aesthetic directions (full papercraft, Ghibli-painterly, hand-drawn sketched, stylized realism). We're closest to "Ghibli-painterly low-poly w/ paper-plane protagonist" now. Could expose a runtime toggle.
 - **Survey feedback.** Small particle puffs or a low chime on each new cell discovered; satisfying "ding" when the bar fills.
-- **Mini-tutorial.** First-time atmosphere entry shows a hint about pitch input + the survey mechanic.
+- **Welcome modal + mini-tutorial.** First-time visitors see a "Welcome to Personal Space" modal that explains the core mechanic in a few short beats — your galaxy is yours alone, fly low to claim planets, planets you don't claim are gone for good once you leave them — then click "Start playing" to dismiss. Dual purpose: onboarding the brand/mechanic, AND giving Tier 1 / Tier 2 LLM pings a few seconds of headroom so planet names are already resolved by the time the player drops into the cockpit. First-time atmosphere entry can still show a contextual pitch-input hint.
 - **Logbook UI polish.** Per-entry detail page with full lore. Sortable. Maybe a tiny rendering of each planet.
 
 ---

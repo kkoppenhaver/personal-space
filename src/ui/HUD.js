@@ -52,7 +52,10 @@ export class HUD {
     for (const it of items) {
       const div = document.createElement('div');
       div.className = 'ping';
-      div.innerHTML = `<span class="name">${escapeHTML(it.name)}</span>${escapeHTML(it.teaser || '')}`;
+      const nameHtml = it.name
+        ? `<span class="name">${escapeHTML(it.name)}</span>`
+        : `<span class="name pending">DISCOVERING…</span>`;
+      div.innerHTML = `${nameHtml}${escapeHTML(it.teaser || '')}`;
       this.pings.appendChild(div);
     }
   }
