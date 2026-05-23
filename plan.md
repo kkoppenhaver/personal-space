@@ -161,6 +161,7 @@ Resolved during the cloud-memoir plan (see `docs/plans/2026-05-20-001-feat-logbo
 Loosely ordered by impact, not necessarily build order.
 
 - **Audio.** Wind volume tracks airspeed. Paper crinkle on collisions. Ambient biome tones (volcanic = low rumble, ice = high crystal whine, etc.). Speech-rate ambient that swells on atmosphere entry.
+- **Soundtrack.** Original or licensed music score, looping ambient with subtle layering shifts between deep space and atmospheres. UI toggle for music on/off (separate from the SFX toggle implied by the Audio item above) in the account drawer or a settings panel. Defaults to on; persist preference in localStorage.
 - **Weather / wind fields.** Per-planet noise → vector field. Aero applies it as a force perpendicular to plane forward. Visible as drifting particles or grass sway.
 - **Alien fauna.** A few instanced flocking creatures per biome. React to plane proximity (scatter, follow, etc.). Maybe a sound on encounter.
 - **Planet visuals workstream.** Whole separate plan TBD. Covers how planets are modeled (terrain generation, biome variation), the inventory of 3D models/instanced features we can drop onto a surface, and overall styling. Given each player's galaxy is uniquely theirs and they may only ever see a given planet once, the bar for "is this planet worth remembering" is high — visual quality directly drives the value of every logbook entry. Separate plan doc to be written.
