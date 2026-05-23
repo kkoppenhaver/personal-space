@@ -24,6 +24,7 @@ import { LLMClient } from './llm/LLMClient.js';
 import { AuthClient } from './auth/AuthClient.js';
 import { Upsell } from './auth/Upsell.js';
 import { AuthModal } from './ui/AuthModal.js';
+import { WelcomeModal } from './ui/WelcomeModal.js';
 import { AccountDrawer } from './ui/AccountDrawer.js';
 import { LogbookStore } from './logbook/LogbookStore.js';
 import { LogbookSync, patchEntryRemote } from './logbook/LogbookSync.js';
@@ -657,8 +658,15 @@ async function main() {
     pauseMenu.classList.toggle('show', paused);
     if (!paused) input.drain();
   };
+  // Welcome modal — first-run onboarding. Owns its own pause state via
+  // loop.setPaused directly so the pause-menu doesn't visually leak through.
+  const welcomeModal = new WelcomeModal({
+    onDismiss: () => { loop.setPaused(false); input.drain(); },
+  });
+
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'Escape') return;
+    if (welcomeModal.isOpen) return;     // welcome modal blocks ESC
     e.preventDefault();
     setPaused(!paused);
   });
@@ -666,6 +674,11 @@ async function main() {
 
   // Done bootstrapping
   document.getElementById('boot').classList.add('hidden');
+
+  if (welcomeModal.shouldShow()) {
+    loop.setPaused(true);
+    welcomeModal.open();
+  }
 
   // Debug hooks
   window.__GAME = {

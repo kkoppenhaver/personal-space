@@ -121,6 +121,19 @@
     #auth-modal .switch { font-size: 11px; opacity: 0.6; margin-top: 8px; }
     #auth-modal .switch a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
+    #welcome-modal { position: absolute; inset: 0; background: rgba(8,6,4,0.72); backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; z-index: 70; }
+    #welcome-modal.show { display: flex; }
+    #welcome-modal .card { background: rgba(20,16,12,0.96); border: 1px solid rgba(244,237,224,0.22); border-radius: 10px; padding: 28px 32px 24px; max-width: 460px; box-shadow: 0 12px 40px rgba(0,0,0,0.6); }
+    #welcome-modal h1 { margin: 0 0 6px 0; font-size: 18px; letter-spacing: 0.32em; color: var(--accent); text-align: center; }
+    #welcome-modal .subtitle { font-size: 11px; letter-spacing: 0.22em; opacity: 0.55; text-align: center; margin-bottom: 22px; }
+    #welcome-modal .beat { display: flex; gap: 12px; margin: 12px 0; line-height: 1.55; font-size: 13px; }
+    #welcome-modal .beat .num { color: var(--accent); font-weight: bold; min-width: 18px; letter-spacing: 0.08em; }
+    #welcome-modal .beat .body { opacity: 0.92; }
+    #welcome-modal .beat .body em { color: var(--accent); font-style: normal; }
+    #welcome-modal .controls { font-size: 11px; opacity: 0.55; line-height: 1.7; letter-spacing: 0.08em; text-align: center; margin: 18px 0 16px; padding-top: 16px; border-top: 1px solid rgba(244,237,224,0.12); }
+    #welcome-modal .cta { display: block; width: 100%; background: rgba(255,111,60,0.2); border: 1px solid rgba(255,111,60,0.6); color: var(--accent); font: inherit; padding: 11px 14px; border-radius: 4px; cursor: pointer; letter-spacing: 0.18em; font-size: 12px; }
+    #welcome-modal .cta:hover { background: rgba(255,111,60,0.32); }
+
     #upsell-banner { position: absolute; left: 50%; bottom: 56px; transform: translateX(-50%); background: rgba(20,16,12,0.92); border: 1px solid rgba(255,111,60,0.55); border-radius: 8px; padding: 10px 14px; display: flex; gap: 10px; align-items: center; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 40; }
     #upsell-banner button { background: rgba(255,111,60,0.2); border: 1px solid rgba(255,111,60,0.6); color: var(--accent); font: inherit; padding: 5px 10px; border-radius: 4px; cursor: pointer; letter-spacing: 0.08em; font-size: 11px; }
     #upsell-banner button:hover { background: rgba(255,111,60,0.32); }
@@ -171,6 +184,21 @@
         </div>
         <div id="auth-status" class="status"></div>
         <button class="ghost" data-act="close">CLOSE</button>
+      </div>
+    </div>
+
+    <div id="welcome-modal">
+      <div class="card">
+        <h1>PERSONAL SPACE</h1>
+        <div class="subtitle">welcome, traveler</div>
+        <div class="beat"><div class="num">01</div><div class="body">This galaxy is <em>yours alone</em>. Every star, every planet, every name you discover was generated for you and no one else.</div></div>
+        <div class="beat"><div class="num">02</div><div class="body">To claim a planet, drop into its atmosphere and <em>fly low over the surface</em> until it's surveyed. The logbook will remember its name, lore, and how you landed.</div></div>
+        <div class="beat"><div class="num">03</div><div class="body">Planets you fly past without claiming are gone for good. The universe is large — you will almost certainly never see that planet again.</div></div>
+        <div class="controls">
+          ↑↓ pitch &middot; ←→ bank &middot; SPACE throttle &middot; SHIFT brake<br>
+          L logbook &middot; ESC pause
+        </div>
+        <button class="cta" data-act="start">START PLAYING</button>
       </div>
     </div>
 
