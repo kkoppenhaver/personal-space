@@ -10,6 +10,7 @@ import { CameraRig } from './game/CameraRig.js';
 
 import { Galaxy } from './world/Galaxy.js';
 import { Origin } from './world/Origin.js';
+import { hashString } from './world/Seed.js';
 
 import { HUD } from './ui/HUD.js';
 import { Toast } from './ui/Toast.js';
@@ -88,7 +89,13 @@ async function main() {
     console.warn('logbook IDB unavailable; entries will not persist:', e);
   }
   const logbookSync = new LogbookSync({ store: logbookStore, auth });
-  auth.bootstrap().then(() => logbookSync.start()).catch((e) => console.warn('auth bootstrap failed:', e));
+  // Block on auth bootstrap so the player's galaxy seed (derived from user.id)
+  // is known before we construct the Galaxy below. Bootstrap is designed to
+  // resolve in <800ms and never throw — on network failure it sets online=false
+  // and continues with user=null, so we fall back to TUNING.PLANET_SEED.
+  await auth.bootstrap();
+  logbookSync.start();
+  const galaxySeed = auth.user?.id ? hashString(auth.user.id) : TUNING.PLANET_SEED;
 
   // 7. UI
   const toast = new Toast();
@@ -155,7 +162,7 @@ async function main() {
     world,
     scene,
     origin,
-    seed: TUNING.PLANET_SEED,
+    seed: galaxySeed,
     onSystemSpawned: (sys) => {
       // Per-planet HUD ping + nav track. Keyed by planet seed so they survive
       // pings-list iteration order and any future despawn/respawn churn.
