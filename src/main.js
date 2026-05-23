@@ -182,10 +182,12 @@ async function main() {
         });
 
         // Tier 1 teaser ping. KV cache makes revisits instant.
-        const label = `P${i + 1}`;
+        // name=null until Tier 2 returns the real planet name — the HUD
+        // chip renders a "DISCOVERING…" placeholder in that state so we
+        // never expose internal slot labels to the player.
         llm.ping(p.seed, { starColor: sunCss }).then(r => {
           if (!r?.teaser) return;
-          pings.set(p.seed, { name: p.meta?.name?.toUpperCase() || label, teaser: r.teaser, planet: p });
+          pings.set(p.seed, { name: p.meta?.name?.toUpperCase() || null, teaser: r.teaser, planet: p });
           refreshPings();
         }).catch(() => {});
       }
