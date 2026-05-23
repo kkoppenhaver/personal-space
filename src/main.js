@@ -12,6 +12,8 @@ import { Galaxy, CELL_SIZE } from './world/Galaxy.js';
 import { Origin } from './world/Origin.js';
 import { hashString } from './world/Seed.js';
 import { API_BASE, apiPost } from './net/api.js';
+import { loadInstance as loadAssetInstance } from './world/AssetCache.js';
+import { buildMaterialSet } from './world/MaterialSet.js';
 
 import { HUD } from './ui/HUD.js';
 import { Toast } from './ui/Toast.js';
@@ -699,6 +701,32 @@ async function main() {
       plane.spawn(s.pos, s.fwd, TUNING.CRUISE_SPEED);
       flight.reset();
       return 'spawned';
+    },
+    // Phase 1 — drop a GLB onto the active planet's surface to verify the
+    // AssetCache / MaterialSet path end-to-end. Accepts either a catalog id
+    // (resolved against assets/catalog.json) or a raw URL string.
+    //
+    //   __GAME.testAsset('/assets/bundled/foo.glb')
+    //   __GAME.testAsset({ url: 'https://example.com/x.glb', scale: 5 })
+    //
+    // Returns a Promise resolving to the mounted THREE.Group; useful for
+    // poking at the result in DevTools.
+    async testAsset(spec) {
+      const opts = typeof spec === 'string' ? { url: spec } : (spec || {});
+      const url = opts.url;
+      if (!url) { console.warn('testAsset: pass a URL or { url, scale }'); return null; }
+      const matSet = buildMaterialSet(activePlanet.palette);
+      const group = await loadAssetInstance(url, matSet, renderer);
+      // Place on the highest point of the active planet so it's findable.
+      const radial = new THREE.Vector3(0, 1, 0);
+      const surfacePos = activePlanet.center.clone()
+        .add(radial.clone().multiplyScalar(activePlanet.radius + 1));
+      group.position.copy(surfacePos);
+      group.scale.setScalar(opts.scale ?? 1);
+      group.userData.testAsset = true;
+      activePlanet.group.add(group);
+      console.log(`testAsset mounted on planet ${activePlanet.seed} at`, surfacePos);
+      return group;
     },
   };
 

@@ -1,0 +1,4 @@
+{
+  "_comment": "Hand-curated asset metadata. Embeddings are computed at build time via `npm run build:catalog`. See README.md for the schema + curation process. v1 ships empty; the catalog is populated incrementally as CC0 assets are vetted for the Kenney-vibe aesthetic. Use __GAME.testAsset(url) to verify the loader path against any GLB URL while the catalog is still being curated.",
+  "assets": []
+}
