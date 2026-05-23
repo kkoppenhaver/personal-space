@@ -16,6 +16,13 @@ export class Coverage {
     this.cells = makeFibonacciSphere(TUNING.CLAIM_COVERAGE_CELLS);
     this.seen = new Uint8Array(this.cells.length); // 0/1 per cell
     this._seenCount = 0;
+    // After the first tick the player has automatically "seen" ~25% of the
+    // sphere (the visible hemisphere within the COVERAGE_DOT cone). That
+    // baseline isn't progress they made — it's just being in atmosphere.
+    // Snapshot it so the HUD bar can render "progress toward claim" as
+    // 0..1 spanning (baseline → CLAIM_COVERAGE) instead of (0 → 1).
+    // -1 = not yet established (no tick() has run since construction/reset).
+    this._baseline = -1;
   }
 
   /**
@@ -41,16 +48,29 @@ export class Coverage {
         grew = true;
       }
     }
+    // Capture baseline immediately after the first tick (= what's instantly
+    // visible from the entry position). Subsequent ticks add the player's
+    // actual surveying progress on top.
+    if (this._baseline < 0) this._baseline = this._seenCount / this.cells.length;
     return grew;
   }
 
-  /** 0-1 fraction of cells seen. */
+  /** 0-1 fraction of cells seen (absolute, including baseline). */
   pct() { return this._seenCount / this.cells.length; }
+
+  /**
+   * 0-1 fraction the player has surveyed *beyond* what was instantly
+   * visible on atmosphere entry. Returns 0 before the first tick.
+   * Used by the HUD progress bar so it starts at empty when the player
+   * arrives, rather than at the cone-coverage baseline.
+   */
+  baseline() { return this._baseline < 0 ? 0 : this._baseline; }
 
   /** Forget everything; used when the player exits atmosphere before claiming. */
   reset() {
     this.seen.fill(0);
     this._seenCount = 0;
+    this._baseline = -1;
   }
 }
 
