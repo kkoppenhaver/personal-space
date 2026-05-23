@@ -134,8 +134,18 @@ Landing-pad-as-claim was retired. New mechanic:
 - Per fixed step, the active atmosphere ticks its planet's coverage. Crossing `TUNING.CLAIM_COVERAGE` (0.5) fires the claim toast + entry + lore + thumbnail.
 - Exit atmosphere before threshold → coverage resets to zero for that planet. No resume.
 - `LandingZone` removed entirely. Side effect: the crater-through-the-planet runway bug is gone with it.
-- HUD shows a live progress bar (`#claim-bar`) while surveying.
+- HUD shows a live progress bar (`#claim-bar`) while surveying. As of 2026-05-22, the bar rescales so 100% = the claim threshold (currently 0.5 raw coverage), so the player sees progress-toward-claim rather than progress-of-total-surface.
 - ThumbnailCapture's settle-window path is retained for callers but the claim flow uses `snapshotNow()` because the plane is still aloft at claim time.
+
+### Per-user galaxy seed (2026-05-22)
+
+Each authenticated user now gets a unique galaxy. The seed passed to `Galaxy` is `hashString(auth.user.id)` (FNV-1a) instead of the global `TUNING.PLANET_SEED` constant. Two players never share a planet identity tuple, so LLM-generated names/lore stay unique per player. Aligns with the Personal Space brand — each player's universe should feel uniquely theirs.
+
+- Boot sequence now `await`s `auth.bootstrap()` before constructing `Galaxy` so `user.id` is available up front. Bootstrap is designed to resolve in <800ms and never throw; on full network failure `user` remains null and we fall back to `TUNING.PLANET_SEED` so the game still loads with the default shared galaxy.
+- Existing logbook entries (claimed under the old global seed) stay visible in the logbook but point to a galaxy the player can no longer reach. Consistent with the memoir framing.
+- `TUNING.PLANET_SEED` is now only the offline fallback. Could be removed entirely once the offline path is reconsidered.
+
+**Up next:** position persistence — `users.last_position` D1 column, debounced save loop, restore on boot. Players resume where they left off rather than always spawning at home, so they're encouraged to push outward instead of re-treading the same first few planets.
 
 ### Open questions — Logbook
 
@@ -153,7 +163,8 @@ Loosely ordered by impact, not necessarily build order.
 - **Audio.** Wind volume tracks airspeed. Paper crinkle on collisions. Ambient biome tones (volcanic = low rumble, ice = high crystal whine, etc.). Speech-rate ambient that swells on atmosphere entry.
 - **Weather / wind fields.** Per-planet noise → vector field. Aero applies it as a force perpendicular to plane forward. Visible as drifting particles or grass sway.
 - **Alien fauna.** A few instanced flocking creatures per biome. React to plane proximity (scatter, follow, etc.). Maybe a sound on encounter.
-- **Shareable seeds.** "Copy link to current location" → URL with `?seed=<galaxySeed>&coord=<x,y,z>` → recipient lands in same universe at same spot. Worker KV makes names identical for them.
+- **Planet visuals workstream.** Whole separate plan TBD. Covers how planets are modeled (terrain generation, biome variation), the inventory of 3D models/instanced features we can drop onto a surface, and overall styling. Given each player's galaxy is uniquely theirs and they may only ever see a given planet once, the bar for "is this planet worth remembering" is high — visual quality directly drives the value of every logbook entry. Separate plan doc to be written.
+- **Shareable logbook entries.** Public read-only page per entry (`personalspace.fun/entry/<id>`) showing thumbnail + LLM lore + landmarks + flight stats. Sharing happens at the artifact layer, not the world layer — recipient can admire the postcard but can't visit the planet (it's only in the sharer's personal galaxy). Replaces the earlier "shareable seeds" idea, which contradicted the per-player-galaxy brand.
 - **Performance pass.** Planet LOD swap at distance, frustum-cull instanced features, worker-thread noise gen, atlas instance for features.
 - **More art directions.** The original brainstorm had four candidate aesthetic directions (full papercraft, Ghibli-painterly, hand-drawn sketched, stylized realism). We're closest to "Ghibli-painterly low-poly w/ paper-plane protagonist" now. Could expose a runtime toggle.
 - **Survey feedback.** Small particle puffs or a low chime on each new cell discovered; satisfying "ding" when the bar fills.
