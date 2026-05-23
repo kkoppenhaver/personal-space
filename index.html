@@ -132,7 +132,12 @@
     #welcome-modal .beat .body em { color: var(--accent); font-style: normal; }
     #welcome-modal .controls { font-size: 11px; opacity: 0.55; line-height: 1.7; letter-spacing: 0.08em; text-align: center; margin: 18px 0 16px; padding-top: 16px; border-top: 1px solid rgba(244,237,224,0.12); }
     #welcome-modal .cta { display: block; width: 100%; background: rgba(255,111,60,0.2); border: 1px solid rgba(255,111,60,0.6); color: var(--accent); font: inherit; padding: 11px 14px; border-radius: 4px; cursor: pointer; letter-spacing: 0.18em; font-size: 12px; }
-    #welcome-modal .cta:hover { background: rgba(255,111,60,0.32); }
+    #welcome-modal .cta:hover:not(:disabled) { background: rgba(255,111,60,0.32); }
+    #welcome-modal .cta:disabled { cursor: progress; opacity: 0.65; }
+    #welcome-modal .cta.pending { color: rgba(244,237,224,0.55); border-color: rgba(244,237,224,0.25); background: rgba(244,237,224,0.04); }
+    #welcome-modal .warmup-bar { display: none; height: 2px; background: rgba(244,237,224,0.10); border-radius: 1px; margin: 6px 0 12px; overflow: hidden; }
+    #welcome-modal .warmup-bar.show { display: block; }
+    #welcome-modal .warmup-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), #ffd86b); transition: width 0.25s ease-out; }
 
     #upsell-banner { position: absolute; left: 50%; bottom: 56px; transform: translateX(-50%); background: rgba(20,16,12,0.92); border: 1px solid rgba(255,111,60,0.55); border-radius: 8px; padding: 10px 14px; display: flex; gap: 10px; align-items: center; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 40; }
     #upsell-banner button { background: rgba(255,111,60,0.2); border: 1px solid rgba(255,111,60,0.6); color: var(--accent); font: inherit; padding: 5px 10px; border-radius: 4px; cursor: pointer; letter-spacing: 0.08em; font-size: 11px; }
@@ -198,6 +203,7 @@
           ↑↓ pitch &middot; ←→ bank &middot; SPACE throttle &middot; SHIFT brake<br>
           L logbook &middot; ESC pause
         </div>
+        <div class="warmup-bar"><div class="warmup-fill"></div></div>
         <button class="cta" data-act="start">START PLAYING</button>
       </div>
     </div>

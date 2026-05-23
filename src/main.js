@@ -14,6 +14,7 @@ import { hashString } from './world/Seed.js';
 import { API_BASE, apiPost } from './net/api.js';
 import { loadInstance as loadAssetInstance } from './world/AssetCache.js';
 import { buildMaterialSet } from './world/MaterialSet.js';
+import { preload as preloadRetriever, shortlist as retrieverShortlist, isReady as retrieverIsReady } from './world/AssetRetriever.js';
 
 import { HUD } from './ui/HUD.js';
 import { Toast } from './ui/Toast.js';
@@ -660,11 +661,24 @@ async function main() {
     pauseMenu.classList.toggle('show', paused);
     if (!paused) input.drain();
   };
-  // Welcome modal — first-run onboarding. Owns its own pause state via
-  // loop.setPaused directly so the pause-menu doesn't visually leak through.
-  const welcomeModal = new WelcomeModal({
-    onDismiss: () => { loop.setPaused(false); input.drain(); },
+  // Welcome modal + retrieval warmup. The warmup (MiniLM model fetch,
+  // ~22 MB once, cached after) always fires — first-time visitors see
+  // progress in the modal's bar; returning visitors hit browser cache
+  // and the preload finishes silently in the background.
+  let _welcomeModal;
+  const warmupPromise = preloadRetriever({
+    onProgress: (frac) => _welcomeModal?.setProgress?.(frac),
+  }).catch((err) => {
+    // Don't block the modal forever on a flaky network — retrieval has
+    // its own degraded-mode (BM25-only) fallback.
+    console.warn('[warmup] retriever preload failed; continuing:', err);
   });
+
+  _welcomeModal = new WelcomeModal({
+    onDismiss: () => { loop.setPaused(false); input.drain(); },
+    warmupPromise,
+  });
+  const welcomeModal = _welcomeModal;
 
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'Escape') return;
@@ -714,6 +728,16 @@ async function main() {
       plane.spawn(s.pos, s.fwd, TUNING.CRUISE_SPEED);
       flight.reset();
       return 'spawned';
+    },
+    // Phase 2 — quickly verify the hybrid retrieval pipeline. Returns
+    // [{id, score, sources}] for the given query + slot. Empty catalog
+    // returns []. Example:
+    //   await __GAME.testShortlist('towering obsidian spire', 'hero', 8)
+    async testShortlist(query, role = 'hero', k = 8) {
+      const t0 = performance.now();
+      const result = await retrieverShortlist({ query, role, k });
+      console.log(`[testShortlist] ${(performance.now() - t0).toFixed(1)}ms · retriever ready: ${retrieverIsReady()}`);
+      return result;
     },
     // Phase 1 — drop a GLB onto the active planet's surface to verify the
     // AssetCache / MaterialSet path end-to-end. Accepts either a catalog id
