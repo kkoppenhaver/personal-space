@@ -729,6 +729,15 @@ async function main() {
       flight.reset();
       return 'spawned';
     },
+    // Phase 3 — exercise the full Tier 2 chain (direct call → retrieval
+    // → pick) for an arbitrary seed. Returns the merged result.
+    //   await __GAME.testTier2(42)
+    async testTier2(seed = 42) {
+      const t0 = performance.now();
+      const result = await llm.approach(seed >>> 0, {});
+      console.log(`[testTier2] ${(performance.now() - t0).toFixed(0)}ms`);
+      return result;
+    },
     // Phase 2 — quickly verify the hybrid retrieval pipeline. Returns
     // [{id, score, sources}] for the given query + slot. Empty catalog
     // returns []. Example:
