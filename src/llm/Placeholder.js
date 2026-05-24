@@ -30,11 +30,20 @@ export function placeholderTier2(seed) {
   const name = `${NAME_SYL_A[Math.floor(r() * NAME_SYL_A.length)]}${NAME_SYL_B[Math.floor(r() * NAME_SYL_B.length)]}`;
   const biome = BIOMES[Math.floor(r() * BIOMES.length)];
   const palette = paletteForBiome(biome, r);
+  const hints = hintsForBiome(biome);
+  // density picked from the same seed so repeat visits feel deterministic
+  const densities = ['sparse', 'medium', 'dense'];
+  const density = densities[Math.floor(r() * densities.length)];
   return {
     name,
     biome,
     palette,
     atmosphere: 'Thin air, a faint hum.',
+    theme: hints.theme,
+    density,
+    hero_landmark_hints:    hints.hero,
+    landmark_anchor_hints:  hints.landmark,
+    surface_feature_hints:  hints.surface,
     landmarks: [
       { slotId: 0, kind: 'peak',  name: `${name} Spire` },
       { slotId: 1, kind: 'peak',  name: 'The Knuckle' },
@@ -51,6 +60,58 @@ export function placeholderTier3(seed) {
     surfaceLore: 'The surface is quieter than expected. Strange how a place can feel deserted and watched at the same time.',
     landmarkLore: [],
   };
+}
+
+// Per-biome retrieval hints. These mirror what the real Tier 2 LLM would
+// emit — short prose phrases the BM25 + dense retrievers tokenize against
+// the catalog. Without these the dev-mode placeholder path would never
+// reach `/tier2/pick` and no GLBs would mount on planets.
+function hintsForBiome(biome) {
+  const table = {
+    desert: {
+      theme: 'arid weathered ruin',
+      hero:     ['towering sandstone monolith on a dune', 'lone obelisk silhouetted against the sky'],
+      landmark: ['weathered stone pillars', 'half-buried ruins', 'broken arches and columns'],
+      surface:  ['scattered cacti and dune grass', 'small wind-carved rocks', 'sand-burnt skulls and bones'],
+    },
+    ocean: {
+      theme: 'coastal tropical maritime',
+      hero:     ['tall lighthouse on a rocky cliff', 'weathered watch tower above the surf'],
+      landmark: ['palm trees clustered on a beach', 'fountains and stone pillars', 'docks and weathered structures'],
+      surface:  ['palm trees and beach rocks', 'tropical bushes and grass', 'small coastal stones'],
+    },
+    forest: {
+      theme: 'lush temperate overgrown',
+      hero:     ['ancient overgrown tower in deep woods', 'massive ruined arch wrapped in vines'],
+      landmark: ['stone pillars and broken columns', 'old watermill by a river', 'fantasy fountains'],
+      surface:  ['pine and birch trees and undergrowth', 'mushrooms and ferns and bushes', 'mossy rocks and grass clumps'],
+    },
+    ice: {
+      theme: 'frozen alpine bleak',
+      hero:     ['frozen spire of jagged ice', 'tall column of glacier-blue crystal'],
+      landmark: ['ice-cracked pillars', 'frost-covered ruins', 'tall pine spires in deep snow'],
+      surface:  ['spruce and bare birch trees in snow', 'ice rocks and frozen grass', 'icy stones and dead trees'],
+    },
+    volcanic: {
+      theme: 'molten cracked harsh',
+      hero:     ['obsidian monolith glowing from within', 'tall spike of cooled lava'],
+      landmark: ['lava-cracked pillars', 'broken columns on scorched ground', 'craters and meteor scars'],
+      surface:  ['spike trees and toxic lava plants', 'glowing magma rocks', 'burnt dead trees and ash'],
+    },
+    crystalline: {
+      theme: 'cosmic prismatic alien',
+      hero:     ['giant crystal formation reaching to the sky', 'tall alien planet hanging in mid-air'],
+      landmark: ['crystal pillars and shards', 'mounted satellite antennae', 'tall alien towers'],
+      surface:  ['scattered crystals and alien plants', 'small glowing crystal clusters', 'alien rocks and toxic flora'],
+    },
+    alien: {
+      theme: 'alien sci-fi industrial',
+      hero:     ['towering alien structure with antennae', 'tall satellite-mounted tower', 'massive abandoned lander'],
+      landmark: ['turrets and machine arrays', 'satellite dishes and broken antennae', 'mining terrain platforms'],
+      surface:  ['alien rocks and crystal flora', 'scattered cargo crates and stones', 'spike trees and toxic plants'],
+    },
+  };
+  return table[biome] || table.alien;
 }
 
 function paletteForBiome(biome, r) {
