@@ -495,9 +495,15 @@ async function main() {
         }
 
         // Update HUD progress bar for the planet we're currently surveying.
-        // Rescale raw coverage to the claim threshold so a full bar = ready to claim.
+        // Rescale to "progress toward claim from atmosphere-entry baseline" so
+        // the bar starts at empty when the player drops in (Coverage's first
+        // tick instantly marks ~25% of cells just from the cone geometry) and
+        // hits 100% the moment claim fires.
         if (activePlanet && !activePlanet.claimed && activeAtmosphere?.contains(planePos)) {
-          const progress = Math.min(1, activePlanet.coverage.pct() / TUNING.CLAIM_COVERAGE);
+          const cov = activePlanet.coverage;
+          const baseline = cov.baseline();
+          const denom = Math.max(0.001, TUNING.CLAIM_COVERAGE - baseline);
+          const progress = Math.min(1, Math.max(0, (cov.pct() - baseline) / denom));
           hud.setClaimProgress(activePlanet.meta?.name || `P${activePlanet.seed}`, progress);
         } else {
           hud.setClaimProgress(null, 0);
