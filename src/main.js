@@ -12,7 +12,7 @@ import { Galaxy, CELL_SIZE } from './world/Galaxy.js';
 import { Origin } from './world/Origin.js';
 import { hashString } from './world/Seed.js';
 import { API_BASE, apiPost } from './net/api.js';
-import { loadInstance as loadAssetInstance } from './world/AssetCache.js';
+import { loadInstance as loadAssetInstance, load as preloadAsset } from './world/AssetCache.js';
 import { buildMaterialSet } from './world/MaterialSet.js';
 import { preload as preloadRetriever, shortlist as retrieverShortlist, isReady as retrieverIsReady, markUsed as retrieverMarkUsed, setUser as retrieverSetUser } from './world/AssetRetriever.js';
 import { auditAllPlanets } from './world/MaterialAudit.js';
@@ -277,6 +277,12 @@ async function main() {
           .filter(Boolean);
         const anyResolved = hero || landmarks.some(Boolean) || surfaces.length;
         if (anyResolved) {
+          // Prefetch: warm the GLB cache the moment picks resolve so the
+          // mount (and the reveal that follows) isn't gated on network/decode.
+          // The promise-map dedupes — applyVisuals reuses these parses.
+          for (const a of [hero, ...landmarks, ...surfaces]) {
+            if (a?.url) preloadAsset(a.url, renderer).catch(() => {});
+          }
           planet.applyVisuals({
             palette: meta.palette,
             biome: meta.biome || null,
@@ -285,12 +291,39 @@ async function main() {
             surfaceAssets: surfaces,
             density: meta.density || 'medium',
             renderer,
+          }).then(() => {
+            // Warm shader programs for the just-mounted (still-hidden) assets
+            // so the reveal frame doesn't compile-stall. Safe: this renderer
+            // does a plain render with no post-processing/MRT (the known
+            // compileAsync-before-composer breakage doesn't apply).
+            renderer.compileAsync?.(scene, camera);
           }).catch((err) => {
             console.warn('[main] applyVisuals failed:', err);
           });
         }
       }
     }).catch(() => { approachSent.delete(planet.seed); });
+  };
+
+  // Capture the logbook thumbnail once the planet's asset reveal is solid, so
+  // the artifact never freezes a half-materialized frame. Procedural-only
+  // planets (no reveal state) capture immediately.
+  const captureThumbnailWhenReady = async (planet, entryPromise) => {
+    const rv = planet.reveal;
+    if (rv && rv.state !== 'REVEALED') {
+      toast.show('CAPTURING…', 1600, '#cfd6e0');
+      await Promise.race([rv.done, new Promise((res) => setTimeout(res, 1500))]);
+      // Still mid-fade at the ceiling → snap solid synchronously, then let one
+      // render land before capturing (snapshotNow reads the live scene).
+      if (planet.reveal && planet.reveal.state !== 'REVEALED') {
+        planet.forceRevealComplete();
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+    }
+    const blob = await thumbnailCapture.snapshotNow();
+    if (!blob) return;
+    const entry = await entryPromise;
+    if (entry) await logbookStore.attachThumbnail(entry.id, blob);
   };
 
   // 9. Spawn the plane — restored position if we have one, otherwise the
@@ -650,13 +683,13 @@ async function main() {
           if (entry) await logbookStore.update(entry.id, { lore_status: 'failed' });
         });
 
-        // Thumbnail — capture immediately. The plane is still flying, the
-        // camera is already framed on the planet, no settle window needed.
-        thumbnailCapture.snapshotNow().then(async (blob) => {
-          if (!blob) return;
-          const entry = await entryPromise;
-          if (entry) await logbookStore.attachThumbnail(entry.id, blob);
-        });
+        // Thumbnail — defer until the asset reveal is complete so we never
+        // freeze a half-materialized planet into the logbook artifact. If the
+        // planet has no GLB visuals (empty catalog / Tier 2 not resolved /
+        // all loads failed), p.reveal is null → capture the procedural frame
+        // immediately. Otherwise wait for the reveal (1.5s ceiling), forcing
+        // it solid on timeout so the captured frame is always fully opaque.
+        captureThumbnailWhenReady(p, entryPromise);
         }  // end if (claimCandidate)
       }  // end coverage block
 
@@ -725,6 +758,14 @@ async function main() {
     onRender: (dt) => {
       // Atmosphere shader breathes with player altitude
       activeAtmosphere.tick(plane.position(), camera);
+      // Reveal-as-you-fly: advance the asset fade for EVERY loaded planet
+      // (not just the active one) so a reveal triggered mid-approach doesn't
+      // freeze when the active-planet swap lags. dt-driven → pauses with the
+      // loop. Skips planets with no reveal state (cheap).
+      const planePos = plane.position();
+      for (const ref of galaxy.allPlanets()) {
+        if (ref.planet.reveal) ref.planet.tickReveal(dt, planePos, camera, ref.atmosphere);
+      }
       // Sky color blend (sun tint near the surface)
       const r = activeAtmosphere.density(plane.position());
       const skyA = new THREE.Color(0x04060c);
@@ -733,6 +774,11 @@ async function main() {
       scene.background = null;
       renderer.setClearColor(new THREE.Color().lerpColors(skyA, skyB, r), 1.0);
       scene.fog.density = 0.00018 * r + 0.00004;
+      // Tint the haze toward the active planet's sky so the pre-entry veil
+      // reads as colored atmosphere rather than a dark void. Falls back to the
+      // original deep-space color when no palette is available.
+      const skyHex = activePlanet?.palette?.sky;
+      scene.fog.color.set(skyHex || 0x05060a).lerp(new THREE.Color(0x05060a), 1 - r);
       renderer.render(scene, camera);
     },
   });
