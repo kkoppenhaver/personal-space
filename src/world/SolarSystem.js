@@ -173,7 +173,11 @@ export class SolarSystem {
   // Tear down everything this system added to the scene + Rapier world. Used
   // by Galaxy.js when a system passes the cull radius.
   dispose() {
+    // Planet.dispose first: bumps visualGen (invalidates any in-flight
+    // applyVisuals loads) and disposes the per-planet MaterialSet templates
+    // (which live off the scene tree, so the traverse below won't reach them).
     for (const planet of this.planets) {
+      if (typeof planet.dispose === 'function') planet.dispose();
       this.world.removeRigidBody(planet.body);
     }
     if (this.group.parent) this.group.parent.remove(this.group);

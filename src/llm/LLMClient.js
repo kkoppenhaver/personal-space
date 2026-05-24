@@ -13,7 +13,11 @@
 import { placeholderTier1, placeholderTier2, placeholderTier3 } from './Placeholder.js';
 import { shortlist as retrieverShortlist } from '../world/AssetRetriever.js';
 
-const LS_CACHE_KEY = 'paper-airplane:llmcache:v1';
+// v2 bump invalidates cached Tier 2 responses that predate the Phase 3
+// hint arrays (hero_landmark_hints, landmark_anchor_hints,
+// surface_feature_hints). Without this, returning visitors keep their
+// old hint-less cached entries and never reach `/tier2/pick`.
+const LS_CACHE_KEY = 'paper-airplane:llmcache:v2';
 
 // Per the plan: no more than 2 concurrent Tier 2 chains so a mid-flight
 // swerve doesn't stack billable calls. Older speculative calls aren't
@@ -100,14 +104,20 @@ export class LLMClient {
 
   async _pickAssets(seed, direct) {
     // Build per-slot queries from the direct call's hints.
-    const heroQuery = (direct.hero_landmark_hints || []).join(' ');
-    const landmarkQuery = (direct.landmark_anchor_hints || []).join(' ');
-    const surfaceQuery = (direct.surface_feature_hints || []).join(' ');
+    let heroQuery = (direct.hero_landmark_hints || []).join(' ');
+    let landmarkQuery = (direct.landmark_anchor_hints || []).join(' ');
+    let surfaceQuery = (direct.surface_feature_hints || []).join(' ');
 
     if (!heroQuery && !landmarkQuery && !surfaceQuery) {
-      // Direct call returned no hints (placeholder fallback or older
-      // schema) — nothing to retrieve against.
-      return null;
+      // No per-slot hints (old worker schema or unexpected response). Fall
+      // back to a generic biome/theme/atmosphere blob so retrieval can
+      // still produce a shortlist — beats silently skipping the pick.
+      const generic = [direct.biome, direct.theme, direct.atmosphere]
+        .filter(Boolean).join(' ');
+      if (!generic) return null;
+      heroQuery = generic;
+      landmarkQuery = generic;
+      surfaceQuery = generic;
     }
 
     const [hero, landmark, surface] = await Promise.all([

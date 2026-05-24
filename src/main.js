@@ -15,6 +15,7 @@ import { API_BASE, apiPost } from './net/api.js';
 import { loadInstance as loadAssetInstance } from './world/AssetCache.js';
 import { buildMaterialSet } from './world/MaterialSet.js';
 import { preload as preloadRetriever, shortlist as retrieverShortlist, isReady as retrieverIsReady } from './world/AssetRetriever.js';
+import { getAssetById } from './world/assets/Catalog.js';
 
 import { HUD } from './ui/HUD.js';
 import { Toast } from './ui/Toast.js';
@@ -245,6 +246,34 @@ async function main() {
         refreshPings();
       }
       if (planet === activePlanet) hud.setPlanetName(meta.name);
+
+      // GLB-driven visuals: resolve selected_assets IDs → catalog records and
+      // kick off applyVisuals. The planet's visualGen token cancels the
+      // mount cleanly if the system despawns or the player swerves to
+      // another planet before loads complete. An empty catalog (v1
+      // baseline) silently no-ops because every getAssetById returns null.
+      if (meta.selected_assets) {
+        const sel = meta.selected_assets;
+        const hero = getAssetById(sel.hero);
+        const landmarks = [sel.landmark_a, sel.landmark_b, sel.landmark_c]
+          .map(getAssetById);
+        const surfaces = [sel.surface_a, sel.surface_b]
+          .map(getAssetById)
+          .filter(Boolean);
+        const anyResolved = hero || landmarks.some(Boolean) || surfaces.length;
+        if (anyResolved) {
+          planet.applyVisuals({
+            palette: meta.palette,
+            heroAsset: hero || null,
+            landmarkAssets: landmarks,
+            surfaceAssets: surfaces,
+            density: meta.density || 'medium',
+            renderer,
+          }).catch((err) => {
+            console.warn('[main] applyVisuals failed:', err);
+          });
+        }
+      }
     }).catch(() => { approachSent.delete(planet.seed); });
   };
 
