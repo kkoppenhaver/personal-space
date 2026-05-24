@@ -27,7 +27,13 @@ const TIER2_MAX_INFLIGHT = 2;
 // Retrieval confidence floor: if BM25/dense top-1 across all slots is
 // weak, skip the pick call entirely and serve the direct-call output
 // without selected asset IDs.
-const RETRIEVAL_MIN_TOP_SCORE = 0.05;
+//
+// Threshold is checked against the *RRF fused* score, not raw cosine. RRF
+// gives 1/(K+rank+1) per source with K=60, so the theoretical max per
+// source is 1/61 ≈ 0.0164, and the max sum across two retrievers (BM25 +
+// dense) is ~0.0328. We set the floor a hair below the BM25-only top-1
+// value so any shortlist with at least one BM25 hit can clear the gate.
+const RETRIEVAL_MIN_TOP_SCORE = 0.01;
 // Per-slot shortlist size handed to the pick call.
 const SHORTLIST_K = { hero: 8, landmark: 10, surface: 15 };
 
@@ -193,7 +199,12 @@ export class LLMClient {
       }
       try {
         const ctl = new AbortController();
-        const timeoutId = setTimeout(() => ctl.abort(), tier === 1 ? 8000 : 12000);
+        // Tier 1 = Haiku teaser (fast), Tier 2/direct = Sonnet 4.6 rich
+        // biome prose (consistently 12-16s p50 in prod), Tier 3 = Sonnet
+        // landmark lore (similar profile). 12s was too tight and caused
+        // every Tier 2/3 to abort + fall back to placeholder.
+        const timeoutMs = tier === 1 ? 8000 : 25000;
+        const timeoutId = setTimeout(() => ctl.abort(), timeoutMs);
         const resp = await fetch(`${this.workerURL}/tier${tier}${suffix}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
