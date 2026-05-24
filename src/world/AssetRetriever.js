@@ -91,13 +91,37 @@ export function preload({ onProgress } = {}) {
     // download ~22 MB, returning visitors hit cache.
     env.allowLocalModels = false;
 
+    // The MiniLM model is split across several files (config.json,
+    // tokenizer.json, onnx/model_quantized.onnx, …). progress_callback
+    // fires per-file with `loaded`/`total` bytes. If we forward each
+    // file's % directly the bar jumps to 100% on each completed file
+    // then snaps back when the next one starts. Sum bytes across all
+    // known files for a single monotonic 0→1 fraction instead.
+    const fileBytes = new Map(); // file → { loaded, total }
+    const emitTotal = () => {
+      let loaded = 0;
+      let total = 0;
+      for (const v of fileBytes.values()) {
+        loaded += v.loaded;
+        total += v.total;
+      }
+      if (total > 0) onProgress?.(Math.min(1, loaded / total), 'download');
+    };
+
     const embedder = await pipeline('feature-extraction', MODEL, {
       dtype: DTYPE,
       progress_callback: (p) => {
-        if (p.status === 'progress' && typeof p.progress === 'number') {
-          onProgress?.(p.progress / 100, 'download');
+        if (!p.file) return;
+        if (p.status === 'progress' && typeof p.loaded === 'number' && typeof p.total === 'number') {
+          fileBytes.set(p.file, { loaded: p.loaded, total: p.total });
+          emitTotal();
         } else if (p.status === 'done') {
-          onProgress?.(1, 'init');
+          // Snap this file to 100% on completion so the aggregate climbs
+          // even when the last `progress` event lagged behind the final
+          // bytes. Skipped if we never saw a progress event (cached file
+          // — no bytes downloaded).
+          const e = fileBytes.get(p.file);
+          if (e) { e.loaded = e.total; emitTotal(); }
         }
       },
     });
