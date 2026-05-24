@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mulberry32 } from './Seed.js';
+import { axisUpQuaternionFor, groundOffsetFor } from './AxisUp.js';
 
 // Density hint → instance count multiplier. Applied to the per-asset base
 // count so a "dense" jungle planet really feels dense without flooding the
@@ -66,6 +67,13 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
 
   // Per-asset instance buckets.
   const buckets = assets.map(() => []);
+  // Pre-resolve per-asset ground offset and axis-up quat once. Cheaper
+  // than recomputing per instance, and the bbox is shared across all
+  // instances of the same asset anyway.
+  const perAsset = assets.map((a) => ({
+    bboxOffset: groundOffsetFor(a.glbClone?.userData?.bbox, a.pack),
+    axisUp: axisUpQuaternionFor(a.pack),
+  }));
   const tmp = new THREE.Vector3();
   for (let s = 0; s < samples; s++) {
     const idx = candidates[s];
@@ -94,12 +102,17 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
 
     const inst = new THREE.InstancedMesh(geom, mat, transforms.length);
     const dummy = new THREE.Object3D();
+    const { bboxOffset, axisUp } = perAsset[aIdx];
     transforms.forEach((t, i) => {
       const up = t.dir;
-      dummy.position.copy(up).multiplyScalar(t.height + 0.4 * t.scale);
-      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
-      const qSpin = new THREE.Quaternion().setFromAxisAngle(up, t.twist);
-      dummy.quaternion.copy(qSpin).multiply(q);
+      // Ground-snap: push outward from the surface point by the bbox
+      // offset (scaled). The 0.4 fudge that used to live here was a
+      // procedural-primitive heuristic — now we have real bbox data.
+      dummy.position.copy(up).multiplyScalar(t.height + bboxOffset * t.scale);
+      const surfaceUp = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
+      const spin = new THREE.Quaternion().setFromAxisAngle(up, t.twist);
+      // Compose: axisUp (asset-local) → surfaceUp (slot) → spin.
+      dummy.quaternion.copy(spin).multiply(surfaceUp).multiply(axisUp);
       dummy.scale.setScalar(t.scale);
       dummy.updateMatrix();
       inst.setMatrixAt(i, dummy.matrix);

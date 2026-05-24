@@ -79,17 +79,32 @@ export function load(url, renderer) {
  * cached source GLTF is the authoritative copy, the returned Group is a
  * fresh clone safe to mutate, translate, and add to scene.
  *
+ * The returned clone's `userData.bbox` is a THREE.Box3 in the clone's
+ * *local* frame (pre-scale, pre-orientation). Callers use `bbox.min.y` to
+ * ground-snap the asset so its visible base touches terrain instead of
+ * its origin floating above. Computed once per load and cached on the
+ * source gltf.scene so subsequent clones reuse the same Box3 instance.
+ *
  * @param {string} url
  * @param {ReturnType<typeof import('./MaterialSet.js').buildMaterialSet>} matSet
  * @param {THREE.WebGLRenderer} [renderer]
+ * @param {{ family?: string, assetId?: string }} [assetMeta] - threaded to applyMaterialSet
  * @returns {Promise<THREE.Group>}
  */
-export async function loadInstance(url, matSet, renderer) {
+export async function loadInstance(url, matSet, renderer, assetMeta) {
   const gltf = await load(url, renderer);
+  // Compute & cache the local-frame bbox on the source scene once; every
+  // future clone of this asset shares the same Box3 (Box3 is a value type,
+  // not GPU-resident — safe to share).
+  if (!gltf.scene.userData.bbox) {
+    gltf.scene.updateMatrixWorld(true);
+    gltf.scene.userData.bbox = new THREE.Box3().setFromObject(gltf.scene);
+  }
   // clone(true) shares geometry/material refs by design — fine for static
   // meshes since we override materials on the cloned tree below.
   const root = gltf.scene.clone(true);
-  if (matSet) applyMaterialSet(root, matSet);
+  root.userData.bbox = gltf.scene.userData.bbox;
+  if (matSet) applyMaterialSet(root, matSet, assetMeta || {});
   // Recompute bounding spheres so frustum culling under floating-origin is
   // correct (GLB-supplied bounds are valid pre-clone but become stale on
   // any per-mesh transform we apply downstream).

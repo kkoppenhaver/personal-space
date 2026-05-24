@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mulberry32 } from './Seed.js';
+import { axisUpQuaternionFor, groundOffsetFor } from './AxisUp.js';
 
 // Pick 3..6 hero landmark slots from the terrain mesh.
 //
@@ -209,36 +210,45 @@ function buildProceduralLandmarkMesh(lm, palette) {
 
 /**
  * Bind a single GLB clone to a landmark slot. Scales it to the asset's
- * declared `scale_range` (deterministic per-slot via the planet seed) and
- * orients its +Y to the slot's surface-up direction.
+ * declared `scale_range` (deterministic per-slot via the planet seed),
+ * applies the per-pack axis-up correction if any, orients its +Y to the
+ * slot's surface-up direction, and ground-snaps using the clone's bbox
+ * so the visible base touches terrain instead of the origin floating
+ * above.
  *
  * The clone is mutated in place (position, scale, quaternion) and returned
  * so the caller can add it to the planet group.
  *
  * @param {object} args
  * @param {object} args.slot                    - from pickLandmarkSlots
- * @param {THREE.Object3D} args.gltfClone       - clone from AssetCache.loadInstance
+ * @param {THREE.Object3D} args.gltfClone       - clone from AssetCache.loadInstance (userData.bbox carried)
  * @param {[number, number]} [args.scaleRange]  - min/max meters; default [4,8]
+ * @param {string} [args.pack]                  - catalog pack id for axis-up override
  * @param {number} args.seed                    - planet seed for deterministic per-slot scale
  * @returns {THREE.Object3D} the same clone, now positioned + scaled
  */
-export function buildLandmarkInstance({ slot, gltfClone, scaleRange = [4, 8], seed }) {
+export function buildLandmarkInstance({ slot, gltfClone, scaleRange = [4, 8], pack = null, seed }) {
   const [minS, maxS] = scaleRange;
   // Deterministic per-slot scale so repeat visits to the same planet pick
   // the same scale (no LLM call needed to re-derive).
   const rand = mulberry32((seed ^ 0xC0DE) >>> 0 ^ (slot.slotId * 73856093 >>> 0));
   const scale = minS + (maxS - minS) * rand();
 
-  gltfClone.position.copy(slot.position);
-  // GLB convention: +Y up. Orient so the asset's local +Y points along the
-  // planet's surface-up at this slot.
-  const yToUp = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), slot.direction);
-  gltfClone.quaternion.copy(yToUp);
-  // Add deterministic twist around the up axis so identical asset instances
-  // at different slots don't read as obviously-copied.
+  // Compose: axisUp (asset-local fix) → surfaceUp (slot orientation) → twist.
+  // Multiplications apply right-to-left, so we want quaternion = twist * surface * axisUp.
+  const axisUp = axisUpQuaternionFor(pack);
+  const surfaceUp = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), slot.direction);
   const twist = new THREE.Quaternion().setFromAxisAngle(slot.direction, rand() * Math.PI * 2);
-  gltfClone.quaternion.premultiply(twist);
+  gltfClone.quaternion.copy(twist).multiply(surfaceUp).multiply(axisUp);
   gltfClone.scale.setScalar(scale);
+
+  // Ground-snap: push the asset outward along surface normal by the
+  // distance from origin to the bbox's "down" extent (scaled). Without
+  // this the origin sits on the surface point but a model whose origin
+  // is at center floats by half its height.
+  const groundOffset = groundOffsetFor(gltfClone.userData?.bbox, pack) * scale;
+  gltfClone.position.copy(slot.position).addScaledVector(slot.direction, groundOffset);
+
   gltfClone.userData.slotId = slot.slotId;
   gltfClone.userData.kind = slot.kind;
   return gltfClone;

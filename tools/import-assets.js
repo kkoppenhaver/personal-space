@@ -21,6 +21,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
+import { resolveFamily, SCALE_OVERRIDES } from './family.js';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE_ROOT = join(homedir(), 'code/3d-modles/assets');
 // GLBs land in public/ so Vite serves them at /assets/bundled/... at runtime.
@@ -44,6 +46,10 @@ const NO_OPT = process.argv.includes('--no-opt');
 // ────────────────────────────────────────────────────────────────────────
 
 const LLM_BIOMES = ['desert','ocean','forest','ice','volcanic','crystalline','gas-stripped','alien'];
+
+// `family` derivation + `SCALE_OVERRIDES` are exported from tools/family.js
+// so the in-place augmenter (tools/augment-catalog.js) can apply them to an
+// existing catalog without re-importing source assets.
 
 // ────────────────────────────────────────────────────────────────────────
 // Per-filename biome refinement. First match wins; REPLACES the kit
@@ -548,8 +554,9 @@ async function main() {
   const assets = summary.entries.map(({ kit, file, name, role, destFile }) => {
     const sourceFile = destFile || join(DEST_ROOT, kit.creator.toLowerCase(), kit.pack.replace(/^[a-z]+_/, ''), basename(file));
     const url = `${PUBLIC_URL_PREFIX}/${kit.creator.toLowerCase()}/${kit.pack.replace(/^[a-z]+_/, '')}/${basename(sourceFile)}`;
-    return {
-      id: makeId(kit, name),
+    const id = makeId(kit, name);
+    const entry = {
+      id,
       name: nameFor(basename(file)),
       pack: kit.pack,
       creator: kit.creator,
@@ -557,11 +564,14 @@ async function main() {
       attribution: null,
       url,
       role,
+      family: resolveFamily(name),
       tags: tagsFor(name),
       biome_affinity: resolveBiome(name, kit),
       theme_affinity: kit.themeAffinity,
       scale_range: kit.scaleRange[role] || [1.0, 2.0],
     };
+    if (SCALE_OVERRIDES[id]) entry.scale_override = SCALE_OVERRIDES[id];
+    return entry;
   });
 
   // Dedup by id (in case two kits have overlapping filenames).
