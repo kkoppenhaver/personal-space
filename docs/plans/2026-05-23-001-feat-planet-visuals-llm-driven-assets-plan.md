@@ -8,6 +8,24 @@ supersedes: plan.md Phase 3+ entries "Planet visuals workstream" and "Planet dis
 
 # Planet visuals — LLM-driven 3D asset selection
 
+## Progress
+
+| Phase | Status | PR | Notes |
+|---|---|---|---|
+| 1. Catalog scaffolding + AssetCache + MaterialSet | ✅ Shipped | [#10](https://github.com/kkoppenhaver/personal-space/pull/10) | Loader pipeline (`GLTFLoader` + `DRACOLoader` + `KTX2Loader` + `MeshoptDecoder`), per-planet `MaterialSet`, `__GAME.testAsset()` debug hook. Catalog content is a separate manual workstream. |
+| 2. Embedding pipeline + AssetRetriever + Welcome-Modal warmup | ✅ Shipped | [#11](https://github.com/kkoppenhaver/personal-space/pull/11) | Hybrid BM25 + MiniLM + RRF + MMR + recency demotion; welcome modal doubles as MiniLM warmup window (ambient amber progress bar, no MB count). |
+| 3. Tier 2 split into direct + pick | ✅ Shipped | [#12](https://github.com/kkoppenhaver/personal-space/pull/12) | `/tier2/direct` extended with creative-direction fields (theme, density, hint arrays); new `/tier2/pick` uses Haiku 4.5 strict-tool enum-per-slot. In-flight cap of 2; threshold guard; degraded-pick fallback. Requires `wrangler deploy`. |
+| 4. Planet construction refactor + cancellation tokens | ⏭ Next | — | Defer landmark/feature build until `applyVisuals()` consumes `selected_assets`. `Planet.visualGen` token to guard against despawn-during-load. |
+| 5. Reveal-as-you-fly | ⌛ Pending | — | Fade-in shader (distant vs late curves), atmospheric haze, distance-gated LOD, intent gate, thumbnail-capture defer. |
+| 6. Diversity guardrails + style cohesion enforcement | ⌛ Pending | — | Recent-asset demotion wiring (the retriever supports it; need to call `markUsed()` post-claim), pack-cohesion retrieval bonus, end-to-end MaterialSet enforcement. |
+| 7. Poly Pizza dynamic + attribution UX | ⌛ Pending | — | Worker proxy + KV cache + per-entry attribution in logbook detail view. |
+| 8. Performance pass | ⌛ Pending | — | Hard 2-system cap on full-realization, frustum culling re-enable, ORT WASM CDN config (currently bundled to dist but served from jsdelivr at runtime — bloat is harmless but worth cleaning). |
+
+**Related fixes shipped alongside:**
+- [#13](https://github.com/kkoppenhaver/personal-space/pull/13) — `fix(hud)`: claim bar now starts empty on atmosphere entry instead of ~50%. Coverage baseline-snapshot fix; surfaced during Phase 3 testing.
+
+---
+
 ## Enhancement Summary
 
 **Deepened:** 2026-05-23 (same day as initial plan write) via parallel research agents on five sections.
