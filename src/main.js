@@ -269,6 +269,7 @@ async function main() {
         if (anyResolved) {
           planet.applyVisuals({
             palette: meta.palette,
+            biome: meta.biome || null,
             heroAsset: hero || null,
             landmarkAssets: landmarks,
             surfaceAssets: surfaces,
@@ -819,6 +820,22 @@ async function main() {
       const result = await retrieverShortlist({ query, role, k });
       console.log(`[testShortlist] ${(performance.now() - t0).toFixed(1)}ms · retriever ready: ${retrieverIsReady()}`);
       return result;
+    },
+    // Phase 10 — toggle/refresh the placement debug overlay. Flip
+    // `__GAME.debugPlacement = true` then call this to bind helpers
+    // (bbox + axes gizmo + surface normal arrow) across every currently
+    // loaded planet's landmark instances.
+    refreshDebugPlacement() {
+      let touched = 0;
+      for (const sys of galaxy.systems.values()) {
+        for (const p of sys.planets) {
+          if (typeof p._refreshDebugHelpers === 'function') {
+            p._refreshDebugHelpers();
+            touched++;
+          }
+        }
+      }
+      console.log(`[debugPlacement] refreshed across ${touched} planets (flag=${!!window.__GAME.debugPlacement})`);
     },
     // Phase 1 — drop a GLB onto the active planet's surface to verify the
     // AssetCache / MaterialSet path end-to-end. Accepts either a catalog id

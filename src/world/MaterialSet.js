@@ -1,109 +1,124 @@
-// Single per-planet material source. Derives a set of slotted materials from
-// the planet's palette so terrain, rocks, flora, landmarks, and hero assets
-// all read as one cohesive place even when the underlying meshes come from
-// different creators (Quaternius, Kenney, KayKit, etc).
+// Single per-planet material source. Today the per-asset color comes from
+// the **dual-axis color system** (src/world/ColorSystem.js): an asset's
+// `family` (rock, flora, structure, ...) anchors a baseline OKLCH color,
+// and the planet's biome shifts that color toward the biome accent by a
+// per-family amount. Rocks stay recognizably rocky, flora reads as flora,
+// landmarks pop with the accent — all on the same planet.
 //
-// The cohesion principle (see Astroneer / No Man's Sky): vary VALUE and
-// SATURATION more than HUE within a single planet. Flora gets a contrasting
-// hue slot; rocks get a desaturated/darker terrain; landmarks get the accent.
+// The MaterialSet here is the *context object* passed to per-mesh color
+// resolution: it carries the biome label, the chosen accent hex (from the
+// LLM palette), and a few legacy slot templates kept around for the
+// terrain mesh and as the "hero" opt-out sentinel.
 
 import * as THREE from 'three';
+import { resolveColor, biomeFallbackAccent } from './ColorSystem.js';
 
-// Multiply each RGB channel by a scalar without mutating the source color.
-function shaded(hex, factor) {
-  const c = new THREE.Color(hex);
-  c.multiplyScalar(factor);
-  return c;
+/** Strip any "#" / 0x prefix from a hex color string and return an int. */
+function hexToInt(c) {
+  if (typeof c === 'number') return c >>> 0;
+  if (!c) return 0xb0b0b0;
+  const s = String(c).replace(/^#/, '').replace(/^0x/i, '');
+  return parseInt(s, 16) >>> 0;
 }
 
 /**
- * Build a per-planet MaterialSet from the LLM/seed-derived palette.
+ * Build a per-planet MaterialSet.
  *
  * @param {{ water:string, low:string, mid:string, high:string, snow:string, sky:string }} palette
+ * @param {{ biome?: string|null }} [opts]
  * @returns {{
  *   terrain:  THREE.MeshLambertMaterial,
- *   rock:     THREE.MeshLambertMaterial,
- *   flora:    THREE.MeshLambertMaterial,
- *   landmark: THREE.MeshLambertMaterial,
- *   hero:     null,                       // sentinel: keep GLB's original PBR
- *   default:  THREE.MeshLambertMaterial,
- *   sky:      string,                     // hex; consumed by Atmosphere shader
- *   palette:  object                      // pass-through for downstream code
+ *   hero:     null,
+ *   sky:      string,
+ *   palette:  object,
+ *   biome:    string|null,
+ *   accent:   number,        // hex int; used as the biome accent for color resolve
  * }}
  */
-export function buildMaterialSet(palette) {
-  const flat = true;
+export function buildMaterialSet(palette, opts = {}) {
+  const biome = opts.biome ?? null;
+  // The "snow" band reads as the biome's brightest signature — use it as
+  // the accent that landmarks and (to lesser degrees) flora/rock blend
+  // toward. Fall back to a hard-coded accent if the palette is missing.
+  const accent = palette?.snow ? hexToInt(palette.snow) : biomeFallbackAccent(biome);
   return {
-    // Terrain uses vertex colors (already banded by elevation in TerrainGen);
-    // material color stays white so VC isn't tinted.
-    terrain:  new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: flat }),
-    // Rocks read as "darker terrain" — same family, lower value.
-    rock:     new THREE.MeshLambertMaterial({ color: shaded(palette.high, 0.9), flatShading: flat }),
-    // Flora gets a distinct hue slot — the palette's "low" band is usually the
-    // contrasting choice (greens/blues against terrain warms, etc).
-    flora:    new THREE.MeshLambertMaterial({ color: shaded(palette.low, 0.85), flatShading: flat }),
-    // Landmarks get the accent — pop against terrain, but still palette-bound.
-    landmark: new THREE.MeshLambertMaterial({ color: new THREE.Color(palette.snow), flatShading: flat }),
-    // Hero opts out — keep the GLB's hand-crafted PBR. Tied into biome via
-    // the global post-process LUT (Phase 7) rather than direct override.
-    hero:     null,
-    // Catch-all for assets with unknown matSlot tag.
-    default:  new THREE.MeshLambertMaterial({ color: shaded(palette.mid, 1.0), flatShading: flat }),
-    sky:      palette.sky,
+    terrain: new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }),
+    hero: null,
+    sky: palette?.sky,
     palette,
+    biome,
+    accent,
   };
 }
 
 /**
- * Override every Mesh material in a GLB scene with the corresponding entry
- * from the MaterialSet, preserving baked vertex colors and falling back to
- * the matSlot tag's default when an unknown slot is present.
- *
- * - mesh.userData.matSlot wins when present (set at build time via
- *   gltf-transform from Blender custom properties).
- * - Otherwise the material's name prefix (e.g. "rock_01" → "rock") is used.
- * - matSet.hero === null means "keep original material" — opt out.
- *
- * @param {THREE.Object3D} root
- * @param {ReturnType<typeof buildMaterialSet>} matSet
- */
-/**
  * Dispose the template materials held by a MaterialSet. Per-mesh cloned
- * materials (set by `applyMaterialSet`) are already disposed by the standard
- * scene-traverse pass in `SolarSystem.dispose`; the templates here aren't on
- * the scene tree, so they need a manual dispose to free their GPU programs.
+ * materials (created by `applyMaterialSet`) are already disposed by the
+ * standard scene-traverse pass in `SolarSystem.dispose`; the templates
+ * here aren't on the scene tree, so they need a manual dispose.
  *
- * Safe to call on a partially-built set: any `null` slot is skipped.
+ * Safe to call on a partially-built set.
  *
  * @param {ReturnType<typeof buildMaterialSet>|null|undefined} matSet
  */
 export function disposeMaterialSet(matSet) {
   if (!matSet) return;
-  for (const key of ['terrain', 'rock', 'flora', 'landmark', 'default']) {
-    const m = matSet[key];
-    if (m && typeof m.dispose === 'function') m.dispose();
-  }
+  if (matSet.terrain?.dispose) matSet.terrain.dispose();
 }
 
-export function applyMaterialSet(root, matSet) {
+/**
+ * Override every Mesh material in a GLB scene with a freshly-built
+ * dual-axis-colored material. Family for the color comes from (in order):
+ *   1. mesh.userData.matSlot — author-tagged at build time
+ *   2. mesh.material.name prefix (e.g. "rock_01" → "rock")
+ *   3. assetMeta.family — the catalog's per-asset family (covers most cases)
+ *   4. 'default'
+ *
+ * A matSlot of 'hero' opts out entirely (the GLB's hand-crafted PBR is
+ * preserved — landmark-cohesion responsibility for hero assets falls to
+ * the future post-process LUT, not this pass).
+ *
+ * @param {THREE.Object3D} root
+ * @param {ReturnType<typeof buildMaterialSet>} matSet
+ * @param {{ family?: string, assetId?: string }} [assetMeta]
+ */
+export function applyMaterialSet(root, matSet, assetMeta = {}) {
+  const assetFamily = assetMeta.family || null;
+  const assetId = assetMeta.assetId || '';
+  const biome = matSet.biome;
+  const accent = matSet.accent;
+
   root.traverse((o) => {
     if (!o.isMesh) return;
-    const slot =
-      o.userData?.matSlot
-      ?? (o.material?.name?.split(/[_\s-]/)?.[0] || null)
-      ?? 'default';
-    const base = matSet[slot];
-    if (base === null) return;             // hero opt-out
-    const template = base ?? matSet.default;
+    const slot = o.userData?.matSlot
+      ?? (o.material?.name?.split(/[_\s-]/)?.[0] || null);
+    if (slot === 'hero' || matSet.hero === null && slot === 'hero') return; // opt-out
+    if (slot === 'terrain') return; // shouldn't occur on a loaded GLB
+
+    // Family preference: explicit author tag → name prefix that matches a
+    // family → per-asset family → fallback. Slot strings happen to align
+    // with family names for the common cases (rock, flora, structure).
+    const family = slot && isKnownFamily(slot) ? slot
+                : (assetFamily || 'default');
+
     const hasVC = !!o.geometry?.attributes?.color;
-    // Clone so per-planet edits (vertexColors flag, color) don't leak.
-    const m = template.clone();
-    m.vertexColors = hasVC;
+    const colorHex = resolveColor({ family, biome, biomeAccentHex: accent, assetId });
+
+    const m = new THREE.MeshLambertMaterial({
+      color: colorHex,
+      flatShading: true,
+      vertexColors: hasVC,
+    });
     if (hasVC) m.color.setHex(0xffffff);    // multiplier-neutral; let VC drive
-    // Keep the GLB's baked texture (if any) when the override has none.
     if (o.material?.map && !m.map) m.map = o.material.map;
-    // Tag so disposal logic can identify cloned-per-planet materials.
     m.userData.cloned = true;
     o.material = m;
   });
 }
+
+// Known families recognized when reading slot strings. Mirrors the keys
+// in ColorSystem.FAMILY_BASE so a `rock_*` material name routes correctly.
+const _KNOWN_FAMILIES = new Set([
+  'rock', 'stone', 'sand', 'flora', 'wood', 'metal', 'bone', 'crystal', 'structure',
+]);
+function isKnownFamily(s) { return _KNOWN_FAMILIES.has(s); }
