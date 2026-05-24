@@ -177,6 +177,10 @@ async function main() {
   // backing store; iteration order is insertion order.
   const pings = new Map();           // seed -> { name, teaser, planet }
   const approachSent = new Set();    // seed of planets we've already tried Tier 2 on
+  // Intent-gate state: `seed → first-frame-ms when we noticed the player
+  // heading at this planet within INTENT radius`. Cleared when they look
+  // away or when Tier 2 actually fires.
+  const intentSince = new Map();
   const PING_HUD_LIMIT = 5;          // chip strip caps at the N nearest planets
   const refreshPings = () => {
     const sorted = Array.from(pings.values())
@@ -225,6 +229,7 @@ async function main() {
         planetNav.untrack(`planet:${p.seed}`);
         pings.delete(p.seed);
         approachSent.delete(p.seed);
+        intentSince.delete(p.seed);
       }
       refreshPings();
     },
@@ -420,17 +425,49 @@ async function main() {
       // Commitment-gated Tier 2 (approach). Fires once per planet across every
       // loaded system. The seed-keyed `approachSent` Set survives despawn so
       // we don't re-fire when a system streams back in.
+      //
+      // Two gates fire Tier 2:
+      //   1. Hard gates  — in atmosphere, OR within APPROACH_DISTANCE + aimed.
+      //   2. Intent gate — sustained heading-toward (≥ INTENT_GATE_MS) within
+      //      a wider INTENT_GATE_DISTANCE_MULT × APPROACH_DISTANCE radius.
+      //      This hides the LLM's ~14s round-trip behind the player's
+      //      remaining flight time so GLBs are usually ready by arrival.
       {
         const planePos = plane.position();
         const planeFwd = plane.forward();
+        const now = performance.now();
+        const intentRadiusMult = TUNING.INTENT_GATE_DISTANCE_MULT;
         for (const ref of galaxy.allPlanets()) {
-          if (approachSent.has(ref.planet.seed)) continue;
-          if (ref.atmosphere.contains(planePos)) { tryApproach(ref.planet); continue; }
+          const seed = ref.planet.seed;
+          if (approachSent.has(seed)) { intentSince.delete(seed); continue; }
+          if (ref.atmosphere.contains(planePos)) { tryApproach(ref.planet); intentSince.delete(seed); continue; }
           const toPlanet = ref.planet.center.clone().sub(planePos);
           const distance = toPlanet.length();
-          if (distance > ref.planet.radius + TUNING.APPROACH_DISTANCE) continue;
+          const surfaceOffset = ref.planet.radius;
+          // Outside even the intent radius → forget any prior heading state.
+          if (distance > surfaceOffset + TUNING.APPROACH_DISTANCE * intentRadiusMult) {
+            intentSince.delete(seed);
+            continue;
+          }
           toPlanet.divideScalar(distance || 1);
-          if (planeFwd.dot(toPlanet) >= TUNING.APPROACH_DOT) tryApproach(ref.planet);
+          const aimed = planeFwd.dot(toPlanet) >= TUNING.APPROACH_DOT;
+          if (!aimed) { intentSince.delete(seed); continue; }
+          // Hard gate first — close + aimed fires immediately.
+          if (distance <= surfaceOffset + TUNING.APPROACH_DISTANCE) {
+            tryApproach(ref.planet);
+            intentSince.delete(seed);
+            continue;
+          }
+          // Intent gate: aimed but still 1.0–1.5× APPROACH_DISTANCE out.
+          // Require sustained heading before firing to filter out fly-by
+          // glances that swerve away.
+          const since = intentSince.get(seed);
+          if (since == null) {
+            intentSince.set(seed, now);
+          } else if (now - since >= TUNING.INTENT_GATE_MS) {
+            tryApproach(ref.planet);
+            intentSince.delete(seed);
+          }
         }
       }
 

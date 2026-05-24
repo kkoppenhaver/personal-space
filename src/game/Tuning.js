@@ -85,6 +85,12 @@ export const TUNING = {
   // aimed at the planet from close enough to count as committed.
   APPROACH_DOT: 0.85,         // dot(fwd, toPlanetUnit) ≥ this
   APPROACH_DISTANCE: 1500,    // metres beyond planet.radius
+  // Intent gate: fire Tier 2 *early* on sustained heading-toward at a wider
+  // radius. Hides the LLM's ~14s latency behind the player's remaining
+  // flight time, so by the time they reach approach distance the GLB
+  // selections are ready to mount.
+  INTENT_GATE_DISTANCE_MULT: 1.5,  // intent radius = APPROACH_DISTANCE * mult
+  INTENT_GATE_MS: 1500,            // ms of sustained heading required to fire
 
   // World
   PLANET_RADIUS: 100,
