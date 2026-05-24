@@ -160,7 +160,11 @@ export class LLMClient {
 
     try {
       const ctl = new AbortController();
-      const timeoutId = setTimeout(() => ctl.abort(), 8000);
+      // /tier2/pick uses Haiku 4.5 (fast model) but still measures ~12-13s
+      // round-trip in prod (worker + Anthropic). Same generous timeout
+      // posture as Tier 2/direct. degradedPick is a clean fallback if it
+      // still times out, but we want the real LLM choice when possible.
+      const timeoutId = setTimeout(() => ctl.abort(), 20000);
       const resp = await fetch(`${this.workerURL}/tier2/pick`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
