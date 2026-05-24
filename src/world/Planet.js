@@ -48,6 +48,9 @@ export class Planet {
     this.mesh = new THREE.Mesh(this.geometry, mat);
     this.mesh.castShadow = false;
     this.mesh.receiveShadow = false;
+    // Tag so the MaterialSet audit (Phase 6) exempts the terrain — it uses
+    // its own vertex-colored material, not a per-mesh matSet clone.
+    this.mesh.userData.matSlot = 'terrain';
 
     // Sampler for fast altitude queries without raycasting.
     this.sample = makeTerrainSampler({ seed, radius, seaLevel: built.seaLevel });
