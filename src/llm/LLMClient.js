@@ -126,10 +126,21 @@ export class LLMClient {
       surfaceQuery = generic;
     }
 
-    const [hero, landmark, surface] = await Promise.all([
-      retrieverShortlist({ query: heroQuery, role: 'hero', k: SHORTLIST_K.hero, biomeAffinity: direct.biome }),
-      retrieverShortlist({ query: landmarkQuery, role: 'landmark', k: SHORTLIST_K.landmark, biomeAffinity: direct.biome }),
-      retrieverShortlist({ query: surfaceQuery, role: 'surface', k: SHORTLIST_K.surface, biomeAffinity: direct.biome }),
+    // Hero shortlist runs first so we can derive the planet's anchor pack
+    // (the most common pack across the hero top-3). Landmark + surface then
+    // run in parallel WITH that anchor as a soft cohesion boost — so all
+    // slots bias toward one kit and the planet reads as a single place.
+    // This is a probabilistic anchor (the LLM still picks freely from the
+    // shortlist); it does NOT add a second LLM round-trip — only one extra
+    // ~10-30ms shortlist hop before the parallel pair.
+    const hero = await retrieverShortlist({
+      query: heroQuery, role: 'hero', k: SHORTLIST_K.hero, biomeAffinity: direct.biome,
+    });
+    const anchorPack = topPackOf(hero.slice(0, 3));
+
+    const [landmark, surface] = await Promise.all([
+      retrieverShortlist({ query: landmarkQuery, role: 'landmark', k: SHORTLIST_K.landmark, biomeAffinity: direct.biome, preferPack: anchorPack }),
+      retrieverShortlist({ query: surfaceQuery, role: 'surface', k: SHORTLIST_K.surface, biomeAffinity: direct.biome, preferPack: anchorPack }),
     ]);
 
     // Threshold guard: if every shortlist is empty OR top scores are too
@@ -171,11 +182,19 @@ export class LLMClient {
         signal: ctl.signal,
         body: JSON.stringify({
           seed: seed >>> 0,
-          direction: { theme: direct.theme, biome: direct.biome, density: direct.density },
+          direction: { theme: direct.theme, biome: direct.biome, density: direct.density, anchor_pack: anchorPack },
+          // Bare-id arrays drive the strict-tool enum (unchanged → same KV
+          // cache key). shortlist_meta carries pack/family for prose context
+          // so Haiku can honor the pack-cohesion line in the system prompt.
           shortlist: {
             hero: hero.map((h) => h.id),
             landmark: landmark.map((l) => l.id),
             surface: surface.map((s) => s.id),
+          },
+          shortlist_meta: {
+            hero: hero.map(metaOf),
+            landmark: landmark.map(metaOf),
+            surface: surface.map(metaOf),
           },
         }),
       });
@@ -238,6 +257,28 @@ export class LLMClient {
     this.cache[key] = value;
     saveCache(this.cache);
   }
+}
+
+// Most-common pack across the given shortlist entries; ties break toward
+// the higher-ranked entry (the input is already score-sorted). Returns null
+// for an empty list so the pack boost becomes a no-op (graceful baseline).
+function topPackOf(entries) {
+  if (!entries || !entries.length) return null;
+  const counts = new Map();
+  for (const e of entries) {
+    if (!e?.pack) continue;
+    counts.set(e.pack, (counts.get(e.pack) || 0) + 1);
+  }
+  let best = null, bestN = 0;
+  for (const [pack, n] of counts) {
+    if (n > bestN) { best = pack; bestN = n; }
+  }
+  return best;
+}
+
+// Project a shortlist entry to the {id, pack, family} the worker prompt uses.
+function metaOf(e) {
+  return { id: e.id, pack: e.pack ?? null, family: e.family ?? null };
 }
 
 // Deterministic top-1 fallback for when /tier2/pick can't run (no worker,

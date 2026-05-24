@@ -154,6 +154,9 @@ function capitalize(s) {
 // for the slot (empty catalog, GLB load failure, etc).
 export function buildLandmarkMeshes(landmarks, palette) {
   const group = new THREE.Group();
+  // Tag so the MaterialSet audit exempts these — procedural fallbacks build
+  // their materials ad-hoc by design, they're not matSet-sourced.
+  group.userData.procedural = true;
   for (const lm of landmarks) {
     const mesh = buildProceduralLandmarkMesh(lm, palette);
     if (mesh) {

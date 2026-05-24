@@ -14,7 +14,8 @@ import { hashString } from './world/Seed.js';
 import { API_BASE, apiPost } from './net/api.js';
 import { loadInstance as loadAssetInstance } from './world/AssetCache.js';
 import { buildMaterialSet } from './world/MaterialSet.js';
-import { preload as preloadRetriever, shortlist as retrieverShortlist, isReady as retrieverIsReady } from './world/AssetRetriever.js';
+import { preload as preloadRetriever, shortlist as retrieverShortlist, isReady as retrieverIsReady, markUsed as retrieverMarkUsed, setUser as retrieverSetUser } from './world/AssetRetriever.js';
+import { auditAllPlanets } from './world/MaterialAudit.js';
 import { getAssetById } from './world/assets/Catalog.js';
 
 import { HUD } from './ui/HUD.js';
@@ -116,6 +117,10 @@ async function main() {
   // and continues with user=null, so we fall back to TUNING.PLANET_SEED.
   await auth.bootstrap();
   logbookSync.start();
+  // Scope the recent-asset diversity ring buffer to this user (migrates the
+  // anonymous buffer on first sign-in). Re-scope on any auth change.
+  retrieverSetUser(auth.user?.id);
+  auth.addEventListener('change', () => retrieverSetUser(auth.user?.id));
   const galaxySeed = auth.user?.id ? hashString(auth.user.id) : TUNING.PLANET_SEED;
 
   // If the user has a saved position, set origin.galaxyOrigin BEFORE building
@@ -259,6 +264,11 @@ async function main() {
       // baseline) silently no-ops because every getAssetById returns null.
       if (meta.selected_assets) {
         const sel = meta.selected_assets;
+        // If the player already claimed this planet before picks resolved,
+        // mark the assets used now (the claim path couldn't — picks weren't
+        // ready). Only the successful resolution marks; a failed-then-retried
+        // approach won't double-mark.
+        if (planet.claimed) retrieverMarkUsed(selectedAssetIds(sel));
         const hero = getAssetById(sel.hero);
         const landmarks = [sel.landmark_a, sel.landmark_b, sel.landmark_c]
           .map(getAssetById);
@@ -582,6 +592,12 @@ async function main() {
           const name = p.meta?.name || `Unnamed-${p.seed}`;
           toast.show(`${name.toUpperCase()} · CLAIMED`, 2200, '#ffd66b');
 
+          // Diversity: demote this planet's chosen assets so the next
+          // planet's shortlist skews away from them. Best-effort (localStorage
+          // only, can't fail the claim). If picks haven't resolved yet (claim
+          // raced ahead of Tier 2), tryApproach marks them when they land.
+          retrieverMarkUsed(selectedAssetIds(p.meta?.selected_assets));
+
         const identity = galaxy.identityForPlanet(p);
         const stats = flightStats.capture();
         const entryInput = {
@@ -837,6 +853,18 @@ async function main() {
       }
       console.log(`[debugPlacement] refreshed across ${touched} planets (flag=${!!window.__GAME.debugPlacement})`);
     },
+    // Phase 6 — verify the dual-axis MaterialSet actually caught every
+    // visible mesh on every loaded planet. Reports per-planet leak counts
+    // (materials not sourced from the planet's matSet). Exempts debug
+    // overlays, hero/terrain slots, procedural fallbacks, and Line/Sprite
+    // helpers. Returns the raw report array for further poking in DevTools.
+    auditMaterials() {
+      const planets = [];
+      for (const sys of galaxy.systems.values()) {
+        for (const p of sys.planets) planets.push(p);
+      }
+      return auditAllPlanets(planets, { log: true });
+    },
     // Phase 1 — drop a GLB onto the active planet's surface to verify the
     // AssetCache / MaterialSet path end-to-end. Accepts either a catalog id
     // (resolved against assets/catalog.json) or a raw URL string.
@@ -866,6 +894,14 @@ async function main() {
   };
 
   loop.start();
+}
+
+// Flatten a Tier 2 `selected_assets` pick object to its asset-id list for
+// the recency ring buffer. Tolerates null/partial picks.
+function selectedAssetIds(sel) {
+  if (!sel) return [];
+  return [sel.hero, sel.landmark_a, sel.landmark_b, sel.landmark_c, sel.surface_a, sel.surface_b]
+    .filter(Boolean);
 }
 
 // Per-entry id for new logbook entries. crypto.randomUUID is universally

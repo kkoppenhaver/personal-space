@@ -45,7 +45,7 @@ const PICK_SYSTEM = `You are picking 3D assets from a retrieval-produced shortli
 The shortlist for each slot is ranked by surface similarity to creative direction prose — NOT by taste. Picking rank-1 every time means the retriever is doing your job.
 Apply art direction:
 - Avoid theme collisions: if hero is crystal-themed, secondary picks should add contrast (organic / mechanical / atmospheric) unless creative direction explicitly calls for monothematic.
-- Prefer assets that share a stylistic family with the hero pick (same pack, similar silhouette weight).
+- Prefer assets that share a stylistic family with the hero pick. Each candidate is annotated with its "pack" (the creator kit it came from) and "family" (rock / flora / structure / …). When a direction.anchor_pack is given, favor candidates from that pack for landmark + surface slots so the planet reads as one cohesive place — UNLESS doing so forces a worse art-direction fit.
 - Use the rationale field to reference which creative-direction phrase each pick serves AND what distinguishes the chosen candidate from others in that slot's shortlist.
 Use the "pick_assets" tool. Every asset_id you output MUST come from the corresponding slot's shortlist — the tool enforces this.`;
 
@@ -191,11 +191,12 @@ llm.post('/tier2/pick', async (c) => {
 
   // Compact user message — shortlist as a structured prose blob so the
   // model can reason about each candidate by name/role rather than just
-  // the enum value.
+  // the enum value. shortlist_meta (if the client sent it) annotates each
+  // candidate with pack + family so the model can honor pack cohesion.
   const userMsg = JSON.stringify({
     seed,
-    direction: body.direction || null,    // optional creative-direction recap
-    shortlists: shortlist,
+    direction: body.direction || null,    // optional creative-direction recap (may include anchor_pack)
+    shortlists: body.shortlist_meta || shortlist,
   });
 
   let resp;

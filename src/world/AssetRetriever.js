@@ -24,24 +24,46 @@ const MODEL = 'Xenova/all-MiniLM-L6-v2';
 const DTYPE = 'q8';
 const DIM = 384;
 
-// localStorage key for the recent-used-asset ring buffer. Tracks the last N
-// asset IDs the player saw on their personal galaxy so we can demote them in
-// retrieval scoring (don't show all-crystal planets back-to-back).
-const RECENT_KEY = 'personalspace:recent-assets:v1';
-const RECENT_CAP = 20;
+// localStorage key PREFIX for the recent-used-asset ring buffer. The full
+// key is suffixed with the user id (or ':anonymous' pre-auth/offline) so two
+// players sharing a browser — or a signed-out → signed-in transition —
+// don't pollute each other's diversity state. See recentKeyFor / setUser.
+const RECENT_KEY_PREFIX = 'personalspace:recent-assets:v1';
+// Hold ~3× the longest half-life so the oldest entries fully decay before
+// they age off the buffer (hero half-life is 12 → cap 32 ≈ 2.7×).
+const RECENT_CAP = 32;
 
-// MMR + RRF defaults. λ=0.7 leans relevance; drop to 0.5 if shortlists feel
-// too samey. RRF k=60 is the documented sweet spot; smaller k amplifies
-// rank-1, larger averages across retrievers.
-const MMR_LAMBDA = 0.7;
+// MMR + RRF defaults. λ=0.5 is the small-catalog sweet spot (the canonical
+// 0.7 is tuned for web-scale search where relevance dominates; at ~50
+// candidates per slot our relevance ceiling is low, so we can afford to
+// lean harder on diversity). RRF k=60 is the documented default; smaller k
+// amplifies rank-1, larger averages across retrievers.
+const MMR_LAMBDA = 0.5;
 const RRF_K = 60;
 
-// Recently-used demotion: multiplicative score penalty. 0.3 is aggressive;
-// 0.7 is gentle. Start aggressive; tune in pilot.
-const RECENCY_PENALTY = 0.3;
+// Recency demotion: per-role half-life on a smooth decay curve, replacing
+// the old binary 0.3× penalty. multiplier = 0.3 + 0.7·(1 − e^(−age/h)) where
+// `age` is the asset's index in the recent ring buffer (0 = most-recent).
+// So a just-used asset gets ~0.3× and demotion fades to ~1.0× by ~3 half-
+// lives. Hero gets the WEAKEST demotion (heroes are scarce — aggressive
+// demotion pushes to weak fits); surface the STRONGEST (filler repetition is
+// what screams "same planet").
+const RECENCY_HALF_LIFE = { hero: 12, landmark: 8, surface: 5, decor: 5 };
+const RECENCY_FLOOR = 0.3;
+
+// Per-planet pack-cohesion boost: candidates sharing the planet's anchor
+// pack get this multiplicative bump before MMR, so a planet's slots bias
+// toward one creator's kit and read as a single place. Soft (not a hard
+// filter) so it degrades gracefully when the anchor pack is thin. 1.3 is
+// the sweet spot — higher starts to overrun MMR's diversity term.
+const PACK_COHESION_BOOST = 1.3;
+
+// Asset lookup for pack/family enrichment + pack-boost checks.
+const _assetById = new Map((catalog.assets || []).map((a) => [a.id, a]));
 
 let _embedderPromise = null;
 let _bm25 = null;
+let _currentUserId = null;
 
 // ─── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -166,23 +188,26 @@ function bm25() {
 // ─── Shortlisting ───────────────────────────────────────────────────────
 
 /**
- * Return the top-K asset IDs for a slot given a free-form query.
+ * Return the top-K asset candidates for a slot given a free-form query.
  *
  * @param {object} args
  * @param {string|string[]} args.query - LLM-emitted style hint(s)
  * @param {'hero'|'landmark'|'surface'|'decor'} args.role - slot filter
- * @param {number} [args.k=8] - max IDs to return
- * @param {string[]} [args.recentIds] - asset IDs to demote (recently used)
- * @param {string[]} [args.biomeAffinity] - filter to assets matching biome
- * @returns {Promise<{ id: string, score: number, sources: string[] }[]>}
+ * @param {number} [args.k=8] - max candidates to return
+ * @param {string[]} [args.recentIds] - asset IDs to demote (defaults to the ring buffer)
+ * @param {string} [args.biomeAffinity] - filter to assets matching biome
+ * @param {string|null} [args.preferPack] - anchor pack; same-pack candidates get a cohesion boost
+ * @returns {Promise<{ id: string, score: number, sources: string[], pack: string, family: string }[]>}
  */
-export async function shortlist({ query, role, k = 8, recentIds, biomeAffinity }) {
+export async function shortlist({ query, role, k = 8, recentIds, biomeAffinity, preferPack = null }) {
   if (!catalog.assets || catalog.assets.length === 0) return [];
 
   const q = Array.isArray(query) ? query.join(' ') : (query || '');
   if (!q.trim()) return [];
 
-  const recent = new Set(recentIds || readRecent());
+  // Ordered list — index is the asset's recency "age" (0 = most recent).
+  const recent = recentIds || readRecent();
+  const recentAge = new Map(recent.map((id, i) => [id, i]));
 
   // Pre-filter by role + biome affinity if requested.
   const allowed = new Set(
@@ -225,17 +250,42 @@ export async function shortlist({ query, role, k = 8, recentIds, biomeAffinity }
     push(fused, id, s, 'mini');
   }
 
-  // ── Recency demotion ──────────────────────────────────────────────
+  // ── Recency demotion (per-role smooth decay) ──────────────────────
+  // Applied on the fused score (after RRF), not per-retriever, so BM25 and
+  // dense don't double-penalize the same recently-used asset.
   for (const [id, entry] of fused) {
-    if (recent.has(id)) entry.score *= RECENCY_PENALTY;
+    const age = recentAge.get(id);
+    if (age !== undefined) entry.score *= recencyMultiplier(age, role);
   }
 
-  // ── Sort by score then apply MMR (only if dense vectors available)
-  let candidates = Array.from(fused, ([id, e]) => ({ id, score: e.score, sources: e.sources }))
-    .sort((a, b) => b.score - a.score);
+  // ── Pack-cohesion boost ───────────────────────────────────────────
+  // Soft bump for candidates sharing the planet's anchor pack so the
+  // planet's slots bias toward one kit. Best-effort: a no-op when the
+  // anchor pack has no candidates for this role.
+  if (preferPack) {
+    for (const [id, entry] of fused) {
+      if (_assetById.get(id)?.pack === preferPack) entry.score *= PACK_COHESION_BOOST;
+    }
+  }
+
+  // ── Sort by score then diversify ──────────────────────────────────
+  let candidates = Array.from(fused, ([id, e]) => ({
+    id,
+    score: e.score,
+    sources: e.sources,
+    pack: _assetById.get(id)?.pack ?? null,
+    family: _assetById.get(id)?.family ?? null,
+  })).sort((a, b) => b.score - a.score);
 
   if (denseAvailable && queryVec && candidates.length > k) {
+    // MMR: embedding-based intra-shortlist diversity.
     candidates = mmr(candidates, queryVec, k);
+  } else if (candidates.length > k) {
+    // BM25-only fallback (embedder unavailable): no vectors for MMR, so
+    // dedupe on the id's first token (e.g. don't ship crystal_largeA +
+    // crystal_largeB back-to-back). Conservative — only kicks in after
+    // half the slots are filled so the strongest hits always survive.
+    candidates = bm25FallbackDiversity(candidates, k);
   } else {
     candidates = candidates.slice(0, k);
   }
@@ -247,6 +297,23 @@ function push(map, id, score, source) {
   const e = map.get(id);
   if (e) { e.score += score; e.sources.push(source); }
   else { map.set(id, { score, sources: [source] }); }
+}
+
+// First-token-of-id dedupe for the dense-unavailable path. Keeps the
+// highest-ranked ⌈k/2⌉ regardless, then skips further candidates whose
+// id prefix is already represented.
+function bm25FallbackDiversity(candidates, k) {
+  const keep = Math.ceil(k / 2);
+  const picked = [];
+  const seen = new Set();
+  for (const c of candidates) {
+    const prefix = c.id.split(':').pop().split('_')[0].toLowerCase();
+    if (picked.length >= keep && seen.has(prefix)) continue;
+    picked.push(c);
+    seen.add(prefix);
+    if (picked.length >= k) break;
+  }
+  return picked;
 }
 
 // ─── Dense search ───────────────────────────────────────────────────────
@@ -298,9 +365,41 @@ function mmr(candidates, queryVec, k) {
 
 // ─── Recent-asset ring buffer ──────────────────────────────────────────
 
+function recentKeyFor(userId) {
+  return `${RECENT_KEY_PREFIX}:${userId || 'anonymous'}`;
+}
+
+/**
+ * Set the current user so the recent-asset ring buffer is scoped per-user.
+ * Call from the auth 'change' listener. On the first sign-in (we have a
+ * user id where the user key doesn't exist yet) the anonymous buffer is
+ * migrated into the user's buffer so the diversity state earned while
+ * signed-out carries forward, then the anonymous key is cleared.
+ *
+ * Idempotent: re-calling with the same id, or after the migration already
+ * ran, is a no-op.
+ *
+ * @param {string|null|undefined} userId
+ */
+export function setUser(userId) {
+  const id = userId || null;
+  if (id === _currentUserId) return;
+  _currentUserId = id;
+  if (!id) return;
+  try {
+    const userKey = recentKeyFor(id);
+    const anonKey = recentKeyFor(null);
+    const anon = localStorage.getItem(anonKey);
+    if (anon && !localStorage.getItem(userKey)) {
+      localStorage.setItem(userKey, anon);
+      localStorage.removeItem(anonKey);
+    }
+  } catch { /* localStorage unavailable — diversity is best-effort */ }
+}
+
 function readRecent() {
   try {
-    const raw = localStorage.getItem(RECENT_KEY);
+    const raw = localStorage.getItem(recentKeyFor(_currentUserId));
     if (!raw) return [];
     const arr = JSON.parse(raw);
     return Array.isArray(arr) ? arr.slice(0, RECENT_CAP) : [];
@@ -310,7 +409,8 @@ function readRecent() {
 /**
  * Push asset IDs onto the recently-used ring buffer so the next shortlist
  * call demotes them. Call this whenever a planet's selected assets are
- * committed (after Tier 2 pick resolves and the planet renders).
+ * committed (i.e. on claim). New IDs go to the front (index 0 = most
+ * recent) so the per-role recency decay can read age = ring index.
  *
  * @param {string[]} ids
  */
@@ -318,5 +418,15 @@ export function markUsed(ids) {
   if (!ids || !ids.length) return;
   const prev = readRecent();
   const next = [...ids, ...prev.filter((x) => !ids.includes(x))].slice(0, RECENT_CAP);
-  try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch {}
+  try { localStorage.setItem(recentKeyFor(_currentUserId), JSON.stringify(next)); } catch {}
+}
+
+/**
+ * Per-role recency multiplier on a smooth decay curve. `age` is the index
+ * of the asset in the recent ring buffer (0 = just used). Returns
+ * RECENCY_FLOOR for a just-used asset, climbing toward 1.0 as it ages.
+ */
+function recencyMultiplier(age, role) {
+  const h = RECENCY_HALF_LIFE[role] ?? 8;
+  return RECENCY_FLOOR + (1 - RECENCY_FLOOR) * (1 - Math.exp(-age / h));
 }
