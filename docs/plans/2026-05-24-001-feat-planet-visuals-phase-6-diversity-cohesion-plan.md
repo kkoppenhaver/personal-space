@@ -1,7 +1,7 @@
 ---
 title: Planet visuals Phase 6 — diversity guardrails + style cohesion enforcement
 type: feat
-status: active
+status: completed
 date: 2026-05-24
 parent: docs/plans/2026-05-23-001-feat-planet-visuals-llm-driven-assets-plan.md
 ---
