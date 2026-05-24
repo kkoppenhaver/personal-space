@@ -13,6 +13,40 @@ import { Coverage } from './Coverage.js';
 import { buildMaterialSet, disposeMaterialSet } from './MaterialSet.js';
 import { loadInstance } from './AssetCache.js';
 import { isDebugOn, attachInstanceHelpers, detachInstanceHelpers } from './DebugPlacement.js';
+import { patchReveal } from './RevealMaterial.js';
+
+// Seeds whose asset reveal has completed at least once. A planet streamed
+// out and back in mounts solid (no re-fade on every home-system flyby).
+// Keyed by seed so it survives Planet disposal; capped FIFO to bound growth.
+const revealedSeeds = new Set();
+const REVEALED_SEEDS_CAP = 1000;
+function markSeedRevealed(seed) {
+  if (revealedSeeds.has(seed)) return;
+  if (revealedSeeds.size >= REVEALED_SEEDS_CAP) {
+    revealedSeeds.delete(revealedSeeds.values().next().value);
+  }
+  revealedSeeds.add(seed);
+}
+
+// Honor prefers-reduced-motion: skip the dither tween, mount solid.
+const _reducedMotion = typeof window !== 'undefined'
+  && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+// Reveal tween: ease-out cubic. Distant arrival is slower (player still high
+// in the atmosphere when assets were ready); late arrival is a quick catch-up
+// (assets mounted while the plane had already descended).
+const REVEAL_DISTANT_MS = 500;
+const REVEAL_LATE_MS = 250;
+// Altitude fraction (0 = surface, 1 = atmosphere top) below which a trigger
+// counts as "late arrival".
+const REVEAL_LATE_ALT_FRAC = 0.5;
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+function makeDeferred() {
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  return { promise, resolve };
+}
 
 // A Planet builds eager terrain + collider + landmark slot positions in its
 // constructor (fast, deterministic from seed). Visual layers — landmark and
@@ -37,6 +71,9 @@ export class Planet {
     // Built lazily on first applyVisuals() so dispose() has something to
     // tear down even on the procedural-only path.
     this.matSet = null;
+    // Reveal-as-you-fly state; set in applyVisuals when real assets mount.
+    // Null means "no GLB visuals" → claim captures the procedural frame now.
+    this.reveal = null;
 
     const built = buildPlanetGeometry({ seed, radius });
     this.geometry = built.geometry;
@@ -196,6 +233,22 @@ export class Planet {
                       || (Array.isArray(surfaceAssets) && surfaceAssets.length);
     if (!hasAnyAsset) return;
 
+    // Reveal state — set up before loads so the claim path can await
+    // readiness even if the player claims mid-load. Latest applyVisuals call
+    // wins (overwrites a superseded one); the claim ceiling backstops any
+    // orphaned deferred.
+    const mounted = makeDeferred();
+    const done = makeDeferred();
+    this.reveal = {
+      state: 'LOADING',       // LOADING → MOUNTED → REVEALING → REVEALED
+      assetsRequested: true,
+      uniforms: [],           // uReveal refs to drive (one per mounted material)
+      durationMs: REVEAL_DISTANT_MS,
+      elapsedMs: 0,
+      mounted: mounted.promise, _resolveMounted: mounted.resolve,
+      done: done.promise, _resolveDone: done.resolve,
+    };
+
     // ── Resolve slot bindings ────────────────────────────────────────
     // Hero takes the rarest available landmark slot (prefer spire), then
     // landmark_a/b/c fill the remaining slots in order.
@@ -337,10 +390,92 @@ export class Planet {
     if (replacingLandmarks) this.landmarkGroup.traverse((c) => { c.frustumCulled = false; });
     if (newFeaturesGroup) this.featuresGroup.traverse((c) => { c.frustumCulled = false; });
 
+    // ── Reveal patch ─────────────────────────────────────────────────
+    // Patch a uReveal dither-clip onto every freshly-mounted asset material
+    // (landmark clones + surface InstancedMesh materials), starting hidden.
+    // Terrain is NOT patched — the planet stays a visible veiled sphere; only
+    // surface detail materializes on atmosphere entry. One uReveal per
+    // material (InstancedMesh shares one → one uniform covers all instances).
+    const rv = this.reveal;
+    const collect = (group) => group?.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      if (!o.material.userData.revealUniform) {
+        o.material.userData.revealUniform = patchReveal(o.material, 0);
+      }
+      rv.uniforms.push(o.material.userData.revealUniform);
+    });
+    if (replacingLandmarks) collect(this.landmarkGroup);
+    if (newFeaturesGroup) collect(this.featuresGroup);
+
+    rv._resolveMounted();
+    if (revealedSeeds.has(this.seed) || _reducedMotion) {
+      // Re-approach or reduced-motion → mount solid, no fade.
+      this._setReveal(1);
+      rv.state = 'REVEALED';
+      rv._resolveDone();
+    } else {
+      // Hold hidden; tickReveal triggers the fade on atmosphere entry.
+      rv.state = 'MOUNTED';
+    }
+
     // Debug overlay (off by default; flip __GAME.debugPlacement to enable).
     if (isDebugOn() && replacingLandmarks) {
       this._refreshDebugHelpers();
     }
+  }
+
+  /**
+   * Advance the asset reveal. Called per-frame from the render loop for every
+   * loaded planet (not just the active one, so a reveal mid-approach doesn't
+   * freeze). dt is seconds. `planePos` drives the entry trigger; `camera`
+   * + `atmosphere` size the curve.
+   */
+  tickReveal(dt, planePos, camera, atmosphere) {
+    const rv = this.reveal;
+    if (!rv) return;
+
+    if (rv.state === 'MOUNTED') {
+      if (!atmosphere?.contains(planePos)) return;   // not in the atmosphere yet
+      // Curve: if the plane is already low when the reveal fires (assets
+      // arrived late while descending), do the quick 250ms catch-up; if it
+      // just grazed the atmosphere top, the slower 500ms materialize.
+      const shell = Math.max(1e-3, atmosphere.radius - this.radius);
+      const altFrac = (planePos.distanceTo(this.center) - this.radius) / shell;
+      rv.durationMs = altFrac < REVEAL_LATE_ALT_FRAC ? REVEAL_LATE_MS : REVEAL_DISTANT_MS;
+      rv.elapsedMs = 0;
+      rv.state = 'REVEALING';
+    }
+
+    if (rv.state === 'REVEALING') {
+      rv.elapsedMs += dt * 1000;
+      const t = Math.min(1, rv.elapsedMs / rv.durationMs);
+      this._setReveal(easeOutCubic(t));
+      if (t >= 1) {
+        this._setReveal(1);
+        rv.state = 'REVEALED';
+        markSeedRevealed(this.seed);
+        rv._resolveDone();
+      }
+    }
+  }
+
+  // Drive every mounted reveal uniform to `v`. Synchronous — the next render
+  // shows the new value (used by the thumbnail path to force-solid before
+  // capture).
+  _setReveal(v) {
+    if (!this.reveal) return;
+    for (const u of this.reveal.uniforms) u.value = v;
+  }
+
+  // Force the reveal complete immediately (thumbnail-capture path). Resolves
+  // the done promise so a waiting claim proceeds.
+  forceRevealComplete() {
+    const rv = this.reveal;
+    if (!rv || rv.state === 'REVEALED') return;
+    this._setReveal(1);
+    rv.state = 'REVEALED';
+    markSeedRevealed(this.seed);
+    rv._resolveDone();
   }
 
   /**
@@ -375,6 +510,10 @@ export class Planet {
       disposeMaterialSet(this.matSet);
       this.matSet = null;
     }
+    // Drop reveal state. A half-faded reveal is discarded (not resumed); the
+    // seed is only in revealedSeeds if the fade actually completed, so a
+    // genuine re-approach re-reveals and a completed one snaps solid.
+    this.reveal = null;
   }
 
   // ── Internals ─────────────────────────────────────────────────────
