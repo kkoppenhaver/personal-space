@@ -1,8 +1,131 @@
 import * as THREE from 'three';
 import { mulberry32 } from './Seed.js';
 
-// Instanced low-poly scale features: rocks, flora. Placed by sampling random
-// surface positions and accepting/rejecting based on elevation band.
+// Density hint → instance count multiplier. Applied to the per-asset base
+// count so a "dense" jungle planet really feels dense without flooding the
+// same vertex positions repeatedly.
+const DENSITY_MULTIPLIERS = { sparse: 0.4, medium: 1.0, dense: 2.0 };
+
+/**
+ * Build instanced surface scatter from selected GLB assets (Phase 4 path).
+ * One InstancedMesh per asset URL, all sharing the GLB's first-mesh
+ * geometry so we keep the draw-call count tight even with hundreds of
+ * instances per planet.
+ *
+ * Each asset entry in `assets` is `{ glbClone, scaleRange }`:
+ *   - `glbClone` is a loaded clone from `AssetCache.loadInstance` (matSet
+ *     already applied), only used as a source of geometry + material.
+ *   - `scaleRange` is `[min, max]` meters from catalog metadata.
+ *
+ * Multi-mesh GLBs: we use the first descendant Mesh's geometry/material.
+ * For surface scatter, single-mesh assets are the supported case (Kenney,
+ * Quaternius, KayKit low-poly surface props are mostly single meshes;
+ * multi-part assets like trees-with-canopy should be re-exported merged).
+ *
+ * @param {object} args
+ * @param {THREE.BufferGeometry} args.geometry  - planet terrain mesh
+ * @param {Float32Array} args.elevations
+ * @param {number} args.radius
+ * @param {number} args.seed
+ * @param {{ glbClone: THREE.Object3D, scaleRange: [number, number] }[]} args.assets
+ * @param {'sparse'|'medium'|'dense'} [args.density='medium']
+ * @returns {THREE.Group}
+ */
+export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius, seed, assets, density = 'medium' }) {
+  const group = new THREE.Group();
+  if (!assets || assets.length === 0) return group;
+
+  const densityMult = DENSITY_MULTIPLIERS[density] ?? 1.0;
+  const pos = geometry.attributes.position;
+  const vCount = pos.count;
+
+  // Per-asset target counts. Split the planet's total scatter budget across
+  // the available asset slots so a single "dense" rock doesn't crowd out
+  // the tree slot.
+  const BASE_PER_ASSET = 120;
+  const totalBudget = Math.floor(BASE_PER_ASSET * assets.length * densityMult);
+
+  // Pre-pick surface candidate vertex indices (e ≥ 0.46, i.e. land above
+  // basin band). We then walk this list assigning indices round-robin
+  // across assets — guarantees they share the same surface coverage rather
+  // than each asset clustering in whichever vertex slice it samples first.
+  const candidates = [];
+  for (let i = 0; i < vCount; i++) {
+    if (elevations[i] >= 0.46) candidates.push(i);
+  }
+  if (candidates.length === 0) return group;
+
+  // Shuffle deterministically so per-planet scatter is stable across
+  // restarts but doesn't repeat across planets.
+  const rand = mulberry32(seed ^ 0xfeed);
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  }
+  const samples = Math.min(totalBudget, candidates.length);
+
+  // Per-asset instance buckets.
+  const buckets = assets.map(() => []);
+  const tmp = new THREE.Vector3();
+  for (let s = 0; s < samples; s++) {
+    const idx = candidates[s];
+    tmp.fromBufferAttribute(pos, idx);
+    const r = tmp.length();
+    const dir = tmp.clone().divideScalar(r);
+    const bucketIdx = s % assets.length;
+    const [minS, maxS] = assets[bucketIdx].scaleRange ?? [0.5, 1.5];
+    const scale = minS + (maxS - minS) * rand();
+    buckets[bucketIdx].push({ dir, height: r, scale, twist: rand() * Math.PI * 2 });
+  }
+
+  // Bounding sphere big enough to cover surface band — same trick as the
+  // procedural path. Without this an InstancedMesh culls based on the
+  // single-instance bound and pops entire scatter clouds when the planet
+  // center exits the frustum.
+  const featureBound = new THREE.Sphere(new THREE.Vector3(0, 0, 0), radius * 1.1);
+
+  // ── Build one InstancedMesh per asset ────────────────────────────
+  for (let aIdx = 0; aIdx < assets.length; aIdx++) {
+    const transforms = buckets[aIdx];
+    if (transforms.length === 0) continue;
+
+    const { geom, mat } = extractFirstMeshGeometry(assets[aIdx].glbClone);
+    if (!geom || !mat) continue;
+
+    const inst = new THREE.InstancedMesh(geom, mat, transforms.length);
+    const dummy = new THREE.Object3D();
+    transforms.forEach((t, i) => {
+      const up = t.dir;
+      dummy.position.copy(up).multiplyScalar(t.height + 0.4 * t.scale);
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
+      const qSpin = new THREE.Quaternion().setFromAxisAngle(up, t.twist);
+      dummy.quaternion.copy(qSpin).multiply(q);
+      dummy.scale.setScalar(t.scale);
+      dummy.updateMatrix();
+      inst.setMatrixAt(i, dummy.matrix);
+    });
+    inst.instanceMatrix.needsUpdate = true;
+    inst.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    inst.boundingSphere = featureBound.clone();
+    inst.userData.assetIndex = aIdx;
+    group.add(inst);
+  }
+
+  return group;
+}
+
+function extractFirstMeshGeometry(root) {
+  let mesh = null;
+  root.traverse((o) => {
+    if (mesh) return;
+    if (o.isMesh && o.geometry && o.material) mesh = o;
+  });
+  if (!mesh) return { geom: null, mat: null };
+  // Use the (clone's) geometry directly — instancing shares it across all N
+  // instances. The clone is otherwise discarded after this; the geometry
+  // outlives it through the InstancedMesh reference.
+  return { geom: mesh.geometry, mat: mesh.material };
+}
 
 export function buildInstancedFeatures({ geometry, elevations, radius, seed, palette, excludeZone = null }) {
   const rand = mulberry32(seed ^ 0xfeed);

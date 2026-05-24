@@ -1,8 +1,25 @@
 import * as THREE from 'three';
 import { buildPlanetGeometry, makeTerrainSampler } from './TerrainGen.js';
-import { pickLandmarkSlots, buildLandmarkMeshes } from './Landmarks.js';
-import { buildInstancedFeatures } from './Features.js';
+import {
+  pickLandmarkSlots,
+  buildLandmarkMeshes,
+  buildLandmarkInstance,
+} from './Landmarks.js';
+import {
+  buildInstancedFeatures,
+  buildInstancedFeaturesFromAssets,
+} from './Features.js';
 import { Coverage } from './Coverage.js';
+import { buildMaterialSet, disposeMaterialSet } from './MaterialSet.js';
+import { loadInstance } from './AssetCache.js';
+
+// A Planet builds eager terrain + collider + landmark slot positions in its
+// constructor (fast, deterministic from seed). Visual layers — landmark and
+// feature meshes — start out procedural (today's behavior) and are replaced
+// in place by `applyVisuals(...)` when the Tier 2 LLM pipeline resolves with
+// selected GLB asset IDs. Stale loads (player swerved to a different planet,
+// or the planet was disposed mid-flight) are dropped silently via the
+// `visualGen` counter.
 
 export class Planet {
   constructor({ rapier, world, seed, radius, center = new THREE.Vector3(0, 0, 0) }) {
@@ -10,6 +27,15 @@ export class Planet {
     this.radius = radius;
     this.center = center.clone();
     this.meta = null;
+
+    // Bumped by every applyVisuals call and by dispose(). Async asset loads
+    // capture the value at start and check it before mounting. Stale loads
+    // — from a planet that was despawned, or from a superseded swerve —
+    // see a mismatch and bail without touching the scene.
+    this.visualGen = 0;
+    // Built lazily on first applyVisuals() so dispose() has something to
+    // tear down even on the procedural-only path.
+    this.matSet = null;
 
     const built = buildPlanetGeometry({ seed, radius });
     this.geometry = built.geometry;
@@ -25,7 +51,8 @@ export class Planet {
     // Sampler for fast altitude queries without raycasting.
     this.sample = makeTerrainSampler({ seed, radius, seaLevel: built.seaLevel });
 
-    // Pick landmark slots from the actual mesh.
+    // Pick landmark slots from the actual mesh. Stable for a given seed —
+    // applyVisuals later binds GLB clones to these same slots.
     this.landmarks = pickLandmarkSlots({
       geometry: this.geometry,
       elevations: this.elevations,
@@ -33,15 +60,16 @@ export class Planet {
       seed,
       count: 5,
     });
-    this.landmarkGroup = buildLandmarkMeshes(this.landmarks, this.palette);
 
-    // Coverage tracker — what fraction of the surface the player has
-    // surveyed from this planet's atmosphere. Drives the claim trigger.
+    // Procedural landmark + feature groups — visible from spawn so the planet
+    // never looks empty during approach. applyVisuals will swap these out
+    // when Tier 2 returns asset selections.
+    this.landmarkGroup = buildLandmarkMeshes(this.landmarks, this.palette);
+    this.landmarkGroup.userData.procedural = true;
+
     this.coverage = new Coverage();
     this.claimed = false;
 
-    // Instanced scale features (rocks, flora) covering the whole surface
-    // now that there's no flattened pad zone to dodge.
     this.featuresGroup = buildInstancedFeatures({
       geometry: this.geometry,
       elevations: this.elevations,
@@ -49,6 +77,7 @@ export class Planet {
       seed,
       palette: this.palette,
     });
+    this.featuresGroup.userData.procedural = true;
 
     this.group = new THREE.Group();
     this.group.add(this.mesh);
@@ -91,22 +120,256 @@ export class Planet {
     this.body.setTranslation({ x: this.center.x, y: this.center.y, z: this.center.z }, true);
   }
 
+  /**
+   * Apply Tier 2 LLM output. Names + palette take effect immediately
+   * (synchronously); GLB asset binding is deferred to applyVisuals which
+   * runs asynchronously and tolerates the planet despawning mid-load.
+   *
+   * For backward compat: this is the existing single-entry from main.js.
+   * Callers that have GLB selections can call applyVisuals directly with
+   * the resolved asset records and the renderer ref.
+   *
+   * @param {object} meta - shape from LLMClient.approach()
+   */
   applyLLM(meta) {
     this.meta = meta;
     if (!meta) return;
-    // Apply landmark names by slotId
     if (Array.isArray(meta.landmarks)) {
       for (const m of meta.landmarks) {
         const lm = this.landmarks.find(l => l.slotId === m.slotId);
         if (lm) lm.name = m.name || lm.name;
       }
     }
-    // Apply palette retint if provided (mild blend, keep it readable)
+    // Palette retint + matSet refresh is also handled by applyVisuals, but
+    // we run it here too so callers that never reach applyVisuals (no
+    // selected_assets in meta) still see the palette take effect.
     if (meta.palette) {
-      const oldPalette = this.palette;
-      this.palette = { ...oldPalette, ...meta.palette };
+      this.palette = { ...this.palette, ...meta.palette };
       this._reTintVertexColors();
     }
+  }
+
+  /**
+   * Deferred build of LLM-driven planet visuals: hero asset + landmark GLBs
+   * bound to slots + instanced surface scatter from selected assets. Safe to
+   * call multiple times; each call captures the current visualGen and bails
+   * silently if a later call (or dispose) supersedes it before its async
+   * loads resolve.
+   *
+   * Per-asset try/catch — a single GLB failure leaves the rest of the
+   * planet intact, with the procedural fallback retained for the failing
+   * slot.
+   *
+   * @param {object} opts
+   * @param {object} [opts.palette]
+   * @param {{ url:string, scale_range?:[number,number] }} [opts.heroAsset]
+   * @param {Array<{ url:string, scale_range?:[number,number] }|null>} [opts.landmarkAssets]
+   *        Bound to landmark slots in order, skipping the slot used by the hero.
+   * @param {Array<{ url:string, scale_range?:[number,number] }>} [opts.surfaceAssets]
+   *        Each becomes one InstancedMesh of scattered surface props.
+   * @param {'sparse'|'medium'|'dense'} [opts.density]
+   * @param {THREE.WebGLRenderer} [opts.renderer] - required by AssetCache for KTX2 support
+   */
+  async applyVisuals(opts = {}) {
+    this.visualGen++;
+    const gen = this.visualGen;
+    const { palette, heroAsset, landmarkAssets, surfaceAssets, density = 'medium', renderer } = opts;
+
+    // ── Palette + matSet refresh (always synchronous) ────────────────
+    if (palette) {
+      this.palette = { ...this.palette, ...palette };
+      this._reTintVertexColors();
+    }
+    if (this.matSet) disposeMaterialSet(this.matSet);
+    this.matSet = buildMaterialSet(this.palette);
+
+    // Backward-compat path: no asset selections → palette-only update.
+    const hasAnyAsset = !!heroAsset || (Array.isArray(landmarkAssets) && landmarkAssets.length)
+                      || (Array.isArray(surfaceAssets) && surfaceAssets.length);
+    if (!hasAnyAsset) return;
+
+    // ── Resolve slot bindings ────────────────────────────────────────
+    // Hero takes the rarest available landmark slot (prefer spire), then
+    // landmark_a/b/c fill the remaining slots in order.
+    const heroSlot = heroAsset ? this._pickHeroSlot() : null;
+    const remainingSlots = heroSlot
+      ? this.landmarks.filter((s) => s !== heroSlot)
+      : this.landmarks.slice();
+
+    // ── Async loads (parallel, per-task try/catch) ───────────────────
+    const heroPromise = heroAsset
+      ? this._loadAssetSafe(heroAsset.url, renderer, 'hero')
+      : Promise.resolve(null);
+
+    const landmarkPromises = (landmarkAssets || []).map((a, i) => {
+      if (!a || !remainingSlots[i]) return Promise.resolve(null);
+      return this._loadAssetSafe(a.url, renderer, `landmark[${i}]`);
+    });
+
+    const surfacePromises = (surfaceAssets || []).map((a, i) =>
+      a ? this._loadAssetSafe(a.url, renderer, `surface[${i}]`) : Promise.resolve(null)
+    );
+
+    // Await each set independently so a slow tail asset doesn't block the
+    // others. We still wait for all before mounting — the plan calls for a
+    // single-frame mount, no partial state.
+    const [heroClone, landmarkClones, surfaceClones] = await Promise.all([
+      heroPromise,
+      Promise.all(landmarkPromises),
+      Promise.all(surfacePromises),
+    ]);
+
+    // ── Cancellation check ───────────────────────────────────────────
+    // If a newer applyVisuals call or dispose ran while we were loading,
+    // visualGen will have moved on. Drop everything silently.
+    if (this.visualGen !== gen) return;
+
+    // ── Build new groups, then swap in a single frame ────────────────
+    // We rebuild landmark group symmetrically: every slot ends up with
+    // either a GLB instance (if the asset loaded) or a procedural marker
+    // (fallback). That way an all-GLB-failed planet still reads like a
+    // planet, not a featureless ball.
+    const newLandmarkGroup = new THREE.Group();
+    const slotsHandled = new Set();
+
+    // Hero — bind GLB if available, otherwise fall back to a procedural
+    // marker so the slot still has something.
+    if (heroSlot) {
+      if (heroClone) {
+        const hero = buildLandmarkInstance({
+          slot: heroSlot,
+          gltfClone: heroClone,
+          scaleRange: heroAsset.scale_range ?? [6, 12],
+          seed: this.seed,
+        });
+        hero.userData.role = 'hero';
+        newLandmarkGroup.add(hero);
+      } else if (heroAsset) {
+        // Hero asset requested but failed — procedural marker for the slot.
+        newLandmarkGroup.add(buildLandmarkMeshes([heroSlot], this.palette));
+      }
+      slotsHandled.add(heroSlot);
+    }
+
+    // Landmarks — each failed slot falls back to a procedural marker.
+    for (let i = 0; i < (landmarkAssets || []).length; i++) {
+      const slot = remainingSlots[i];
+      if (!slot) break;
+      const clone = landmarkClones[i];
+      if (clone) {
+        const lm = buildLandmarkInstance({
+          slot,
+          gltfClone: clone,
+          scaleRange: landmarkAssets[i].scale_range ?? [3, 6],
+          seed: this.seed,
+        });
+        lm.userData.role = 'landmark';
+        newLandmarkGroup.add(lm);
+      } else if (landmarkAssets[i]) {
+        newLandmarkGroup.add(buildLandmarkMeshes([slot], this.palette));
+      }
+      slotsHandled.add(slot);
+    }
+
+    // Catch-all: any landmark slot that the LLM didn't pick an asset for
+    // still gets its procedural marker so the planet's silhouette stays
+    // consistent across visits regardless of how many assets Tier 2 chose.
+    const unhandledSlots = this.landmarks.filter((s) => !slotsHandled.has(s));
+    if (unhandledSlots.length) {
+      newLandmarkGroup.add(buildLandmarkMeshes(unhandledSlots, this.palette));
+    }
+
+    // If hero AND landmarks were both omitted, keep the current procedural
+    // landmark group (no need to replace identical content).
+    const replacingLandmarks = heroAsset || (landmarkAssets && landmarkAssets.length);
+
+    // Features (one InstancedMesh per surface asset)
+    const successfulSurfaceAssets = (surfaceAssets || [])
+      .map((a, i) => ({ asset: a, clone: surfaceClones[i] }))
+      .filter((x) => x.clone)
+      .map((x) => ({
+        glbClone: x.clone,
+        scaleRange: x.asset.scale_range ?? [0.5, 1.5],
+      }));
+
+    let newFeaturesGroup = null;
+    if (successfulSurfaceAssets.length) {
+      newFeaturesGroup = buildInstancedFeaturesFromAssets({
+        geometry: this.geometry,
+        elevations: this.elevations,
+        radius: this.radius,
+        seed: this.seed,
+        assets: successfulSurfaceAssets,
+        density,
+      });
+    }
+
+    // Mount on the next animation frame so the swap aligns with the GPU's
+    // frame boundary (avoids a brief flicker on the swap-out path).
+    await new Promise((r) => requestAnimationFrame(r));
+    // Re-check gen after the rAF in case the player despawned within the
+    // same frame.
+    if (this.visualGen !== gen) return;
+
+    if (replacingLandmarks) {
+      this._replaceGroup('landmarkGroup', newLandmarkGroup);
+    }
+    if (newFeaturesGroup) {
+      this._replaceGroup('featuresGroup', newFeaturesGroup);
+    }
+    // Match SolarSystem's blanket `frustumCulled = false` policy for any
+    // freshly-mounted meshes. Phase 8 will revisit this with proper
+    // per-mesh bounds + instanced chunk culling.
+    if (replacingLandmarks) this.landmarkGroup.traverse((c) => { c.frustumCulled = false; });
+    if (newFeaturesGroup) this.featuresGroup.traverse((c) => { c.frustumCulled = false; });
+  }
+
+  /**
+   * Tear down planet-scoped GPU resources that aren't already on the scene
+   * tree. Geometries + cloned-per-mesh materials are disposed by the
+   * SolarSystem.dispose traverse; this handles the MaterialSet *templates*
+   * (not parented to scene) and bumps visualGen so any in-flight applyVisuals
+   * load drops on resolve instead of mounting onto a despawned planet.
+   */
+  dispose() {
+    this.visualGen++;
+    if (this.matSet) {
+      disposeMaterialSet(this.matSet);
+      this.matSet = null;
+    }
+  }
+
+  // ── Internals ─────────────────────────────────────────────────────
+
+  _pickHeroSlot() {
+    const spire = this.landmarks.find((s) => s.kind === 'spire');
+    return spire || this.landmarks[0] || null;
+  }
+
+  async _loadAssetSafe(url, renderer, label) {
+    try {
+      return await loadInstance(url, this.matSet, renderer);
+    } catch (err) {
+      console.warn(`[Planet ${this.seed}] ${label} load failed (${url}):`, err.message);
+      return null;
+    }
+  }
+
+  _replaceGroup(key, newGroup) {
+    const old = this[key];
+    if (old) {
+      this.group.remove(old);
+      old.traverse((child) => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          // Only dispose materials we cloned per-mesh; shared matSet templates
+          // are owned by this.matSet and disposed in dispose().
+          if (child.material.userData?.cloned) child.material.dispose();
+        }
+      });
+    }
+    this[key] = newGroup;
+    this.group.add(newGroup);
   }
 
   _reTintVertexColors() {
@@ -119,7 +382,6 @@ export class Planet {
     const colHigh  = new THREE.Color(this.palette.high);
     const colSnow  = new THREE.Color(this.palette.snow);
     const tmpColor = new THREE.Color();
-    const seaLevel = this.seaLevel;
     for (let i = 0; i < pos.count; i++) {
       tmp.fromBufferAttribute(pos, i);
       const r = tmp.length();

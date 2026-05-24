@@ -67,6 +67,24 @@ export function buildMaterialSet(palette) {
  * @param {THREE.Object3D} root
  * @param {ReturnType<typeof buildMaterialSet>} matSet
  */
+/**
+ * Dispose the template materials held by a MaterialSet. Per-mesh cloned
+ * materials (set by `applyMaterialSet`) are already disposed by the standard
+ * scene-traverse pass in `SolarSystem.dispose`; the templates here aren't on
+ * the scene tree, so they need a manual dispose to free their GPU programs.
+ *
+ * Safe to call on a partially-built set: any `null` slot is skipped.
+ *
+ * @param {ReturnType<typeof buildMaterialSet>|null|undefined} matSet
+ */
+export function disposeMaterialSet(matSet) {
+  if (!matSet) return;
+  for (const key of ['terrain', 'rock', 'flora', 'landmark', 'default']) {
+    const m = matSet[key];
+    if (m && typeof m.dispose === 'function') m.dispose();
+  }
+}
+
 export function applyMaterialSet(root, matSet) {
   root.traverse((o) => {
     if (!o.isMesh) return;
