@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from './Seed.js';
 import { axisUpQuaternionFor, groundOffsetFor, bboxHeightFor, lateralCenterFor } from './AxisUp.js';
-import { blendedUp, embedFractionFor } from './PlacementRules.js';
+import { blendedUp, embedFractionFor, resolveScale } from './PlacementRules.js';
 
 // Pick 3..6 hero landmark slots from the terrain mesh.
 //
@@ -313,19 +313,29 @@ function buildProceduralLandmarkMesh(lm, palette) {
  * @param {object} args
  * @param {object} args.slot                    - from pickLandmarkSlots
  * @param {THREE.Object3D} args.gltfClone       - clone from AssetCache.loadInstance (userData.bbox carried)
- * @param {[number, number]} [args.scaleRange]  - min/max meters; default [4,8]
+ * @param {[number, number]} [args.scaleRange]  - fallback bias range when the catalog record has none
  * @param {string} [args.pack]                  - catalog pack id for axis-up override
  * @param {string} [args.family]                - catalog family for placement rules
- * @param {object} [args.assetMeta]             - catalog record (axis_override)
+ * @param {object} [args.assetMeta]             - catalog record (axis/scale overrides)
+ * @param {'hero'|'landmark'} [args.role]       - drives the target world height
+ * @param {number} [args.scaleBoost]            - archetype hero boost
  * @param {number} args.seed                    - planet seed for deterministic per-slot scale
  * @returns {THREE.Object3D} the same clone, now positioned + scaled
  */
-export function buildLandmarkInstance({ slot, gltfClone, scaleRange = [4, 8], pack = null, family = null, assetMeta = null, seed }) {
-  const [minS, maxS] = scaleRange;
+export function buildLandmarkInstance({ slot, gltfClone, scaleRange = [4, 8], pack = null, family = null, assetMeta = null, role = 'landmark', scaleBoost = 1, seed }) {
   // Deterministic per-slot scale so repeat visits to the same planet pick
-  // the same scale (no LLM call needed to re-derive).
+  // the same scale (no LLM call needed to re-derive). Bbox-normalized
+  // (Phase 13b): the target is a world HEIGHT for the role; authored kit
+  // units cancel out.
   const rand = mulberry32((seed ^ 0xC0DE) >>> 0 ^ (slot.slotId * 73856093 >>> 0));
-  const scale = minS + (maxS - minS) * rand();
+  const scale = resolveScale({
+    role,
+    scaleRange: assetMeta?.scale_range ?? scaleRange,
+    scaleOverride: assetMeta?.scale_override ?? null,
+    bboxHeight: bboxHeightFor(gltfClone.userData?.bbox, pack, assetMeta),
+    rand,
+    boost: scaleBoost,
+  });
 
   // Up-vector: plumb for structures, terrain-conforming for rocks,
   // blended in between (PlacementRules.TERRAIN_ALIGN). Floating assets

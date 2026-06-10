@@ -347,10 +347,12 @@ export class Planet {
         const hero = buildLandmarkInstance({
           slot: heroSlot,
           gltfClone: heroClone,
-          scaleRange: _scaleBoost(_scaleRangeOf(heroAsset, [6, 12]), comp.heroScale),
+          scaleRange: [6, 12],
           pack: heroAsset.pack,
           family: heroAsset.family,
           assetMeta: heroAsset,
+          role: 'hero',
+          scaleBoost: comp.heroScale,
           seed: this.seed,
         });
         hero.userData.role = 'hero';
@@ -373,10 +375,11 @@ export class Planet {
         const lm = buildLandmarkInstance({
           slot,
           gltfClone: clone,
-          scaleRange: _scaleRangeOf(asset, [3, 6]),
+          scaleRange: [3, 6],
           pack: asset?.pack,
           family: asset?.family,
           assetMeta: asset,
+          role: 'landmark',
           seed: this.seed,
         });
         lm.userData.role = 'landmark';
@@ -406,7 +409,7 @@ export class Planet {
       .filter((x) => x.clone)
       .map((x) => ({
         glbClone: x.clone,
-        scaleRange: _scaleRangeOf(x.asset, [0.5, 1.5]),
+        scaleRange: [0.5, 1.5],     // fallback bias only; assetMeta carries the record
         pack: x.asset?.pack,
         family: x.asset?.family,
         assetMeta: x.asset,
@@ -414,6 +417,19 @@ export class Planet {
 
     let newFeaturesGroup = null;
     if (successfulSurfaceAssets.length) {
+      // Exclusion zones: keep scatter out of mounted landmark footprints
+      // (angular radius from the scaled bbox footprint, small-angle approx).
+      const excludeZones = [];
+      const zoneSize = new THREE.Vector3();
+      for (const child of newLandmarkGroup.children) {
+        const slot = this.landmarks.find((s) => s.slotId === child.userData?.slotId);
+        if (!slot || !child.userData?.bbox) continue;
+        child.userData.bbox.getSize(zoneSize);
+        const footprint = Math.max(zoneSize.x, zoneSize.z) * (child.scale?.x ?? 1) * 0.55;
+        const angle = Math.min(0.6, footprint / this.radius);
+        excludeZones.push({ direction: slot.direction, minDot: Math.cos(angle) });
+      }
+
       newFeaturesGroup = buildInstancedFeaturesFromAssets({
         geometry: this.geometry,
         elevations: this.elevations,
@@ -422,6 +438,7 @@ export class Planet {
         assets: successfulSurfaceAssets,
         density,
         seaLevel: this.seaLevel,
+        excludeZones,
       });
     }
 
@@ -453,10 +470,15 @@ export class Planet {
     const rv = this.reveal;
     const collect = (group) => group?.traverse((o) => {
       if (!o.isMesh || !o.material) return;
-      if (!o.material.userData.revealUniform) {
-        o.material.userData.revealUniform = patchReveal(o.material, 0);
+      // Merged multi-mesh scatter (Phase 13b) carries a material ARRAY —
+      // patch each entry; they all share the instance's reveal timing.
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) {
+        if (!m.userData.revealUniform) {
+          m.userData.revealUniform = patchReveal(m, 0);
+        }
+        rv.uniforms.push(m.userData.revealUniform);
       }
-      rv.uniforms.push(o.material.userData.revealUniform);
     });
     if (replacingLandmarks) collect(this.landmarkGroup);
     if (newFeaturesGroup) collect(this.featuresGroup);
@@ -598,8 +620,12 @@ export class Planet {
         if (child.geometry) child.geometry.dispose();
         if (child.material) {
           // Only dispose materials we cloned per-mesh; shared matSet templates
-          // are owned by this.matSet and disposed in dispose().
-          if (child.material.userData?.cloned) child.material.dispose();
+          // are owned by this.matSet and disposed in dispose(). Material may
+          // be an array (merged multi-mesh scatter).
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          for (const m of mats) {
+            if (m.userData?.cloned) m.dispose();
+          }
         }
       });
     }
@@ -636,21 +662,6 @@ export class Planet {
 function ss(a, b, t) {
   const x = Math.max(0, Math.min(1, (t - a) / (b - a)));
   return x * x * (3 - 2 * x);
-}
-
-// Catalog records carry `scale_override` for hand-tuned outliers. Prefer
-// it when present; otherwise fall back to `scale_range`; otherwise the
-// caller's default.
-function _scaleRangeOf(asset, fallback) {
-  if (!asset) return fallback;
-  return asset.scale_override ?? asset.scale_range ?? fallback;
-}
-
-// Multiply a scale range (or scalar override) by the archetype's hero
-// boost. 1.0 — the common case — is a no-op passthrough.
-function _scaleBoost(range, mult = 1.0) {
-  if (mult === 1.0 || range == null) return range;
-  return Array.isArray(range) ? [range[0] * mult, range[1] * mult] : range * mult;
 }
 
 // Build the meta object passed to AssetCache.loadInstance / applyMaterialSet.

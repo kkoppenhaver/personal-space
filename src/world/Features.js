@@ -1,30 +1,40 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './Seed.js';
 import { axisUpQuaternionFor, groundOffsetFor, bboxHeightFor, lateralCenterFor } from './AxisUp.js';
-import { blendedUp, embedFractionFor, maxSlopeFor } from './PlacementRules.js';
+import { blendedUp, embedFractionFor, maxSlopeFor, surfaceBandFor, resolveScale } from './PlacementRules.js';
 
 // Density hint → instance count multiplier. Applied to the per-asset base
 // count so a "dense" jungle planet really feels dense without flooding the
 // same vertex positions repeatedly.
 const DENSITY_MULTIPLIERS = { sparse: 0.4, medium: 1.0, dense: 2.0 };
 
+// Clustering tuning (Phase 13b). Real places group: groves, rock fields,
+// debris. Each asset's budget lands ~80% in a handful of angular clusters
+// and ~20% as global strays so the space between clusters isn't sterile.
+const CLUSTER_MEMBERS = 12;       // target instances per cluster
+const CLUSTER_RADIUS_DOT = 0.985; // ~10° — grove radius (≈10u at radius 60)
+const CENTER_SPREAD_DOT = 0.92;   // ~23° minimum spacing between centers
+const CLUSTER_SHARE = 0.8;
+
 /**
- * Build instanced surface scatter from selected GLB assets (Phase 4 path).
- * One InstancedMesh per asset URL, all sharing the GLB's first-mesh
- * geometry so we keep the draw-call count tight even with hundreds of
- * instances per planet.
+ * Build instanced surface scatter from selected GLB assets.
+ * One InstancedMesh per asset URL; multi-mesh GLBs are merged into a
+ * single geometry (material array via groups) so the rendered thing
+ * matches the bbox used to ground it.
  *
  * Each asset entry in `assets` is `{ glbClone, scaleRange, pack, family, assetMeta }`:
  *   - `glbClone` is a loaded clone from `AssetCache.loadInstance` (matSet
  *     already applied), only used as a source of geometry + material.
- *   - `scaleRange` is `[min, max]` meters from catalog metadata.
+ *   - `scaleRange` is the fallback size bias when the catalog record has
+ *     no scale_range; scale itself is bbox-normalized (PlacementRules).
  *   - `pack` / `family` / `assetMeta` drive axis-up correction and the
- *     per-family placement rules (slope gate, up-blend, embed).
+ *     per-family placement rules (slope gate, band, up-blend, embed).
  *
- * Multi-mesh GLBs: we use the first descendant Mesh's geometry/material.
- * For surface scatter, single-mesh assets are the supported case (Kenney,
- * Quaternius, KayKit low-poly surface props are mostly single meshes;
- * multi-part assets like trees-with-canopy should be re-exported merged).
+ * Placement is clustered and band-aware: per-asset cluster centers with a
+ * minimum angular spread, members within a grove radius, a stray share
+ * scattered planet-wide, all gated by family slope/elevation rules and
+ * excluded from landmark footprints.
  *
  * @param {object} args
  * @param {THREE.BufferGeometry} args.geometry  - planet terrain mesh
@@ -34,9 +44,10 @@ const DENSITY_MULTIPLIERS = { sparse: 0.4, medium: 1.0, dense: 2.0 };
  * @param {{ glbClone: THREE.Object3D, scaleRange: [number, number] }[]} args.assets
  * @param {'sparse'|'medium'|'dense'} [args.density='medium']
  * @param {number} [args.seaLevel=0.42] - elevation quantile (archetype-driven)
+ * @param {{ direction: THREE.Vector3, minDot: number }[]} [args.excludeZones] - landmark footprints
  * @returns {THREE.Group}
  */
-export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius, seed, assets, density = 'medium', seaLevel = 0.42 }) {
+export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius, seed, assets, density = 'medium', seaLevel = 0.42, excludeZones = [] }) {
   const group = new THREE.Group();
   if (!assets || assets.length === 0) return group;
 
@@ -45,74 +56,101 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
   const nor = geometry.attributes.normal;
   const vCount = pos.count;
 
-  // Per-asset target counts. Split the planet's total scatter budget across
-  // the available asset slots so a single "dense" rock doesn't crowd out
-  // the tree slot.
   const BASE_PER_ASSET = 120;
-  const totalBudget = Math.floor(BASE_PER_ASSET * assets.length * densityMult);
+  const perAssetBudget = Math.floor(BASE_PER_ASSET * densityMult);
 
-  // Pre-pick surface candidate vertex indices: land above the coast band
-  // (sea level is archetype-driven — an ocean world's scatter squeezes onto
-  // its island slivers). We then walk this list assigning indices
-  // round-robin across assets — guarantees they share the same surface
-  // coverage rather than each asset clustering in whichever vertex slice it
-  // samples first.
-  const candidates = [];
-  const landFloor = seaLevel + 0.04;
-  for (let i = 0; i < vCount; i++) {
-    if (elevations[i] >= landFloor) candidates.push(i);
-  }
-  if (candidates.length === 0) return group;
-
-  // Shuffle deterministically so per-planet scatter is stable across
-  // restarts but doesn't repeat across planets.
+  // ── Gather land candidates once (shared across assets) ────────────
+  // Everything above the waterline, outside landmark footprints, with
+  // direction/normal/slope precomputed. ~10k verts at subdivisions=5 —
+  // cheap to materialize.
   const rand = mulberry32(seed ^ 0xfeed);
-  for (let i = candidates.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  const tmp = new THREE.Vector3();
+  const nrm = new THREE.Vector3();
+  const all = [];
+  for (let i = 0; i < vCount; i++) {
+    const e = elevations[i];
+    if (e < seaLevel + 0.005) continue;
+    tmp.fromBufferAttribute(pos, i);
+    const r = tmp.length();
+    const dir = tmp.clone().divideScalar(r);
+    let excluded = false;
+    for (const z of excludeZones) {
+      if (dir.dot(z.direction) > z.minDot) { excluded = true; break; }
+    }
+    if (excluded) continue;
+    nrm.fromBufferAttribute(nor, i).normalize();
+    all.push({ dir, normal: nrm.clone(), height: r, slope: 1 - dir.dot(nrm), e });
   }
-  const samples = Math.min(totalBudget, candidates.length);
+  if (all.length === 0) return group;
+  // Deterministic shuffle: stable per planet, varied across planets.
+  for (let i = all.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [all[i], all[j]] = [all[j], all[i]];
+  }
 
-  // Per-asset instance buckets.
-  const buckets = assets.map(() => []);
-  // Pre-resolve per-asset placement constants once. Cheaper than
-  // recomputing per instance, and the bbox is shared across all
-  // instances of the same asset anyway.
+  // Per-asset placement constants.
   const perAsset = assets.map((a) => {
     const bbox = a.glbClone?.userData?.bbox;
     return {
       bboxOffset: groundOffsetFor(bbox, a.pack, a.assetMeta),
       embedHeight: embedFractionFor(a.family) * bboxHeightFor(bbox, a.pack, a.assetMeta),
+      bboxHeight: bboxHeightFor(bbox, a.pack, a.assetMeta),
       axisUp: axisUpQuaternionFor(a.pack, a.assetMeta),
       lateral: lateralCenterFor(bbox, a.pack, a.assetMeta),
       maxSlope: maxSlopeFor(a.family),
+      band: surfaceBandFor(a.family, seaLevel),
       family: a.family ?? null,
     };
   });
 
-  // Walk shuffled candidates, assigning each vertex round-robin across
-  // assets — but skip assets whose slope gate rejects the vertex (a tree
-  // doesn't grow on a cliff face; a rock is happy anywhere). A vertex no
-  // asset accepts is dropped. Iterates past `samples` to refill what the
-  // gates reject, up to the full candidate pool.
-  const tmp = new THREE.Vector3();
-  const nrm = new THREE.Vector3();
-  let assigned = 0;
-  for (let s = 0; s < candidates.length && assigned < samples; s++) {
-    const idx = candidates[s];
-    tmp.fromBufferAttribute(pos, idx);
-    const r = tmp.length();
-    const dir = tmp.clone().divideScalar(r);
-    nrm.fromBufferAttribute(nor, idx).normalize();
-    const slope = 1 - dir.dot(nrm);
-    for (let k = 0; k < assets.length; k++) {
-      const bucketIdx = (assigned + k) % assets.length;
-      if (slope > perAsset[bucketIdx].maxSlope) continue;
-      const [minS, maxS] = assets[bucketIdx].scaleRange ?? [0.5, 1.5];
-      const scale = minS + (maxS - minS) * rand();
-      buckets[bucketIdx].push({ dir, normal: nrm.clone(), height: r, scale, twist: rand() * Math.PI * 2 });
-      assigned++;
-      break;
+  // ── Cluster + assign per asset ─────────────────────────────────────
+  const used = new Set();   // vertices already claimed (no co-located doubles)
+  const buckets = assets.map(() => []);
+
+  for (let aIdx = 0; aIdx < assets.length; aIdx++) {
+    const pa = perAsset[aIdx];
+    let eligible = all.filter((c) => !used.has(c) && c.slope <= pa.maxSlope
+      && c.e >= pa.band[0] && c.e <= pa.band[1]);
+    if (eligible.length < perAssetBudget * 0.5) {
+      // Thin band (high sea level, crowded planet) — relax the band but
+      // keep the slope gate; floating-tree glitches beat empty planets,
+      // tilted-tree glitches don't.
+      eligible = all.filter((c) => !used.has(c) && c.slope <= pa.maxSlope);
+    }
+    if (eligible.length === 0) continue;
+    const count = Math.min(perAssetBudget, eligible.length);
+
+    // Cluster centers: greedy angular spread over the (shuffled) pool.
+    const nClusters = Math.max(1, Math.round(count / CLUSTER_MEMBERS));
+    const centers = [];
+    for (const c of eligible) {
+      if (centers.length >= nClusters) break;
+      if (centers.every((ct) => ct.dir.dot(c.dir) < CENTER_SPREAD_DOT)) centers.push(c);
+    }
+
+    // Members within a grove radius of any center vs strays everywhere.
+    const clustered = [];
+    const stray = [];
+    for (const c of eligible) {
+      (centers.some((ct) => c.dir.dot(ct.dir) > CLUSTER_RADIUS_DOT) ? clustered : stray).push(c);
+    }
+    const takeClustered = Math.min(clustered.length, Math.round(count * CLUSTER_SHARE));
+    const picks = clustered.slice(0, takeClustered);
+    picks.push(...stray.slice(0, count - picks.length));
+    if (picks.length < count) {
+      picks.push(...clustered.slice(takeClustered, takeClustered + count - picks.length));
+    }
+
+    for (const c of picks) {
+      used.add(c);
+      const scale = resolveScale({
+        role: 'surface',
+        scaleRange: assets[aIdx].assetMeta?.scale_range ?? assets[aIdx].scaleRange,
+        scaleOverride: assets[aIdx].assetMeta?.scale_override ?? null,
+        bboxHeight: pa.bboxHeight,
+        rand,
+      });
+      buckets[aIdx].push({ dir: c.dir, normal: c.normal, height: c.height, scale, twist: rand() * Math.PI * 2 });
     }
   }
 
@@ -127,7 +165,7 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
     const transforms = buckets[aIdx];
     if (transforms.length === 0) continue;
 
-    const { geom, mat } = extractFirstMeshGeometry(assets[aIdx].glbClone);
+    const { geom, mat } = extractMergedGeometry(assets[aIdx].glbClone);
     if (!geom || !mat) continue;
 
     const inst = new THREE.InstancedMesh(geom, mat, transforms.length);
@@ -167,17 +205,54 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
   return group;
 }
 
-function extractFirstMeshGeometry(root) {
-  let mesh = null;
+/**
+ * Geometry + material for instancing a whole GLB (Phase 13b).
+ *
+ * Single-mesh assets (the common case) pass through untouched — the
+ * instancing shares the source geometry. Multi-mesh assets (tree trunk +
+ * canopy, ruins with separate rubble) are baked into ONE merged geometry
+ * with material groups, so the rendered instance matches the whole-model
+ * bbox the grounding math uses — previously only the first child mesh
+ * rendered (a tree-with-canopy scattered as bare trunks).
+ *
+ * The merged geometry is freshly allocated per planet (the per-mesh
+ * transforms are baked in), so the dispose in `Planet._replaceGroup`
+ * is safe and correct for it.
+ */
+function extractMergedGeometry(root) {
+  const meshes = [];
+  root.updateMatrixWorld(true);
   root.traverse((o) => {
-    if (mesh) return;
-    if (o.isMesh && o.geometry && o.material) mesh = o;
+    if (o.isMesh && o.geometry && o.material) meshes.push(o);
   });
-  if (!mesh) return { geom: null, mat: null };
-  // Use the (clone's) geometry directly — instancing shares it across all N
-  // instances. The clone is otherwise discarded after this; the geometry
-  // outlives it through the InstancedMesh reference.
-  return { geom: mesh.geometry, mat: mesh.material };
+  if (meshes.length === 0) return { geom: null, mat: null };
+  if (meshes.length === 1) return { geom: meshes[0].geometry, mat: meshes[0].material };
+
+  // Bake each child's transform (root is unmounted → matrixWorld is the
+  // local chain), normalize attribute sets to the shared subset, and
+  // unify indexing so mergeGeometries accepts the lot.
+  let geoms = meshes.map((o) => {
+    const g = o.geometry.clone().applyMatrix4(o.matrixWorld);
+    g.morphAttributes = {};
+    return g;
+  });
+  const common = geoms
+    .map((g) => new Set(Object.keys(g.attributes)))
+    .reduce((a, b) => new Set([...a].filter((k) => b.has(k))));
+  for (const g of geoms) {
+    for (const k of Object.keys(g.attributes)) {
+      if (!common.has(k)) g.deleteAttribute(k);
+    }
+  }
+  if (!geoms.every((g) => g.index)) {
+    geoms = geoms.map((g) => (g.index ? g.toNonIndexed() : g));
+  }
+  const merged = mergeGeometries(geoms, true);   // true → material groups
+  if (!merged) {
+    console.warn('[Features] geometry merge failed; falling back to first mesh');
+    return { geom: meshes[0].geometry, mat: meshes[0].material };
+  }
+  return { geom: merged, mat: meshes.map((o) => o.material) };
 }
 
 export function buildInstancedFeatures({ geometry, elevations, radius, seed, palette, excludeZone = null, seaLevel = 0.42 }) {

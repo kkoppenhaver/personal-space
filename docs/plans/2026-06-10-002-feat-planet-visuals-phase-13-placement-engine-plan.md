@@ -1,10 +1,21 @@
 ---
 title: Planet visuals Phase 13 — placement engine (orientation, grounding, clustering)
 type: feat
-status: active
+status: completed
 date: 2026-06-10
 parent: docs/plans/2026-05-23-001-feat-planet-visuals-llm-driven-assets-plan.md
 ---
+
+> **13b shipped (2026-06-10).** Bbox-normalized scale targeting
+> (`PlacementRules.resolveScale`: per-role TARGET_HEIGHT, scale_range as a
+> clamped bias, scale_override absolute escape hatch — the pirate ships'
+> interim override removed); clustered band-aware scatter (per-asset cluster
+> centers with angular spread, ~10° grove radius, 80/20 cluster/stray mix,
+> per-family SURFACE_BAND elevation bands with thin-band relax, global
+> used-vertex dedupe, landmark-footprint exclusion zones); multi-mesh merge
+> for scatter instancing (`mergeGeometries` with material groups +
+> attribute normalization — trees finally render their canopies). Material
+> arrays handled in reveal patching, disposal, and the material audit.
 
 # Planet visuals Phase 13 — placement engine
 
