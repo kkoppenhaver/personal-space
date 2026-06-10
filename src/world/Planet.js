@@ -256,7 +256,7 @@ export class Planet {
   async applyVisuals(opts = {}) {
     this.visualGen++;
     const gen = this.visualGen;
-    let { palette, biome, heroAsset, landmarkAssets, surfaceAssets, density = 'medium', renderer } = opts;
+    let { palette, biome, heroAsset, landmarkAssets, surfaceAssets, creatureAssets, density = 'medium', renderer } = opts;
 
     // Archetype composition clamps (Phase 12a). The pick schema always
     // returns 3 landmarks + 2 surface kinds; the engine mounts only what
@@ -318,13 +318,18 @@ export class Planet {
       a ? this._loadAssetSafe(a.url, renderer, `surface[${i}]`, _assetMetaOf(a)) : Promise.resolve(null)
     );
 
+    const creaturePromises = (creatureAssets || []).map((a, i) =>
+      a ? this._loadAssetSafe(a.url, renderer, `creature[${i}]`, _assetMetaOf(a)) : Promise.resolve(null)
+    );
+
     // Await each set independently so a slow tail asset doesn't block the
     // others. We still wait for all before mounting — the plan calls for a
     // single-frame mount, no partial state.
-    const [heroClone, landmarkClones, surfaceClones] = await Promise.all([
+    const [heroClone, landmarkClones, surfaceClones, creatureClones] = await Promise.all([
       heroPromise,
       Promise.all(landmarkPromises),
       Promise.all(surfacePromises),
+      Promise.all(creaturePromises),
     ]);
 
     // ── Cancellation check ───────────────────────────────────────────
@@ -403,7 +408,10 @@ export class Planet {
     // landmark group (no need to replace identical content).
     const replacingLandmarks = heroAsset || (landmarkAssets && landmarkAssets.length);
 
-    // Features (one InstancedMesh per surface asset)
+    // Features (one InstancedMesh per surface asset). Creatures join the
+    // scatter list with their archetype-driven budget share — the herd
+    // clustering and creature family rules (plumb, flat ground) come from
+    // the same placement engine.
     const successfulSurfaceAssets = (surfaceAssets || [])
       .map((a, i) => ({ asset: a, clone: surfaceClones[i] }))
       .filter((x) => x.clone)
@@ -414,6 +422,17 @@ export class Planet {
         family: x.asset?.family,
         assetMeta: x.asset,
       }));
+    for (let i = 0; i < (creatureAssets || []).length; i++) {
+      if (!creatureClones[i]) continue;
+      successfulSurfaceAssets.push({
+        glbClone: creatureClones[i],
+        scaleRange: [0.8, 1.4],
+        pack: creatureAssets[i]?.pack,
+        family: creatureAssets[i]?.family || 'creature',
+        assetMeta: creatureAssets[i],
+        budgetScale: comp.creatureBudget,
+      });
+    }
 
     let newFeaturesGroup = null;
     if (successfulSurfaceAssets.length) {

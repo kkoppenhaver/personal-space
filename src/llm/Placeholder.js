@@ -46,6 +46,7 @@ export function placeholderTier2(seed, context = {}) {
     atmosphere: 'Thin air, a faint hum.',
     theme: arch?.label || hints.theme,
     density,
+    ...(hints.inhabitants ? { inhabitant_hints: hints.inhabitants } : {}),
     hero_landmark_hints:    hints.hero,
     landmark_anchor_hints:  hints.landmark,
     surface_feature_hints:  hints.surface,
@@ -73,13 +74,20 @@ export function placeholderTier3(seed) {
 // to the biome table.
 function archetypeHintOverrides(id) {
   const table = {
+    'ruled-by-creatures':  {
+      hero: ['great weathered statue of the ruling species', 'monumental stone animal figure'],
+      inhabitants: ['a herd of wild animals everywhere', 'deer fox wolf husky shiba inu roaming'],
+    },
+    'garden-world':        {
+      hero: ['great fountain among tended fields', 'old windmill over crop rows'],
+      inhabitants: ['farm animals grazing', 'sheep pig cow donkey in pastures'],
+    },
     'ocean-world':         { hero: ['weathered sailing ship adrift on open water', 'ghost ship with torn sails'] },
     'shipwreck-graveyard': { hero: ['wrecked pirate ship broken on the rocks', 'half-sunk hull on the shore'] },
     'frozen-ocean':        { hero: ['ship frozen into the ice mid-voyage', 'icebound ghost ship'] },
     'necropolis':          { hero: ['monumental crypt on a barren rise', 'great stone mausoleum'] },
     'fortress-world':      { hero: ['towering castle keep on a crag', 'fortified stone tower'] },
     'launch-site':         { hero: ['abandoned rocket on its launch pad', 'tall gantry tower with cargo'] },
-    'garden-world':        { hero: ['great fountain among tended fields', 'old windmill over crop rows'] },
     'monolith-world':      { hero: ['one colossal monolith dominating the horizon', 'a single immense tower'] },
     'ruin-field':          { hero: ['broken triumphal arch of a lost city', 'ruined colonnade on a hill'] },
   };

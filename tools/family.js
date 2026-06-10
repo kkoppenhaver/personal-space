@@ -6,6 +6,9 @@
 // Keep the keys here in sync with FAMILY_BASE there.
 
 export const FAMILY_PATTERNS = [
+  // ── Creatures (exact species names; FIRST so nothing shadows them) ─
+  { pattern: /^(wolf|husky|horse(_white)?|bull|stag|alpaca|fox|deer|cow|shibainu|donkey|llama|pig|zebra|pug|sheep|cat|kitten|goat|chicken|penguin)$/i,
+    family: 'creature' },
   // ── Crystal / mineral ──────────────────────────────────────────────
   { pattern: /crystal/i,                                            family: 'crystal' },
   // ── Bone / undead ──────────────────────────────────────────────────
@@ -50,3 +53,18 @@ export const SCALE_OVERRIDES = {
   'quaternius:nature:Tree_Massive_2':    [12, 18],
   'kenney:space:hangar_large':           [10, 14],
 };
+
+// Per-asset placement mode. `float` mounts at the waterline (plumb, hull
+// draft) instead of ground-snapping — ships, buoys. Pattern-matched on the
+// asset name so catalog regeneration preserves the flag (Phase 12a added
+// it by hand; the importer owns it now).
+export const PLACEMENT_PATTERNS = [
+  { pattern: /^ship-/i, placement: 'float' },
+];
+
+export function resolvePlacement(name) {
+  for (const rule of PLACEMENT_PATTERNS) {
+    if (rule.pattern.test(name)) return rule.placement;
+  }
+  return null;
+}

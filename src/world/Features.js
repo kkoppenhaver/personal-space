@@ -57,7 +57,9 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
   const vCount = pos.count;
 
   const BASE_PER_ASSET = 120;
-  const perAssetBudget = Math.floor(BASE_PER_ASSET * densityMult);
+  // Per-asset budget; `budgetScale` lets creatures take a fraction of a
+  // full slot (incidental wildlife) or a full one (ruled-by-creatures).
+  const budgetFor = (a) => Math.floor(BASE_PER_ASSET * densityMult * (a.budgetScale ?? 1));
 
   // ── Gather land candidates once (shared across assets) ────────────
   // Everything above the waterline, outside landmark footprints, with
@@ -111,14 +113,15 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
     const pa = perAsset[aIdx];
     let eligible = all.filter((c) => !used.has(c) && c.slope <= pa.maxSlope
       && c.e >= pa.band[0] && c.e <= pa.band[1]);
-    if (eligible.length < perAssetBudget * 0.5) {
+    const assetBudget = budgetFor(assets[aIdx]);
+    if (eligible.length < assetBudget * 0.5) {
       // Thin band (high sea level, crowded planet) — relax the band but
       // keep the slope gate; floating-tree glitches beat empty planets,
       // tilted-tree glitches don't.
       eligible = all.filter((c) => !used.has(c) && c.slope <= pa.maxSlope);
     }
     if (eligible.length === 0) continue;
-    const count = Math.min(perAssetBudget, eligible.length);
+    const count = Math.min(assetBudget, eligible.length);
 
     // Cluster centers: greedy angular spread over the (shuffled) pool.
     const nClusters = Math.max(1, Math.round(count / CLUSTER_MEMBERS));

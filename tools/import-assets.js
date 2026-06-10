@@ -21,7 +21,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
-import { resolveFamily, SCALE_OVERRIDES } from './family.js';
+import { resolveFamily, resolvePlacement, SCALE_OVERRIDES } from './family.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE_ROOT = join(homedir(), 'code/3d-modles/assets');
@@ -60,6 +60,10 @@ const LLM_BIOMES = ['desert','ocean','forest','ice','volcanic','crystalline','ga
 // ────────────────────────────────────────────────────────────────────────
 
 const BIOME_OVERRIDES = [
+  // ── Creatures (species → habitat; exact names from the animal packs) ─
+  { pattern: /^(wolf|husky)$/i,                                 biome: ['ice', 'forest'] },
+  { pattern: /^(fox|stag|deer)$/i,                              biome: ['forest', 'ice'] },
+  { pattern: /^(zebra|alpaca|llama|donkey)$/i,                  biome: ['desert', 'forest'] },
   // ── Sci-fi / cosmic ──────────────────────────────────────────────
   { pattern: /^planet_/i,                                       biome: ['alien', 'crystalline'] },
   { pattern: /crystal/i,                                        biome: ['crystalline', 'alien'] },
@@ -365,6 +369,40 @@ const KITS = [
     ],
     scaleRange: { surface: [0.6, 2.0], landmark: [4, 8], hero: [8, 14] },
   },
+
+  // ─── Quaternius animals (Phase 12b — creature role) ───────────────────
+  //
+  // Source the OBJ-derived GLBs: they're STATIC (no rigs), which is what
+  // InstancedMesh herding needs — the FBX/glTF variants in the same packs
+  // carry skeletons and would mount in bind pose.
+  {
+    id: 'quaternius_animals',
+    creator: 'Quaternius',
+    pack: 'quaternius_animals',
+    sourceDir: 'quaternius/ultimate-animated-animals-july-2021/Ultimate Animated Animals - July 2021/OBJ',
+    license: 'CC0',
+    biomeAffinity: ['forest', 'desert'],
+    themeAffinity: ['wildlife', 'inhabited', 'pastoral', 'herd'],
+    role: {
+      creature: [/.*/],
+    },
+    scaleRange: { creature: [0.8, 1.4] },
+  },
+  {
+    id: 'quaternius_farm_animals',
+    creator: 'Quaternius',
+    pack: 'quaternius_farm_animals',
+    sourceDir: 'quaternius/farm-animals-by-quaternius/Farm Animals by @Quaternius/OBJ',
+    license: 'CC0',
+    biomeAffinity: ['forest', 'desert'],
+    themeAffinity: ['farm', 'pastoral', 'tended', 'herd'],
+    role: {
+      creature: [/.*/],
+    },
+    // Horse + Cow also ship in the ultimate pack — keep one of each.
+    reject: [/^Horse$/, /^Cow$/],
+    scaleRange: { creature: [0.8, 1.4] },
+  },
 ];
 
 // ────────────────────────────────────────────────────────────────────────
@@ -383,7 +421,7 @@ function stem(filename) {
  * surface→hero promotion.
  */
 function classifyRole(name, kit) {
-  for (const role of ['hero', 'landmark', 'surface']) {
+  for (const role of ['hero', 'landmark', 'surface', 'creature']) {
     const patterns = kit.role[role] || [];
     if (patterns.some((p) => p.test(name))) return role;
   }
@@ -571,6 +609,8 @@ async function main() {
       scale_range: kit.scaleRange[role] || [1.0, 2.0],
     };
     if (SCALE_OVERRIDES[id]) entry.scale_override = SCALE_OVERRIDES[id];
+    const placement = resolvePlacement(name);
+    if (placement) entry.placement = placement;
     return entry;
   });
 

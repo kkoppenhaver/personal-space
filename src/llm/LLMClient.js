@@ -36,7 +36,7 @@ const TIER2_MAX_INFLIGHT = 2;
 // value so any shortlist with at least one BM25 hit can clear the gate.
 const RETRIEVAL_MIN_TOP_SCORE = 0.01;
 // Per-slot shortlist size handed to the pick call.
-const SHORTLIST_K = { hero: 8, landmark: 10, surface: 15 };
+const SHORTLIST_K = { hero: 8, landmark: 10, surface: 15, creature: 10 };
 
 export class LLMClient {
   constructor({ workerURL = '' } = {}) {
@@ -139,9 +139,16 @@ export class LLMClient {
     });
     const anchorPack = topPackOf(hero.slice(0, 3));
 
-    const [landmark, surface] = await Promise.all([
+    // Creature shortlist (Phase 12b) only when Tier 2 emitted inhabitant
+    // hints — most worlds are uninhabited and skip the role entirely. No
+    // pack-cohesion boost: the animal packs are their own kit by design.
+    const creatureQuery = (direct.inhabitant_hints || []).join(' ');
+    const [landmark, surface, creature] = await Promise.all([
       retrieverShortlist({ query: landmarkQuery, role: 'landmark', k: SHORTLIST_K.landmark, biomeAffinity: direct.biome, preferPack: anchorPack }),
       retrieverShortlist({ query: surfaceQuery, role: 'surface', k: SHORTLIST_K.surface, biomeAffinity: direct.biome, preferPack: anchorPack }),
+      creatureQuery
+        ? retrieverShortlist({ query: creatureQuery, role: 'creature', k: SHORTLIST_K.creature, biomeAffinity: direct.biome })
+        : Promise.resolve([]),
     ]);
 
     // Threshold guard: if every shortlist is empty OR top scores are too
@@ -159,15 +166,17 @@ export class LLMClient {
       return null;
     }
 
-    // Need ≥3 landmarks + ≥2 surface for the pick schema's slot count.
-    // Pad with top-N duplicates if the shortlist is small (won't happen
-    // with k=10/15 once catalog is real-size, but defensive).
+    // Need ≥3 landmarks + ≥2 surface (+ ≥2 creature when present) for the
+    // pick schema's slot count. Pad with top-N duplicates if the shortlist
+    // is small (won't happen with k=10/15 once catalog is real-size, but
+    // defensive).
     while (landmark.length < 3) landmark.push(landmark[0]);
     while (surface.length < 2) surface.push(surface[0]);
+    if (creature.length === 1) creature.push(creature[0]);
 
     if (!this.workerURL) {
       // No worker — pick top-1 per slot deterministically.
-      return degradedPick(hero, landmark, surface);
+      return degradedPick(hero, landmark, surface, creature);
     }
 
     try {
@@ -191,11 +200,13 @@ export class LLMClient {
             hero: hero.map((h) => h.id),
             landmark: landmark.map((l) => l.id),
             surface: surface.map((s) => s.id),
+            ...(creature.length ? { creature: creature.map((c) => c.id) } : {}),
           },
           shortlist_meta: {
             hero: hero.map(metaOf),
             landmark: landmark.map(metaOf),
             surface: surface.map(metaOf),
+            ...(creature.length ? { creature: creature.map(metaOf) } : {}),
           },
         }),
       });
@@ -204,7 +215,7 @@ export class LLMClient {
       return await resp.json();
     } catch (err) {
       console.warn('[LLM] tier2 pick fetch failed; degraded pick:', err.message);
-      return degradedPick(hero, landmark, surface);
+      return degradedPick(hero, landmark, surface, creature);
     }
   }
 
@@ -285,7 +296,7 @@ function metaOf(e) {
 // Deterministic top-1 fallback for when /tier2/pick can't run (no worker,
 // pick fetch failed, etc). Still returns valid asset IDs from the
 // shortlist so callers can mount visuals — just without LLM taste.
-function degradedPick(hero, landmark, surface) {
+function degradedPick(hero, landmark, surface, creature = []) {
   return {
     hero: hero[0].id,
     landmark_a: landmark[0]?.id,
@@ -293,6 +304,8 @@ function degradedPick(hero, landmark, surface) {
     landmark_c: landmark[2]?.id ?? landmark[0]?.id,
     surface_a: surface[0]?.id,
     surface_b: surface[1]?.id ?? surface[0]?.id,
+    // One species reads stronger than a petting zoo — duplicate top-1.
+    ...(creature.length ? { creature_a: creature[0].id, creature_b: creature[0].id } : {}),
     rationale: 'degraded: top-1 per slot from retrieval (no LLM taste applied)',
     degraded: true,
   };

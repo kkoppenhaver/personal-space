@@ -38,6 +38,7 @@ Produce:
 - 1-2 hero landmark hints (free-form prose, ~10 words each, describing what dominates the silhouette from approach)
 - 3-5 surface feature hints (small descriptive phrases for the things scattered across the ground)
 - 3-5 landmark anchor hints (one phrase per landmark slot — what kind of thing lives there)
+- 0-2 inhabitant hints (the animal species living on the surface, e.g. "a herd of deer", "foxes everywhere" — ONLY when the world calls for inhabitants; most worlds are empty and should send none)
 - a thumbnail framing hint (one phrase suggesting the photogenic angle)
 The hints are read by a retrieval system that maps them to 3D models. Be concrete and specific — "twisted obsidian spire" beats "cool tower". Use the "world_describe" tool.`,
   3: `You write the surface lore for an explored world. 3-5 sentences, naturalist's journal style, specific and physical. Plus 1-2 sentence blurbs per landmark. Avoid fantasy clichés. Use the "world_lore" tool.`,
@@ -51,6 +52,7 @@ Apply art direction:
 - Avoid theme collisions: if hero is crystal-themed, secondary picks should add contrast (organic / mechanical / atmospheric) unless creative direction explicitly calls for monothematic.
 - Prefer assets that share a stylistic family with the hero pick. Each candidate is annotated with its "pack" (the creator kit it came from) and "family" (rock / flora / structure / …). When a direction.anchor_pack is given, favor candidates from that pack for landmark + surface slots so the planet reads as one cohesive place — UNLESS doing so forces a worse art-direction fit.
 - Use the rationale field to reference which creative-direction phrase each pick serves AND what distinguishes the chosen candidate from others in that slot's shortlist.
+- When creature slots are present, pick ONE species (creature_a = creature_b is fine) unless the direction calls for mixed wildlife — a planet ruled by one animal reads stronger than a petting zoo.
 Use the "pick_assets" tool. Every asset_id you output MUST come from the corresponding slot's shortlist — the tool enforces this.`;
 
 const TOOLS = {
@@ -99,6 +101,7 @@ const TOOLS = {
         hero_landmark_hints: { type: 'array', items: { type: 'string' } },
         surface_feature_hints: { type: 'array', items: { type: 'string' } },
         landmark_anchor_hints: { type: 'array', items: { type: 'string' } },
+        inhabitant_hints: { type: 'array', items: { type: 'string' } },
         thumbnail_framing_hint: { type: 'string' },
       },
       // Theme/density/hints are NOT required so the Tier 2 schema stays
@@ -162,6 +165,8 @@ llm.post('/tier2/pick', async (c) => {
     hero: shortlist.hero.slice().sort(),
     landmark: shortlist.landmark.slice().sort(),
     surface: shortlist.surface.slice().sort(),
+    // Spread keeps creature-less requests on their historical cache keys.
+    ...(shortlist.creature?.length ? { creature: shortlist.creature.slice().sort() } : {}),
   });
   const cacheKey = `t2pick:${seed}:${MODELS.pick}:${fnv1a(sortedKey)}`;
 
@@ -192,6 +197,14 @@ llm.post('/tier2/pick', async (c) => {
       },
     },
   };
+  // Creature slots (Phase 12b) appear only when the client retrieved a
+  // creature shortlist (i.e. Tier 2 emitted inhabitant_hints). Old clients
+  // never send one → identical schema + cache keys to before.
+  if (shortlist.creature?.length) {
+    tool.input_schema.properties.creature_a = { type: 'string', enum: shortlist.creature };
+    tool.input_schema.properties.creature_b = { type: 'string', enum: shortlist.creature };
+    tool.input_schema.required.push('creature_a', 'creature_b');
+  }
 
   // Compact user message — shortlist as a structured prose blob so the
   // model can reason about each candidate by name/role rather than just
