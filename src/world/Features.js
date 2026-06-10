@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from './Seed.js';
-import { axisUpQuaternionFor, groundOffsetFor } from './AxisUp.js';
+import { axisUpQuaternionFor, groundOffsetFor, bboxHeightFor, lateralCenterFor } from './AxisUp.js';
+import { blendedUp, embedFractionFor, maxSlopeFor } from './PlacementRules.js';
 
 // Density hint → instance count multiplier. Applied to the per-asset base
 // count so a "dense" jungle planet really feels dense without flooding the
@@ -13,10 +14,12 @@ const DENSITY_MULTIPLIERS = { sparse: 0.4, medium: 1.0, dense: 2.0 };
  * geometry so we keep the draw-call count tight even with hundreds of
  * instances per planet.
  *
- * Each asset entry in `assets` is `{ glbClone, scaleRange }`:
+ * Each asset entry in `assets` is `{ glbClone, scaleRange, pack, family, assetMeta }`:
  *   - `glbClone` is a loaded clone from `AssetCache.loadInstance` (matSet
  *     already applied), only used as a source of geometry + material.
  *   - `scaleRange` is `[min, max]` meters from catalog metadata.
+ *   - `pack` / `family` / `assetMeta` drive axis-up correction and the
+ *     per-family placement rules (slope gate, up-blend, embed).
  *
  * Multi-mesh GLBs: we use the first descendant Mesh's geometry/material.
  * For surface scatter, single-mesh assets are the supported case (Kenney,
@@ -38,6 +41,7 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
 
   const densityMult = DENSITY_MULTIPLIERS[density] ?? 1.0;
   const pos = geometry.attributes.position;
+  const nor = geometry.attributes.normal;
   const vCount = pos.count;
 
   // Per-asset target counts. Split the planet's total scatter budget across
@@ -67,23 +71,45 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
 
   // Per-asset instance buckets.
   const buckets = assets.map(() => []);
-  // Pre-resolve per-asset ground offset and axis-up quat once. Cheaper
-  // than recomputing per instance, and the bbox is shared across all
+  // Pre-resolve per-asset placement constants once. Cheaper than
+  // recomputing per instance, and the bbox is shared across all
   // instances of the same asset anyway.
-  const perAsset = assets.map((a) => ({
-    bboxOffset: groundOffsetFor(a.glbClone?.userData?.bbox, a.pack),
-    axisUp: axisUpQuaternionFor(a.pack),
-  }));
+  const perAsset = assets.map((a) => {
+    const bbox = a.glbClone?.userData?.bbox;
+    return {
+      bboxOffset: groundOffsetFor(bbox, a.pack, a.assetMeta),
+      embedHeight: embedFractionFor(a.family) * bboxHeightFor(bbox, a.pack, a.assetMeta),
+      axisUp: axisUpQuaternionFor(a.pack, a.assetMeta),
+      lateral: lateralCenterFor(bbox, a.pack, a.assetMeta),
+      maxSlope: maxSlopeFor(a.family),
+      family: a.family ?? null,
+    };
+  });
+
+  // Walk shuffled candidates, assigning each vertex round-robin across
+  // assets — but skip assets whose slope gate rejects the vertex (a tree
+  // doesn't grow on a cliff face; a rock is happy anywhere). A vertex no
+  // asset accepts is dropped. Iterates past `samples` to refill what the
+  // gates reject, up to the full candidate pool.
   const tmp = new THREE.Vector3();
-  for (let s = 0; s < samples; s++) {
+  const nrm = new THREE.Vector3();
+  let assigned = 0;
+  for (let s = 0; s < candidates.length && assigned < samples; s++) {
     const idx = candidates[s];
     tmp.fromBufferAttribute(pos, idx);
     const r = tmp.length();
     const dir = tmp.clone().divideScalar(r);
-    const bucketIdx = s % assets.length;
-    const [minS, maxS] = assets[bucketIdx].scaleRange ?? [0.5, 1.5];
-    const scale = minS + (maxS - minS) * rand();
-    buckets[bucketIdx].push({ dir, height: r, scale, twist: rand() * Math.PI * 2 });
+    nrm.fromBufferAttribute(nor, idx).normalize();
+    const slope = 1 - dir.dot(nrm);
+    for (let k = 0; k < assets.length; k++) {
+      const bucketIdx = (assigned + k) % assets.length;
+      if (slope > perAsset[bucketIdx].maxSlope) continue;
+      const [minS, maxS] = assets[bucketIdx].scaleRange ?? [0.5, 1.5];
+      const scale = minS + (maxS - minS) * rand();
+      buckets[bucketIdx].push({ dir, normal: nrm.clone(), height: r, scale, twist: rand() * Math.PI * 2 });
+      assigned++;
+      break;
+    }
   }
 
   // Bounding sphere big enough to cover surface band — same trick as the
@@ -102,17 +128,27 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
 
     const inst = new THREE.InstancedMesh(geom, mat, transforms.length);
     const dummy = new THREE.Object3D();
-    const { bboxOffset, axisUp } = perAsset[aIdx];
+    const { bboxOffset, embedHeight, axisUp, lateral, family } = perAsset[aIdx];
+    const up = new THREE.Vector3();
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const surfaceUp = new THREE.Quaternion();
+    const spin = new THREE.Quaternion();
+    const recenter = new THREE.Vector3();
     transforms.forEach((t, i) => {
-      const up = t.dir;
-      // Ground-snap: push outward from the surface point by the bbox
-      // offset (scaled). The 0.4 fudge that used to live here was a
-      // procedural-primitive heuristic — now we have real bbox data.
-      dummy.position.copy(up).multiplyScalar(t.height + bboxOffset * t.scale);
-      const surfaceUp = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
-      const spin = new THREE.Quaternion().setFromAxisAngle(up, t.twist);
+      // Up-vector: radial leaned toward the terrain normal per family
+      // (rocks conform to the hillside, flora stays near-plumb).
+      blendedUp(t.dir, t.normal, family, up);
+      // Grounding: signed bbox base offset (pull-down included) minus the
+      // family's embed depth, applied along the instance's up.
+      dummy.position.copy(t.dir).multiplyScalar(t.height)
+        .addScaledVector(up, (bboxOffset - embedHeight) * t.scale);
+      surfaceUp.setFromUnitVectors(yAxis, up);
+      spin.setFromAxisAngle(up, t.twist);
       // Compose: axisUp (asset-local) → surfaceUp (slot) → spin.
       dummy.quaternion.copy(spin).multiply(surfaceUp).multiply(axisUp);
+      // Corner-pivot fix: keep the footprint centered on the sample point.
+      recenter.copy(lateral).multiplyScalar(t.scale).applyQuaternion(dummy.quaternion);
+      dummy.position.add(recenter);
       dummy.scale.setScalar(t.scale);
       dummy.updateMatrix();
       inst.setMatrixAt(i, dummy.matrix);
