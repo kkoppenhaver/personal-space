@@ -72,6 +72,7 @@ export async function runPlacementLab() {
   const heroAsset = getAssetById(params.get('hero') || DEFAULTS.hero);
   const landmarkAssets = ids('landmarks').map(getAssetById);
   const surfaceAssets = ids('surface').map(getAssetById);
+  const creatureAssets = ids('creatures').map(getAssetById).filter(Boolean);
   for (const [k, v] of [['hero', heroAsset], ['landmarks', landmarkAssets], ['surface', surfaceAssets]]) {
     const missing = (Array.isArray(v) ? v : [v]).filter((x) => !x).length;
     if (missing) console.warn(`[placementLab] ${missing} unknown ${k} id(s) — check the catalog`);
@@ -83,6 +84,7 @@ export async function runPlacementLab() {
     heroAsset,
     landmarkAssets: landmarkAssets.filter(Boolean),
     surfaceAssets: surfaceAssets.filter(Boolean),
+    creatureAssets,
     density,
     renderer,
   });
