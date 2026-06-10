@@ -1,7 +1,7 @@
 ---
 title: Planet visuals Phase 12 — world archetypes + seed-derived sparks
 type: feat
-status: active
+status: completed
 date: 2026-06-10
 parent: docs/plans/2026-05-23-001-feat-planet-visuals-llm-driven-assets-plan.md
 ---
@@ -22,8 +22,22 @@ parent: docs/plans/2026-05-23-001-feat-planet-visuals-llm-driven-assets-plan.md
 > Fix shipped alongside: f32/f64 elevation-range mismatch in TerrainGen put
 > phantom puddles on waterless worlds. **Worker redeploy required**
 > (`wrangler deploy`) for the new Tier 2 system prompt.
-> **12b (creatures) remains** — catalog import, `creature` role/slots,
-> `ruled-by-creatures` archetype entry.
+> **12b shipped (2026-06-10).** 17 static animals imported from the local
+> mirror's OBJ-derived GLBs (quaternius_animals 12 + quaternius_farm_animals
+> 5, deduped; catalog 555→572, embeddings regenerated); `creature` role
+> end-to-end: optional `inhabitant_hints` on world_describe, dynamic
+> creature_a/b strict-enum pick slots (creature-less requests keep their
+> historical schema + cache keys), creature shortlist + degraded pick,
+> scatter integration with archetype-driven `creatureBudget` (herd
+> clustering via 13b), `ruled-by-creatures` archetype, creature family in
+> ColorSystem (15% biome blend). Importer owns `placement` flags now
+> (PLACEMENT_PATTERNS) so regeneration preserves them. No cat model in the
+> mirrored packs — drop one in via the README flow when sourced; huskies,
+> shibas, and pugs rule planets meanwhile. Worker redeploy required.
+> **NOTE (same-day):** direction discussion in flight — archetype TABLES
+> are likely to be demoted to inspiration inputs for a concept-first
+> pipeline (see Keanan's wild-not-categorized steer); the creature
+> catalog + placement work here survives that pivot.
 
 ## Overview
 

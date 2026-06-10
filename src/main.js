@@ -293,12 +293,17 @@ async function main() {
         const surfaces = [sel.surface_a, sel.surface_b]
           .map(getAssetById)
           .filter(Boolean);
-        const anyResolved = hero || landmarks.some(Boolean) || surfaces.length;
+        // Creature picks (Phase 12b) — deduped: the pick prompt favors one
+        // species in both slots, which would double its scatter budget.
+        const creatures = [...new Set([sel.creature_a, sel.creature_b].filter(Boolean))]
+          .map(getAssetById)
+          .filter(Boolean);
+        const anyResolved = hero || landmarks.some(Boolean) || surfaces.length || creatures.length;
         if (anyResolved) {
           // Prefetch: warm the GLB cache the moment picks resolve so the
           // mount (and the reveal that follows) isn't gated on network/decode.
           // The promise-map dedupes — applyVisuals reuses these parses.
-          for (const a of [hero, ...landmarks, ...surfaces]) {
+          for (const a of [hero, ...landmarks, ...surfaces, ...creatures]) {
             if (a?.url) preloadAsset(a.url, renderer).catch(() => {});
           }
           planet.applyVisuals({
@@ -307,6 +312,7 @@ async function main() {
             heroAsset: hero || null,
             landmarkAssets: landmarks,
             surfaceAssets: surfaces,
+            creatureAssets: creatures,
             density: meta.density || 'medium',
             renderer,
           }).then(() => {
@@ -972,7 +978,7 @@ async function main() {
 // the recency ring buffer. Tolerates null/partial picks.
 function selectedAssetIds(sel) {
   if (!sel) return [];
-  return [sel.hero, sel.landmark_a, sel.landmark_b, sel.landmark_c, sel.surface_a, sel.surface_b]
+  return [sel.hero, sel.landmark_a, sel.landmark_b, sel.landmark_c, sel.surface_a, sel.surface_b, sel.creature_a, sel.creature_b]
     .filter(Boolean);
 }
 

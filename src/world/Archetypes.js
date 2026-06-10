@@ -69,6 +69,14 @@ const ARCHETYPES = [
     composition: { landmarkSlots: [1, 2], openWaterHero: true },
   },
   {
+    id: 'ruled-by-creatures', weight: 4,
+    label: 'ruled by creatures',
+    spark: 'a planet that belongs to one animal species — they are everywhere, and everything else here exists at their pleasure',
+    biomes: ['forest', 'desert', 'ice'],
+    terrain: {},
+    composition: { landmarkSlots: [1, 2], creatureBudget: 1.0 },
+  },
+  {
     id: 'ruin-field', weight: 4,
     label: 'ruin field',
     spark: 'the leftover architecture of a civilization that finished whatever it was doing here',
@@ -182,6 +190,10 @@ export function rollArchetype(seed) {
     openWaterHero: !!pick.composition.openWaterHero,
     heroScale: pick.composition.heroScale ?? 1.0,
     densityHint: pick.composition.densityHint ?? null,
+    // Creature scatter budget as a fraction of a full surface-asset budget.
+    // Worlds with incidental wildlife get a handful; ruled-by-creatures
+    // gets the full herd.
+    creatureBudget: pick.composition.creatureBudget ?? 0.35,
   };
 
   return {

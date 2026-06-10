@@ -35,6 +35,7 @@ const FAMILY_BASE = {
   bone:      { l: 0.82, c: 0.030, h:  85 },  // cream
   crystal:   { l: 0.72, c: 0.120, h: 290 },  // luminous purple
   structure: { l: 0.65, c: 0.040, h:  60 },  // weathered stone
+  creature:  { l: 0.60, c: 0.055, h:  60 },  // warm fur-neutral
   default:   { l: 0.55, c: 0.040, h:  60 },
 };
 
@@ -70,6 +71,7 @@ const FAMILY_BLEND_DEFAULT = {
   bone:      0.25,
   crystal:   0.70,
   structure: 0.95,
+  creature:  0.15,   // animals stay animal-colored on a purple planet
   default:   0.50,
 };
 
