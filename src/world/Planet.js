@@ -302,6 +302,8 @@ export class Planet {
           gltfClone: heroClone,
           scaleRange: _scaleRangeOf(heroAsset, [6, 12]),
           pack: heroAsset.pack,
+          family: heroAsset.family,
+          assetMeta: heroAsset,
           seed: this.seed,
         });
         hero.userData.role = 'hero';
@@ -326,6 +328,8 @@ export class Planet {
           gltfClone: clone,
           scaleRange: _scaleRangeOf(asset, [3, 6]),
           pack: asset?.pack,
+          family: asset?.family,
+          assetMeta: asset,
           seed: this.seed,
         });
         lm.userData.role = 'landmark';
@@ -357,6 +361,8 @@ export class Planet {
         glbClone: x.clone,
         scaleRange: _scaleRangeOf(x.asset, [0.5, 1.5]),
         pack: x.asset?.pack,
+        family: x.asset?.family,
+        assetMeta: x.asset,
       }));
 
     let newFeaturesGroup = null;

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from './Seed.js';
-import { axisUpQuaternionFor, groundOffsetFor } from './AxisUp.js';
+import { axisUpQuaternionFor, groundOffsetFor, bboxHeightFor, lateralCenterFor } from './AxisUp.js';
+import { blendedUp, embedFractionFor } from './PlacementRules.js';
 
 // Pick 3..6 hero landmark slots from the terrain mesh.
 //
@@ -28,32 +29,51 @@ const SPIRE_LO = 0.90;
 // Greedy angular-spread filter. ~70° apart between any two slots.
 const MIN_ANGULAR_DOT = 0.35;
 
+// Flatness preference: candidates are bucketed by slope (1 - dot(radial,
+// terrain normal)) in steps of this size, and flatter buckets win. Within
+// a bucket the shuffled order survives (Array#sort is stable), so equally
+// flat candidates still vary per seed. Landmark slots host structures and
+// hero GLBs — a knife-edge facet under a windmill reads as a glitch.
+const SLOPE_BUCKET = 0.04;
+
 export function pickLandmarkSlots({ geometry, elevations, radius, seed, count = 5 }) {
   const pos = geometry.attributes.position;
+  const nor = geometry.attributes.normal;
   const vCount = pos.count;
   const rand = mulberry32(seed ^ 0xdeadbeef);
 
-  // ── Gather banded candidates ──────────────────────────────────────
-  const peakCandidates = [];   // { idx, e }
+  // ── Gather banded candidates (with slope) ─────────────────────────
+  const peakCandidates = [];   // { idx, e, slope }
   const spireCandidates = [];
   const basinCandidates = [];
   const coastCandidates = [];
 
+  const tmpD = new THREE.Vector3();
+  const tmpN = new THREE.Vector3();
   for (let i = 0; i < vCount; i++) {
     const e = elevations[i];
-    if (e >= SPIRE_LO) spireCandidates.push({ idx: i, e });
-    else if (e >= PEAK_LO) peakCandidates.push({ idx: i, e });
-    else if (e >= BASIN_LO && e < BASIN_HI) basinCandidates.push({ idx: i, e });
-    else if (e >= COAST_LO && e < COAST_HI) coastCandidates.push({ idx: i, e });
+    let band = null;
+    if (e >= SPIRE_LO) band = spireCandidates;
+    else if (e >= PEAK_LO) band = peakCandidates;
+    else if (e >= BASIN_LO && e < BASIN_HI) band = basinCandidates;
+    else if (e >= COAST_LO && e < COAST_HI) band = coastCandidates;
+    if (!band) continue;
+    tmpD.fromBufferAttribute(pos, i).normalize();
+    tmpN.fromBufferAttribute(nor, i).normalize();
+    band.push({ idx: i, e, slope: 1 - tmpD.dot(tmpN) });
   }
 
-  // Shuffle peaks/basins/coasts so we don't always pick the first one
-  // in vertex-index order. Spires we keep sorted descending so the
-  // tallest wins.
-  shuffleInPlace(peakCandidates, rand);
-  shuffleInPlace(basinCandidates, rand);
-  shuffleInPlace(coastCandidates, rand);
-  spireCandidates.sort((a, b) => b.e - a.e);
+  // Shuffle peaks/basins/coasts so we don't always pick the first one in
+  // vertex-index order, then stable-sort by slope bucket so flat ground
+  // is preferred but ties stay seed-varied. Spire candidates are all in
+  // the top elevation band already, so preferring a flat crown among them
+  // still reads as "the planet's highest point" — height breaks ties.
+  const slopeBucketOf = (c) => Math.min(4, Math.floor(c.slope / SLOPE_BUCKET));
+  for (const band of [peakCandidates, basinCandidates, coastCandidates]) {
+    shuffleInPlace(band, rand);
+    band.sort((a, b) => slopeBucketOf(a) - slopeBucketOf(b));
+  }
+  spireCandidates.sort((a, b) => (slopeBucketOf(a) - slopeBucketOf(b)) || (b.e - a.e));
 
   // ── Priority order: spire → peaks → basins → coasts ───────────────
   // Spire first so the highest point always gets the rare kind even if
@@ -64,7 +84,12 @@ export function pickLandmarkSlots({ geometry, elevations, radius, seed, count = 
   const dirs = [];
   const tmp = new THREE.Vector3();
 
-  const tryAdd = (idx, kind, elevationFactor) => {
+  // Slot position is the ACTUAL displaced vertex — i.e. exactly on the
+  // terrain. (It used to be `dir * radius * elevationFactor`, a band-level
+  // approximation that floated peak mounts up to ~2% of radius above the
+  // real surface; GLB ground-snap then inherited the error.) `normal` is
+  // the smoothed vertex normal, used for per-family up-vector blending.
+  const tryAdd = (idx, kind) => {
     if (picks.length >= count) return false;
     tmp.fromBufferAttribute(pos, idx).normalize();
     for (const d of dirs) {
@@ -77,31 +102,32 @@ export function pickLandmarkSlots({ geometry, elevations, radius, seed, count = 
       slotId,
       kind,
       direction: dir,
-      position: dir.clone().multiplyScalar(radius * elevationFactor),
+      normal: new THREE.Vector3().fromBufferAttribute(nor, idx).normalize(),
+      position: new THREE.Vector3().fromBufferAttribute(pos, idx),
       name: `${capitalize(kind)}-${slotId + 1}`,
     });
     return true;
   };
 
-  // Spire — at most one. Slightly higher mount factor reads as "pokes out further."
-  if (spireCandidates[0]) tryAdd(spireCandidates[0].idx, 'spire', 1.10);
+  // Spire — at most one.
+  if (spireCandidates[0]) tryAdd(spireCandidates[0].idx, 'spire');
 
   // Peaks — fill up to ~half of count.
   const peakBudget = Math.max(2, Math.ceil(count * 0.55));
   let peakAdds = 0;
   for (const c of peakCandidates) {
     if (peakAdds >= peakBudget) break;
-    if (tryAdd(c.idx, 'peak', 1.08)) peakAdds++;
+    if (tryAdd(c.idx, 'peak')) peakAdds++;
   }
 
   // Basin — at most one.
   for (const c of basinCandidates) {
-    if (tryAdd(c.idx, 'basin', 1.02)) break;
+    if (tryAdd(c.idx, 'basin')) break;
   }
 
-  // Coast — at most one. Mount near surface (slightly above water).
+  // Coast — at most one.
   for (const c of coastCandidates) {
-    if (tryAdd(c.idx, 'coast', 1.01)) break;
+    if (tryAdd(c.idx, 'coast')) break;
   }
 
   // ── Ensure minimum 3 slots ────────────────────────────────────────
@@ -111,7 +137,7 @@ export function pickLandmarkSlots({ geometry, elevations, radius, seed, count = 
   // procedural marker (see Planet.applyVisuals fallback).
   if (picks.length < 3) {
     const relaxed = 0.65; // ~50° apart, more permissive
-    const tryAddRelaxed = (idx, kind, factor) => {
+    const tryAddRelaxed = (idx, kind) => {
       if (picks.length >= 3) return false;
       tmp.fromBufferAttribute(pos, idx).normalize();
       for (const d of dirs) {
@@ -124,14 +150,15 @@ export function pickLandmarkSlots({ geometry, elevations, radius, seed, count = 
         slotId,
         kind,
         direction: dir,
-        position: dir.clone().multiplyScalar(radius * factor),
+        normal: new THREE.Vector3().fromBufferAttribute(nor, idx).normalize(),
+        position: new THREE.Vector3().fromBufferAttribute(pos, idx),
         name: `${capitalize(kind)}-${slotId + 1}`,
       });
       return true;
     };
-    for (const c of peakCandidates) tryAddRelaxed(c.idx, 'peak', 1.08);
-    for (const c of basinCandidates) tryAddRelaxed(c.idx, 'basin', 1.02);
-    for (const c of coastCandidates) tryAddRelaxed(c.idx, 'coast', 1.01);
+    for (const c of peakCandidates) tryAddRelaxed(c.idx, 'peak');
+    for (const c of basinCandidates) tryAddRelaxed(c.idx, 'basin');
+    for (const c of coastCandidates) tryAddRelaxed(c.idx, 'coast');
   }
 
   return picks;
@@ -172,11 +199,15 @@ function buildProceduralLandmarkMesh(lm, palette) {
   const up = lm.direction.clone();
   const yToUp = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
 
+  // Slot positions sit exactly on the terrain (post-Phase-13a) and these
+  // primitives have center origins — lift each by a bit under half its
+  // height so it pokes out of the ground with its base embedded.
+
   if (lm.kind === 'peak') {
     const g = new THREE.ConeGeometry(2.0, 12.0, 5);
     const m = new THREE.MeshLambertMaterial({ color: new THREE.Color(palette.snow).multiplyScalar(0.95), flatShading: true });
     const mesh = new THREE.Mesh(g, m);
-    mesh.position.copy(lm.position);
+    mesh.position.copy(lm.position).addScaledVector(up, 5.0);
     mesh.quaternion.copy(yToUp);
     return mesh;
   }
@@ -185,7 +216,7 @@ function buildProceduralLandmarkMesh(lm, palette) {
     const g = new THREE.ConeGeometry(1.5, 22.0, 5);
     const m = new THREE.MeshLambertMaterial({ color: new THREE.Color(palette.snow), flatShading: true });
     const mesh = new THREE.Mesh(g, m);
-    mesh.position.copy(lm.position);
+    mesh.position.copy(lm.position).addScaledVector(up, 10.0);
     mesh.quaternion.copy(yToUp);
     return mesh;
   }
@@ -193,7 +224,7 @@ function buildProceduralLandmarkMesh(lm, palette) {
     const g = new THREE.TorusGeometry(4.5, 0.5, 6, 16);
     const m = new THREE.MeshLambertMaterial({ color: new THREE.Color(palette.high).multiplyScalar(1.1), flatShading: true });
     const mesh = new THREE.Mesh(g, m);
-    mesh.position.copy(lm.position);
+    mesh.position.copy(lm.position).addScaledVector(up, 0.3);
     // Torus's default plane is XY, so rotate so its normal aligns with up.
     const zToUp = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), up);
     mesh.quaternion.copy(zToUp);
@@ -204,7 +235,7 @@ function buildProceduralLandmarkMesh(lm, palette) {
     const g = new THREE.CylinderGeometry(1.4, 1.8, 2.4, 6);
     const m = new THREE.MeshLambertMaterial({ color: new THREE.Color(palette.mid).multiplyScalar(1.05), flatShading: true });
     const mesh = new THREE.Mesh(g, m);
-    mesh.position.copy(lm.position);
+    mesh.position.copy(lm.position).addScaledVector(up, 1.0);
     mesh.quaternion.copy(yToUp);
     return mesh;
   }
@@ -214,10 +245,10 @@ function buildProceduralLandmarkMesh(lm, palette) {
 /**
  * Bind a single GLB clone to a landmark slot. Scales it to the asset's
  * declared `scale_range` (deterministic per-slot via the planet seed),
- * applies the per-pack axis-up correction if any, orients its +Y to the
- * slot's surface-up direction, and ground-snaps using the clone's bbox
- * so the visible base touches terrain instead of the origin floating
- * above.
+ * applies the per-pack/per-asset axis-up correction if any, stands it
+ * along the family's blended up-vector (radial leaned toward the terrain
+ * normal — see PlacementRules), ground-snaps using the clone's bbox, and
+ * settles it into the terrain by the family's embed fraction.
  *
  * The clone is mutated in place (position, scale, quaternion) and returned
  * so the caller can add it to the planet group.
@@ -227,30 +258,45 @@ function buildProceduralLandmarkMesh(lm, palette) {
  * @param {THREE.Object3D} args.gltfClone       - clone from AssetCache.loadInstance (userData.bbox carried)
  * @param {[number, number]} [args.scaleRange]  - min/max meters; default [4,8]
  * @param {string} [args.pack]                  - catalog pack id for axis-up override
+ * @param {string} [args.family]                - catalog family for placement rules
+ * @param {object} [args.assetMeta]             - catalog record (axis_override)
  * @param {number} args.seed                    - planet seed for deterministic per-slot scale
  * @returns {THREE.Object3D} the same clone, now positioned + scaled
  */
-export function buildLandmarkInstance({ slot, gltfClone, scaleRange = [4, 8], pack = null, seed }) {
+export function buildLandmarkInstance({ slot, gltfClone, scaleRange = [4, 8], pack = null, family = null, assetMeta = null, seed }) {
   const [minS, maxS] = scaleRange;
   // Deterministic per-slot scale so repeat visits to the same planet pick
   // the same scale (no LLM call needed to re-derive).
   const rand = mulberry32((seed ^ 0xC0DE) >>> 0 ^ (slot.slotId * 73856093 >>> 0));
   const scale = minS + (maxS - minS) * rand();
 
+  // Up-vector: plumb for structures, terrain-conforming for rocks,
+  // blended in between (PlacementRules.TERRAIN_ALIGN).
+  const up = blendedUp(slot.direction, slot.normal || slot.direction, family);
+
   // Compose: axisUp (asset-local fix) → surfaceUp (slot orientation) → twist.
   // Multiplications apply right-to-left, so we want quaternion = twist * surface * axisUp.
-  const axisUp = axisUpQuaternionFor(pack);
-  const surfaceUp = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), slot.direction);
-  const twist = new THREE.Quaternion().setFromAxisAngle(slot.direction, rand() * Math.PI * 2);
+  const axisUp = axisUpQuaternionFor(pack, assetMeta);
+  const surfaceUp = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
+  const twist = new THREE.Quaternion().setFromAxisAngle(up, rand() * Math.PI * 2);
   gltfClone.quaternion.copy(twist).multiply(surfaceUp).multiply(axisUp);
   gltfClone.scale.setScalar(scale);
 
-  // Ground-snap: push the asset outward along surface normal by the
-  // distance from origin to the bbox's "down" extent (scaled). Without
-  // this the origin sits on the surface point but a model whose origin
-  // is at center floats by half its height.
-  const groundOffset = groundOffsetFor(gltfClone.userData?.bbox, pack) * scale;
-  gltfClone.position.copy(slot.position).addScaledVector(slot.direction, groundOffset);
+  // Grounding: move along the up-vector by the SIGNED bbox base offset
+  // (down-pull included — kits authored above their origin land instead of
+  // hovering), then sink by the family's embed fraction so the base reads
+  // settled into the faceted terrain rather than balanced on one facet.
+  const bbox = gltfClone.userData?.bbox;
+  const groundOffset = groundOffsetFor(bbox, pack, assetMeta) * scale;
+  const embed = embedFractionFor(family) * bboxHeightFor(bbox, pack, assetMeta) * scale;
+  gltfClone.position.copy(slot.position).addScaledVector(up, groundOffset - embed);
+
+  // Corner-pivot fix: re-center the footprint on the slot so the twist
+  // above pivots through the model's middle, not the author's pivot.
+  const recenter = lateralCenterFor(bbox, pack, assetMeta)
+    .multiplyScalar(scale)
+    .applyQuaternion(gltfClone.quaternion);
+  gltfClone.position.add(recenter);
 
   gltfClone.userData.slotId = slot.slotId;
   gltfClone.userData.kind = slot.kind;

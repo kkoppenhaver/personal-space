@@ -28,6 +28,14 @@ export function hasAsset(id) {
 }
 
 /**
+ * Full asset list, read-only. Dev tools (contact sheet) iterate the whole
+ * catalog; game code should keep using getAssetById / AssetRetriever.
+ */
+export function allAssets() {
+  return catalog.assets || [];
+}
+
+/**
  * Catalog sanity meta. Useful for boot logs and dev tools.
  */
 export function catalogMeta() {

@@ -53,6 +53,20 @@ function cellKeyOf(pos) {
 }
 
 async function main() {
+  // Dev tools: `?contactSheet=1` boots the catalog audit grid,
+  // `?placementLab=1` boots a single forced-asset planet bench — instead of
+  // the game (dynamic imports keep both out of the main bundle's hot path).
+  if (new URLSearchParams(location.search).has('contactSheet')) {
+    const { runContactSheet } = await import('./dev/ContactSheet.js');
+    await runContactSheet();
+    return;
+  }
+  if (new URLSearchParams(location.search).has('placementLab')) {
+    const { runPlacementLab } = await import('./dev/PlacementLab.js');
+    await runPlacementLab();
+    return;
+  }
+
   // 1. Init Rapier WASM
   await RAPIER.init();
 
