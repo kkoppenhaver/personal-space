@@ -2,9 +2,11 @@ import * as THREE from 'three';
 import { buildPlanetGeometry, makeTerrainSampler } from './TerrainGen.js';
 import {
   pickLandmarkSlots,
+  pickOpenWaterSlot,
   buildLandmarkMeshes,
   buildLandmarkInstance,
 } from './Landmarks.js';
+import { rollArchetype } from './Archetypes.js';
 import {
   buildInstancedFeatures,
   buildInstancedFeaturesFromAssets,
@@ -75,7 +77,18 @@ export class Planet {
     // Null means "no GLB visuals" → claim captures the procedural frame now.
     this.reveal = null;
 
-    const built = buildPlanetGeometry({ seed, radius });
+    // Archetype roll (Phase 12a) — deterministic from the seed, known
+    // BEFORE any LLM round-trip, so terrain can actually be an ocean when
+    // the world is an ocean world. Also sent to /tier2/direct as a creative
+    // constraint (see LLMClient/main.js).
+    this.archetype = rollArchetype(seed);
+
+    const built = buildPlanetGeometry({
+      seed,
+      radius,
+      seaLevelQuantile: this.archetype.terrain.seaLevelQuantile,
+      ampScale: this.archetype.terrain.ampScale,
+    });
     this.geometry = built.geometry;
     this.elevations = built.elevations;
     this.palette = built.palette;
@@ -90,17 +103,41 @@ export class Planet {
     this.mesh.userData.matSlot = 'terrain';
 
     // Sampler for fast altitude queries without raycasting.
-    this.sample = makeTerrainSampler({ seed, radius, seaLevel: built.seaLevel });
+    this.sample = makeTerrainSampler({
+      seed, radius,
+      seaLevel: built.seaLevel,
+      ampScale: this.archetype.terrain.ampScale,
+    });
 
     // Pick landmark slots from the actual mesh. Stable for a given seed —
-    // applyVisuals later binds GLB clones to these same slots.
+    // applyVisuals later binds GLB clones to these same slots. Slot count
+    // is archetype-driven: hero slot + composition.landmarkSlots (a
+    // monolith world is one colossal thing and nothing else).
     this.landmarks = pickLandmarkSlots({
       geometry: this.geometry,
       elevations: this.elevations,
       radius,
       seed,
-      count: 5,
+      count: Math.max(1, 1 + this.archetype.composition.landmarkSlots),
+      seaLevel: this.seaLevel,
     });
+
+    // Ocean-ish archetypes put the hero ON the water (a ship, a wreck) —
+    // add a deep-water slot after the land slots. Best-effort: a planet
+    // with no deep water just keeps its land hero.
+    if (this.archetype.composition.openWaterHero) {
+      const waterSlot = pickOpenWaterSlot({
+        geometry: this.geometry,
+        elevations: this.elevations,
+        seed,
+        seaLevel: this.seaLevel,
+        avoidDirs: this.landmarks.map((s) => s.direction),
+      });
+      if (waterSlot) {
+        waterSlot.slotId = this.landmarks.length;
+        this.landmarks.push(waterSlot);
+      }
+    }
 
     // Procedural landmark + feature groups — visible from spawn so the planet
     // never looks empty during approach. applyVisuals will swap these out
@@ -117,6 +154,7 @@ export class Planet {
       radius,
       seed,
       palette: this.palette,
+      seaLevel: this.seaLevel,
     });
     this.featuresGroup.userData.procedural = true;
 
@@ -218,7 +256,16 @@ export class Planet {
   async applyVisuals(opts = {}) {
     this.visualGen++;
     const gen = this.visualGen;
-    const { palette, biome, heroAsset, landmarkAssets, surfaceAssets, density = 'medium', renderer } = opts;
+    let { palette, biome, heroAsset, landmarkAssets, surfaceAssets, density = 'medium', renderer } = opts;
+
+    // Archetype composition clamps (Phase 12a). The pick schema always
+    // returns 3 landmarks + 2 surface kinds; the engine mounts only what
+    // the archetype calls for (a monolith world mounts none of them). The
+    // clamp lives here — not in the LLM chain — so degraded/fallback picks
+    // honor the composition too.
+    const comp = this.archetype.composition;
+    if (Array.isArray(landmarkAssets)) landmarkAssets = landmarkAssets.slice(0, comp.landmarkSlots);
+    if (Array.isArray(surfaceAssets)) surfaceAssets = surfaceAssets.slice(0, Math.max(1, comp.surfaceKinds));
 
     // ── Palette + matSet refresh (always synchronous) ────────────────
     if (palette) {
@@ -300,7 +347,7 @@ export class Planet {
         const hero = buildLandmarkInstance({
           slot: heroSlot,
           gltfClone: heroClone,
-          scaleRange: _scaleRangeOf(heroAsset, [6, 12]),
+          scaleRange: _scaleBoost(_scaleRangeOf(heroAsset, [6, 12]), comp.heroScale),
           pack: heroAsset.pack,
           family: heroAsset.family,
           assetMeta: heroAsset,
@@ -374,6 +421,7 @@ export class Planet {
         seed: this.seed,
         assets: successfulSurfaceAssets,
         density,
+        seaLevel: this.seaLevel,
       });
     }
 
@@ -525,6 +573,10 @@ export class Planet {
   // ── Internals ─────────────────────────────────────────────────────
 
   _pickHeroSlot() {
+    // Open-water beats spire: when an ocean archetype added a water slot,
+    // the hero is the thing floating on it (a ship, not a peak ornament).
+    const water = this.landmarks.find((s) => s.kind === 'open-water');
+    if (water) return water;
     const spire = this.landmarks.find((s) => s.kind === 'spire');
     return spire || this.landmarks[0] || null;
   }
@@ -592,6 +644,13 @@ function ss(a, b, t) {
 function _scaleRangeOf(asset, fallback) {
   if (!asset) return fallback;
   return asset.scale_override ?? asset.scale_range ?? fallback;
+}
+
+// Multiply a scale range (or scalar override) by the archetype's hero
+// boost. 1.0 — the common case — is a no-op passthrough.
+function _scaleBoost(range, mult = 1.0) {
+  if (mult === 1.0 || range == null) return range;
+  return Array.isArray(range) ? [range[0] * mult, range[1] * mult] : range * mult;
 }
 
 // Build the meta object passed to AssetCache.loadInstance / applyMaterialSet.

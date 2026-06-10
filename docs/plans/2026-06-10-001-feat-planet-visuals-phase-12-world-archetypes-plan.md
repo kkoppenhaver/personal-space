@@ -1,12 +1,29 @@
 ---
 title: Planet visuals Phase 12 — world archetypes + seed-derived sparks
 type: feat
-status: planned
+status: active
 date: 2026-06-10
 parent: docs/plans/2026-05-23-001-feat-planet-visuals-llm-driven-assets-plan.md
 ---
 
 # Planet visuals Phase 12 — world archetypes + seed-derived sparks
+
+> **12a shipped (2026-06-10).** 13 archetypes + 8 twists in
+> `src/world/Archetypes.js` (`standard` weighted to ~29%); parametric
+> `seaLevelQuantile`/`ampScale` through TerrainGen with all 0.42 couplings
+> in Landmarks/Features made sea-level-relative; open-water hero slots +
+> `placement: 'float'` mounts (the 8 pirate ships, with `scale_override`
+> hand-tuning — their GLBs are natively ~11 units, a 13b scale-normalization
+> preview); composition clamps in `applyVisuals` (monolith worlds mount ONE
+> thing); archetype context → `/tier2/direct` with the system prompt rewritten
+> (archetype as hard constraint, the four anchor example themes deleted);
+> archetype-aware Placeholder for dev; biome pre-filter softened to
+> demote-not-exclude when the strict pool is thin; `__GAME.rollStats(n)`.
+> Fix shipped alongside: f32/f64 elevation-range mismatch in TerrainGen put
+> phantom puddles on waterless worlds. **Worker redeploy required**
+> (`wrangler deploy`) for the new Tier 2 system prompt.
+> **12b (creatures) remains** — catalog import, `creature` role/slots,
+> `ruled-by-creatures` archetype entry.
 
 ## Overview
 

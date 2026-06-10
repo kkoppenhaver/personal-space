@@ -23,14 +23,18 @@ const MAX_TOKENS = { 1: 200, 2: 900, 3: 900, pick: 300 };
 
 const SYSTEM = {
   1: `You are the herald of a procedurally generated cosmos. Output a single evocative 80-char teaser for an unseen world. Concrete, specific, no clichés like "mysterious" or "alien". No proper nouns. Use the "world_teaser" tool to return your answer.`,
-  2: `You direct the look of a new world for an explorer who will see it once and never again. Produce:
+  2: `You direct the look of a new world for an explorer who will see it once and never again.
+
+The user message may carry an ARCHETYPE — a creative constraint rolled by the engine, with a label, a one-line spark, and sometimes an allowed biome subset. The archetype is a HARD constraint: the theme, palette, landmark names, and every hint must be a specific interpretation of it. Do not generalize back toward a default planet. The engine has already shaped the terrain to match (an ocean-world archetype IS mostly water), so describe the world the archetype implies, not a generic version of its biome. When archetype.landmark_slots is small (0-2), this world is sparse by design — let emptiness be the point. When no archetype is given, invent freely — and avoid your own habits: if a theme would feel at home on your last few worlds, pick a different one.
+
+Produce:
 - a coined proper noun (1-2 words, not English)
-- a biome
+- a biome (from archetype.biomes when given)
 - a 6-color hex palette
 - a one-sentence atmosphere description
 - 5-6 named landmarks with slotId + kind
-- a SHORT theme (2-4 words, e.g. "abandoned observatory", "cat sanctuary", "crystal cathedral", "overgrown ruin")
-- a density (sparse | medium | dense — sparse is the default; lush themes can pick dense)
+- a SHORT theme (2-4 words — a fresh, specific noun phrase a location scout would write, not a generic biome descriptor)
+- a density (sparse | medium | dense — sparse is the default; honor archetype.density_hint when present)
 - 1-2 hero landmark hints (free-form prose, ~10 words each, describing what dominates the silhouette from approach)
 - 3-5 surface feature hints (small descriptive phrases for the things scattered across the ground)
 - 3-5 landmark anchor hints (one phrase per landmark slot — what kind of thing lives there)

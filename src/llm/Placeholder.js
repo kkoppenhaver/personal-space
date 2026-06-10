@@ -25,21 +25,26 @@ export function placeholderTier1(seed) {
   return { teaser: TEASERS[Math.floor(r() * TEASERS.length)] };
 }
 
-export function placeholderTier2(seed) {
+export function placeholderTier2(seed, context = {}) {
   const r = mulberry32((seed ^ 0xa53f) >>> 0);
   const name = `${NAME_SYL_A[Math.floor(r() * NAME_SYL_A.length)]}${NAME_SYL_B[Math.floor(r() * NAME_SYL_B.length)]}`;
-  const biome = BIOMES[Math.floor(r() * BIOMES.length)];
+  // Honor the engine's archetype constraint the way the real Tier 2 would:
+  // biome from the allowed subset, theme from the label, density from the
+  // hint, and (for a few archetypes) hero hints that retrieval can map to
+  // the right kit. Keeps dev mode (no worker) exercising ocean worlds etc.
+  const arch = context?.archetype || null;
+  const biomePool = arch?.biomes?.length ? arch.biomes : BIOMES;
+  const biome = biomePool[Math.floor(r() * biomePool.length)];
   const palette = paletteForBiome(biome, r);
-  const hints = hintsForBiome(biome);
-  // density picked from the same seed so repeat visits feel deterministic
+  const hints = { ...hintsForBiome(biome), ...archetypeHintOverrides(arch?.id) };
   const densities = ['sparse', 'medium', 'dense'];
-  const density = densities[Math.floor(r() * densities.length)];
+  const density = arch?.density_hint || densities[Math.floor(r() * densities.length)];
   return {
     name,
     biome,
     palette,
     atmosphere: 'Thin air, a faint hum.',
-    theme: hints.theme,
+    theme: arch?.label || hints.theme,
     density,
     hero_landmark_hints:    hints.hero,
     landmark_anchor_hints:  hints.landmark,
@@ -60,6 +65,25 @@ export function placeholderTier3(seed) {
     surfaceLore: 'The surface is quieter than expected. Strange how a place can feel deserted and watched at the same time.',
     landmarkLore: [],
   };
+}
+
+// Per-archetype hint overrides — the placeholder's stand-in for the real
+// LLM interpreting the spark. Only archetypes whose hero differs sharply
+// from their biome default need an entry; everything else falls through
+// to the biome table.
+function archetypeHintOverrides(id) {
+  const table = {
+    'ocean-world':         { hero: ['weathered sailing ship adrift on open water', 'ghost ship with torn sails'] },
+    'shipwreck-graveyard': { hero: ['wrecked pirate ship broken on the rocks', 'half-sunk hull on the shore'] },
+    'frozen-ocean':        { hero: ['ship frozen into the ice mid-voyage', 'icebound ghost ship'] },
+    'necropolis':          { hero: ['monumental crypt on a barren rise', 'great stone mausoleum'] },
+    'fortress-world':      { hero: ['towering castle keep on a crag', 'fortified stone tower'] },
+    'launch-site':         { hero: ['abandoned rocket on its launch pad', 'tall gantry tower with cargo'] },
+    'garden-world':        { hero: ['great fountain among tended fields', 'old windmill over crop rows'] },
+    'monolith-world':      { hero: ['one colossal monolith dominating the horizon', 'a single immense tower'] },
+    'ruin-field':          { hero: ['broken triumphal arch of a lost city', 'ruined colonnade on a hill'] },
+  };
+  return table[id] || {};
 }
 
 // Per-biome retrieval hints. These mirror what the real Tier 2 LLM would
