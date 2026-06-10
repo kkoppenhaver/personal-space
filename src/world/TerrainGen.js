@@ -15,7 +15,7 @@ const DEFAULT_PALETTE = {
   sky:    '#9ac4e8',
 };
 
-export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, subdivisions = 5 }) {
+export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, subdivisions = 5, seaLevelQuantile = 0.42, ampScale = 1.0 }) {
   const noise = makeNoise3(seed);
   const noise2 = makeNoise3(seed ^ 0x9e3779b9);
 
@@ -27,7 +27,9 @@ export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, s
   const colors = new Float32Array(vCount * 3);
 
   // Elevation amplitude (in world units) — keep small relative to radius.
-  const amp = radius * 0.10;
+  // ampScale comes from the planet's archetype (ocean worlds soften swell,
+  // fortress worlds exaggerate relief).
+  const amp = radius * 0.10 * ampScale;
 
   const tmp = new THREE.Vector3();
   const colWater = new THREE.Color(palette.water);
@@ -46,15 +48,20 @@ export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, s
     const c = fbm(noise, tmp.x * 1.2, tmp.y * 1.2, tmp.z * 1.2, 5, 2.0, 0.5);
     // ridges (abs noise)
     const r = 1.0 - Math.abs(fbm(noise2, tmp.x * 3.0, tmp.y * 3.0, tmp.z * 3.0, 4, 2.0, 0.55));
-    const e = c * 0.7 + (r - 0.5) * 0.6;
-    raw[i] = e;
+    raw[i] = c * 0.7 + (r - 0.5) * 0.6;
+    // Track min/max from the STORED f32 value, not the f64 intermediate —
+    // otherwise a handful of vertices round to just below the f64 minimum
+    // and read as "underwater" even on a seaLevelQuantile=0 waterless world.
+    const e = raw[i];
     if (e < minE) minE = e;
     if (e > maxE) maxE = e;
   }
 
   const range = maxE - minE || 1;
-  // Sea level chosen so ~40% of surface is below it.
-  const seaLevel = minE + range * 0.42;
+  // Sea level as an elevation quantile. 0.42 (the long-time default) puts
+  // ~40% of the surface underwater; archetypes move it — 0 is a waterless
+  // world, 0.95 an almost-total ocean.
+  const seaLevel = minE + range * seaLevelQuantile;
 
   const tmpColor = new THREE.Color();
   for (let i = 0; i < vCount; i++) {
@@ -88,7 +95,7 @@ export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, s
   geom.computeVertexNormals();
   pos.needsUpdate = true;
 
-  return { geometry: geom, elevations, palette, seaLevel: 0.42 };
+  return { geometry: geom, elevations, palette, seaLevel: seaLevelQuantile };
 }
 
 function smoothstep(a, b, t) {
@@ -98,10 +105,10 @@ function smoothstep(a, b, t) {
 
 // Sample terrain radius along a normalized direction. Used for altitude-above-terrain.
 // Walks the mesh by re-running the noise — cheaper than mesh raycast for a frequent query.
-export function makeTerrainSampler({ seed, radius, seaLevel = 0.42 }) {
+export function makeTerrainSampler({ seed, radius, seaLevel = 0.42, ampScale = 1.0 }) {
   const noise = makeNoise3(seed);
   const noise2 = makeNoise3(seed ^ 0x9e3779b9);
-  const amp = radius * 0.10;
+  const amp = radius * 0.10 * ampScale;
 
   // We have to re-derive minE/maxE to be consistent with builder. Use a cheap fixed sample.
   // (For Phase 1 we approximate — actual mesh is what matters for collisions.)

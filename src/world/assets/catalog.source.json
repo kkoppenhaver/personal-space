@@ -8786,7 +8786,12 @@
         8,
         14
       ],
-      "family": "metal"
+      "family": "metal",
+      "placement": "float",
+      "scale_override": [
+        0.9,
+        1.5
+      ]
     },
     {
       "id": "kenney:pirate:ship-large",
@@ -8815,7 +8820,12 @@
         8,
         14
       ],
-      "family": "metal"
+      "family": "metal",
+      "placement": "float",
+      "scale_override": [
+        0.9,
+        1.5
+      ]
     },
     {
       "id": "kenney:pirate:ship-medium",
@@ -8844,7 +8854,12 @@
         8,
         14
       ],
-      "family": "metal"
+      "family": "metal",
+      "placement": "float",
+      "scale_override": [
+        0.9,
+        1.5
+      ]
     },
     {
       "id": "kenney:pirate:ship-pirate-large",
@@ -8874,7 +8889,12 @@
         8,
         14
       ],
-      "family": "metal"
+      "family": "metal",
+      "placement": "float",
+      "scale_override": [
+        0.9,
+        1.5
+      ]
     },
     {
       "id": "kenney:pirate:ship-pirate-medium",
@@ -8904,7 +8924,12 @@
         8,
         14
       ],
-      "family": "metal"
+      "family": "metal",
+      "placement": "float",
+      "scale_override": [
+        0.9,
+        1.5
+      ]
     },
     {
       "id": "kenney:pirate:ship-pirate-small",
@@ -8934,7 +8959,12 @@
         8,
         14
       ],
-      "family": "metal"
+      "family": "metal",
+      "placement": "float",
+      "scale_override": [
+        0.9,
+        1.5
+      ]
     },
     {
       "id": "kenney:pirate:ship-small",
@@ -8963,7 +8993,12 @@
         8,
         14
       ],
-      "family": "metal"
+      "family": "metal",
+      "placement": "float",
+      "scale_override": [
+        0.9,
+        1.5
+      ]
     },
     {
       "id": "kenney:pirate:ship-wreck",
@@ -8992,7 +9027,12 @@
         8,
         14
       ],
-      "family": "metal"
+      "family": "metal",
+      "placement": "float",
+      "scale_override": [
+        0.9,
+        1.5
+      ]
     },
     {
       "id": "kenney:pirate:structure-platform-dock-small",

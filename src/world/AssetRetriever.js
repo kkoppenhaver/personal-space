@@ -209,13 +209,24 @@ export async function shortlist({ query, role, k = 8, recentIds, biomeAffinity, 
   const recent = recentIds || readRecent();
   const recentAge = new Map(recent.map((id, i) => [id, i]));
 
-  // Pre-filter by role + biome affinity if requested.
-  const allowed = new Set(
-    catalog.assets
-      .filter((a) => !role || a.role === role)
-      .filter((a) => !biomeAffinity || (a.biome_affinity || []).includes(biomeAffinity))
-      .map((a) => a.id)
-  );
+  // Pre-filter by role + biome affinity if requested. Biome is a SOFT
+  // filter (Phase 12a): with sparse per-biome catalog coverage a hard
+  // filter starves the pool and every ocean planet serves the same ten
+  // assets. When the strict match yields fewer than 2k candidates, widen
+  // to all role matches and demote off-biome candidates at the scoring
+  // stage instead — diversity beats purity at this catalog size.
+  const OFF_BIOME_PENALTY = 0.5;
+  const roleMatches = catalog.assets.filter((a) => !role || a.role === role);
+  const biomeMatches = biomeAffinity
+    ? roleMatches.filter((a) => (a.biome_affinity || []).includes(biomeAffinity))
+    : roleMatches;
+  let pool = biomeMatches;
+  let onBiomeIds = null;          // non-null → off-biome demotion active
+  if (biomeAffinity && biomeMatches.length < k * 2 && roleMatches.length > biomeMatches.length) {
+    onBiomeIds = new Set(biomeMatches.map((a) => a.id));
+    pool = roleMatches;
+  }
+  const allowed = new Set(pool.map((a) => a.id));
   if (allowed.size === 0) return [];
 
   // ── BM25 retrieval ────────────────────────────────────────────────
@@ -256,6 +267,13 @@ export async function shortlist({ query, role, k = 8, recentIds, biomeAffinity, 
   for (const [id, entry] of fused) {
     const age = recentAge.get(id);
     if (age !== undefined) entry.score *= recencyMultiplier(age, role);
+  }
+
+  // ── Off-biome demotion (soft biome filter fallback) ───────────────
+  if (onBiomeIds) {
+    for (const [id, entry] of fused) {
+      if (!onBiomeIds.has(id)) entry.score *= OFF_BIOME_PENALTY;
+    }
   }
 
   // ── Pack-cohesion boost ───────────────────────────────────────────

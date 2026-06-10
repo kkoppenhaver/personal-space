@@ -13,11 +13,12 @@
 import { placeholderTier1, placeholderTier2, placeholderTier3 } from './Placeholder.js';
 import { shortlist as retrieverShortlist } from '../world/AssetRetriever.js';
 
-// v2 bump invalidates cached Tier 2 responses that predate the Phase 3
-// hint arrays (hero_landmark_hints, landmark_anchor_hints,
-// surface_feature_hints). Without this, returning visitors keep their
-// old hint-less cached entries and never reach `/tier2/pick`.
-const LS_CACHE_KEY = 'paper-airplane:llmcache:v2';
+// v3 bump invalidates cached Tier 2 responses that predate Phase 12a's
+// archetype context — without it, returning visitors keep direction
+// entries generated without the archetype constraint while their terrain
+// (rolled client-side) already honors it. v2 was the Phase 3 hint-array
+// bump.
+const LS_CACHE_KEY = 'paper-airplane:llmcache:v3';
 
 // Per the plan: no more than 2 concurrent Tier 2 chains so a mid-flight
 // swerve doesn't stack billable calls. Older speculative calls aren't
@@ -216,7 +217,7 @@ export class LLMClient {
 
     const p = (async () => {
       if (!this.workerURL) {
-        const out = fallback(seed);
+        const out = fallback(seed, context);
         if (!skipMemo) this._memo(key, out);
         return out;
       }
@@ -241,7 +242,7 @@ export class LLMClient {
         return json;
       } catch (err) {
         console.warn(`[LLM] tier ${tier}${suffix} fallback:`, err.message);
-        const out = fallback(seed);
+        const out = fallback(seed, context);
         if (!skipMemo) this._memo(key, out);
         return out;
       } finally {

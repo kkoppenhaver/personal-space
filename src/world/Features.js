@@ -33,9 +33,10 @@ const DENSITY_MULTIPLIERS = { sparse: 0.4, medium: 1.0, dense: 2.0 };
  * @param {number} args.seed
  * @param {{ glbClone: THREE.Object3D, scaleRange: [number, number] }[]} args.assets
  * @param {'sparse'|'medium'|'dense'} [args.density='medium']
+ * @param {number} [args.seaLevel=0.42] - elevation quantile (archetype-driven)
  * @returns {THREE.Group}
  */
-export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius, seed, assets, density = 'medium' }) {
+export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius, seed, assets, density = 'medium', seaLevel = 0.42 }) {
   const group = new THREE.Group();
   if (!assets || assets.length === 0) return group;
 
@@ -50,13 +51,16 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
   const BASE_PER_ASSET = 120;
   const totalBudget = Math.floor(BASE_PER_ASSET * assets.length * densityMult);
 
-  // Pre-pick surface candidate vertex indices (e ≥ 0.46, i.e. land above
-  // basin band). We then walk this list assigning indices round-robin
-  // across assets — guarantees they share the same surface coverage rather
-  // than each asset clustering in whichever vertex slice it samples first.
+  // Pre-pick surface candidate vertex indices: land above the coast band
+  // (sea level is archetype-driven — an ocean world's scatter squeezes onto
+  // its island slivers). We then walk this list assigning indices
+  // round-robin across assets — guarantees they share the same surface
+  // coverage rather than each asset clustering in whichever vertex slice it
+  // samples first.
   const candidates = [];
+  const landFloor = seaLevel + 0.04;
   for (let i = 0; i < vCount; i++) {
-    if (elevations[i] >= 0.46) candidates.push(i);
+    if (elevations[i] >= landFloor) candidates.push(i);
   }
   if (candidates.length === 0) return group;
 
@@ -176,11 +180,18 @@ function extractFirstMeshGeometry(root) {
   return { geom: mesh.geometry, mat: mesh.material };
 }
 
-export function buildInstancedFeatures({ geometry, elevations, radius, seed, palette, excludeZone = null }) {
+export function buildInstancedFeatures({ geometry, elevations, radius, seed, palette, excludeZone = null, seaLevel = 0.42 }) {
   const rand = mulberry32(seed ^ 0xfeed);
   const group = new THREE.Group();
   const pos = geometry.attributes.position;
   const vCount = pos.count;
+  // Band thresholds relative to sea level (matches the historical absolute
+  // constants at the 0.42 default: skip <0.43, flora 0.46-0.70, rocks >0.75).
+  const land = 1 - seaLevel || 1;
+  const skipBelow = seaLevel + 0.01;
+  const floraLo = seaLevel + 0.04;
+  const floraHi = seaLevel + 0.48 * land;
+  const rockLo = seaLevel + 0.57 * land;
 
   // Pick "anchor" vertices in each band by sampling many random vertex indices.
   const samples = 2200;
@@ -194,17 +205,17 @@ export function buildInstancedFeatures({ geometry, elevations, radius, seed, pal
   for (let s = 0; s < samples; s++) {
     const i = Math.floor(rand() * vCount);
     const e = elevations[i];
-    if (e < 0.43) continue; // skip water
+    if (e < skipBelow) continue; // skip water
     tmp.fromBufferAttribute(pos, i);
     // Skip exclusion zone (e.g. landing pad area)
     if (exCenter && tmp.distanceToSquared(exCenter) < exR2) continue;
     const r = tmp.length();
     const dir = tmp.clone().divideScalar(r);
-    if (e > 0.75) {
+    if (e > rockLo) {
       // rocks on high elevation
       const size = 0.6 + rand() * 1.2;
       rockTransforms.push({ dir, height: r, size, twist: rand() * Math.PI * 2 });
-    } else if (e > 0.46 && e < 0.7) {
+    } else if (e > floraLo && e < floraHi) {
       // flora on mid bands
       if (rand() < 0.7) {
         const size = 0.5 + rand() * 0.8;

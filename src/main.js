@@ -9,6 +9,7 @@ import { FlightController } from './game/FlightController.js';
 import { CameraRig } from './game/CameraRig.js';
 
 import { Galaxy, CELL_SIZE } from './world/Galaxy.js';
+import { rollStats as archetypeRollStats } from './world/Archetypes.js';
 import { Origin } from './world/Origin.js';
 import { hashString } from './world/Seed.js';
 import { API_BASE, apiPost } from './net/api.js';
@@ -259,7 +260,10 @@ async function main() {
   const tryApproach = (planet) => {
     if (approachSent.has(planet.seed)) return;
     approachSent.add(planet.seed);
-    llm.approach(planet.seed, { radius: planet.radius }).then(meta => {
+    // Archetype context (Phase 12a): the engine's seed-derived creative
+    // constraint rides along to /tier2/direct. hashContext folds it into
+    // the worker KV key, so archetype table changes roll out naturally.
+    llm.approach(planet.seed, { radius: planet.radius, archetype: planet.archetype.llmContext }).then(meta => {
       if (!meta) return;
       planet.applyLLM(meta);
       const label = (meta.name || `P?`).toUpperCase();
@@ -912,6 +916,14 @@ async function main() {
         }
       }
       console.log(`[debugPlacement] refreshed across ${touched} planets (flag=${!!window.__GAME.debugPlacement})`);
+    },
+    // Phase 12a — archetype distribution over n simulated seeds. Sanity
+    // check that the weighted table produces the intended mix (and a knob
+    // tuning aid: edit weights in Archetypes.js, re-run, compare).
+    rollStats(n = 1000) {
+      const stats = archetypeRollStats(n);
+      console.table(stats);
+      return stats;
     },
     // Phase 6 — verify the dual-axis MaterialSet actually caught every
     // visible mesh on every loaded planet. Reports per-planet leak counts
