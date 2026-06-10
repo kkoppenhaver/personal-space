@@ -128451,11 +128451,7 @@
         0.08403722941875458
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-large",
@@ -128871,11 +128867,7 @@
         0.04806384816765785
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-medium",
@@ -129291,11 +129283,7 @@
         0.06483858078718185
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-pirate-large",
@@ -129712,11 +129700,7 @@
         0.06445509195327759
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-pirate-medium",
@@ -130133,11 +130117,7 @@
         0.09289437532424927
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-pirate-small",
@@ -130554,11 +130534,7 @@
         0.06329701840877533
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-small",
@@ -130974,11 +130950,7 @@
         0.0490746796131134
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-wreck",
@@ -131394,11 +131366,7 @@
         0.053964897990226746
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:structure-platform-dock-small",

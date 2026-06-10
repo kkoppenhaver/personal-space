@@ -52,14 +52,18 @@ export function auditPlanet(planet) {
     if (o.userData?.testAsset) return;                       // __GAME.testAsset mounts
     const slot = o.userData?.matSlot;
     if (EXEMPT_SLOTS.has(slot)) { ok++; return; }
-    const mat = o.material;
-    if (mat && EXEMPT_MATERIAL_TYPES.has(mat.type)) return;
-    if (mat?.userData?.cloned === true) { ok++; return; }
-    leaks.push({
-      path: pathOf(o),
-      type: mat?.type ?? '(none)',
-      color: '#' + (mat?.color?.getHex?.() ?? 0).toString(16).padStart(6, '0'),
-    });
+    // Material may be an array (merged multi-mesh scatter, Phase 13b) —
+    // every entry must be matSet-sourced for the mesh to count as ok.
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const mat of mats) {
+      if (mat && EXEMPT_MATERIAL_TYPES.has(mat.type)) continue;
+      if (mat?.userData?.cloned === true) { ok++; continue; }
+      leaks.push({
+        path: pathOf(o),
+        type: mat?.type ?? '(none)',
+        color: '#' + (mat?.color?.getHex?.() ?? 0).toString(16).padStart(6, '0'),
+      });
+    }
   });
   return { planetSeed: planet.seed, ok, leaks };
 }

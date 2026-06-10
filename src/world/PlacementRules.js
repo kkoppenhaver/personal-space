@@ -45,6 +45,25 @@ const EMBED_FRACTION = {
   default: 0.06,
 };
 
+// Where each family scatters, as fractions of the above-sea elevation
+// range: flora hugs the lowlands and mid-slopes, rocks favor the heights,
+// sand and bones collect near the waterline. Loose on purpose — bands
+// overlap broadly; this biases placement, it doesn't zone the planet.
+const SURFACE_BAND = {
+  flora: [0.02, 0.55], wood: [0.02, 0.55],
+  structure: [0.02, 0.40], metal: [0.02, 0.40], creature: [0.02, 0.50],
+  sand: [0.00, 0.35], bone: [0.00, 0.60],
+  crystal: [0.30, 1.0], stone: [0.25, 1.0], rock: [0.25, 1.0],
+  default: [0.02, 0.80],
+};
+
+/** Absolute elevation band [lo, hi] for a family on a planet with this sea level. */
+export function surfaceBandFor(family, seaLevel) {
+  const [lo, hi] = SURFACE_BAND[family] ?? SURFACE_BAND.default;
+  const land = 1 - seaLevel || 1;
+  return [seaLevel + lo * land, seaLevel + hi * land];
+}
+
 export function terrainAlignFor(family) {
   return TERRAIN_ALIGN[family] ?? TERRAIN_ALIGN.default;
 }
@@ -63,6 +82,67 @@ export function embedFractionFor(family) {
  */
 export function slopeOf(radialDir, terrainNormal) {
   return 1 - radialDir.dot(terrainNormal);
+}
+
+// ── Bbox-normalized scale targeting (Phase 13b) ─────────────────────
+//
+// Kits disagree about what 1 unit means (most Kenney props are ~1 unit,
+// the pirate ships are ~11), so multiplying authored units by a kit-level
+// scale_range produced dollhouses next to kaiju. Instead, target a world
+// HEIGHT per role and derive the multiplier from the asset's actual bbox.
+
+// Per-role target world height in meters [lo, hi].
+const TARGET_HEIGHT = {
+  hero: [12, 22],
+  landmark: [5, 11],
+  surface: [0.8, 3.2],
+  creature: [0.7, 1.5],
+  default: [1, 4],
+};
+
+// The catalog's kit-level scale_range midpoints, per role, as authored for
+// the legacy multiplier system. A record's own scale_range mid relative to
+// this becomes a soft size bias (a "small rock" trends small) without
+// reintroducing trust in authored units.
+const ROLE_RANGE_MID = { hero: 9, landmark: 4.5, surface: 1.0, creature: 1.0, default: 1.0 };
+
+/**
+ * Resolve the world-space scale multiplier for an asset instance.
+ *
+ * - `scale_override` (absolute multiplier) wins unchanged — it's the
+ *   hand-tuned escape hatch.
+ * - Otherwise: pick a target height for the role, bias it by the record's
+ *   scale_range (clamped 0.5-1.6x so catalog data nudges, never dominates),
+ *   and divide by the asset's actual bbox height.
+ * - No bbox (procedural fallback) → legacy multiplier behavior.
+ *
+ * @param {object} args
+ * @param {'hero'|'landmark'|'surface'|'creature'} args.role
+ * @param {[number,number]|number|null} [args.scaleRange]    - catalog scale_range
+ * @param {[number,number]|number|null} [args.scaleOverride] - catalog scale_override
+ * @param {number} args.bboxHeight - asset height along its up axis, in authored units
+ * @param {function} args.rand     - seeded PRNG ( () => [0,1) )
+ * @param {number} [args.boost=1]  - archetype hero boost etc.
+ */
+export function resolveScale({ role, scaleRange = null, scaleOverride = null, bboxHeight, rand, boost = 1 }) {
+  const pickIn = (range) => Array.isArray(range)
+    ? range[0] + (range[1] - range[0]) * rand()
+    : (typeof range === 'number' ? range : 1);
+
+  if (scaleOverride != null) return pickIn(scaleOverride) * boost;
+
+  if (!bboxHeight || bboxHeight <= 0) {
+    // No bbox to normalize against — legacy multiplier semantics.
+    return pickIn(scaleRange ?? TARGET_HEIGHT.default) * boost;
+  }
+
+  const target = pickIn(TARGET_HEIGHT[role] ?? TARGET_HEIGHT.default);
+  let bias = 1;
+  if (Array.isArray(scaleRange)) {
+    const mid = (scaleRange[0] + scaleRange[1]) / 2;
+    bias = Math.min(1.6, Math.max(0.5, mid / (ROLE_RANGE_MID[role] ?? ROLE_RANGE_MID.default)));
+  }
+  return (target * bias * boost) / bboxHeight;
 }
 
 /**

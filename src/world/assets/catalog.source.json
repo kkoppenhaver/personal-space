@@ -8787,11 +8787,7 @@
         14
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-large",
@@ -8821,11 +8817,7 @@
         14
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-medium",
@@ -8855,11 +8847,7 @@
         14
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-pirate-large",
@@ -8890,11 +8878,7 @@
         14
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-pirate-medium",
@@ -8925,11 +8909,7 @@
         14
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-pirate-small",
@@ -8960,11 +8940,7 @@
         14
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-small",
@@ -8994,11 +8970,7 @@
         14
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:ship-wreck",
@@ -9028,11 +9000,7 @@
         14
       ],
       "family": "metal",
-      "placement": "float",
-      "scale_override": [
-        0.9,
-        1.5
-      ]
+      "placement": "float"
     },
     {
       "id": "kenney:pirate:structure-platform-dock-small",
