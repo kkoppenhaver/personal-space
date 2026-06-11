@@ -77,6 +77,10 @@ export class Planet {
     // Reveal-as-you-fly state; set in applyVisuals when real assets mount.
     // Null means "no GLB visuals" → claim captures the procedural frame now.
     this.reveal = null;
+    // The slot the hero GLB actually mounted on (null on procedural
+    // fallback). The thumbnail capture aims at it — the hero is the
+    // visible embodiment of the planet's premise.
+    this.heroSlot = null;
 
     // Concept spine (Phase 14a). Planets construct with seed-default
     // terrain; the spawn-time concept call (LLMClient.concept, cached per
@@ -353,6 +357,7 @@ export class Planet {
   async applyVisuals(opts = {}) {
     this.visualGen++;
     const gen = this.visualGen;
+    this.heroSlot = null; // re-set below iff this call mounts a hero GLB
     let { palette, biome, heroAsset, landmarkAssets, surfaceAssets, creatureAssets, density = 'medium', renderer } = opts;
 
     // Archetype composition clamps (Phase 12a). The pick schema always
@@ -481,6 +486,7 @@ export class Planet {
         hero.userData.role = 'hero';
         hero.userData.assetId = heroAsset.id;
         newLandmarkGroup.add(hero);
+        this.heroSlot = heroSlot;
       } else if (heroAsset) {
         // Hero asset requested but failed — procedural marker for the slot.
         newLandmarkGroup.add(buildLandmarkMeshes([heroSlot], this.palette));
@@ -731,6 +737,7 @@ export class Planet {
    */
   dispose() {
     this.visualGen++;
+    this.heroSlot = null;
     if (this.matSet) {
       disposeMaterialSet(this.matSet);
       this.matSet = null;
@@ -739,6 +746,15 @@ export class Planet {
     // seed is only in revealedSeeds if the fade actually completed, so a
     // genuine re-approach re-reveals and a completed one snaps solid.
     this.reveal = null;
+  }
+
+  /**
+   * World-space position of the mounted hero GLB, or null when no hero
+   * mounted. Computed on demand (not cached) because origin rebasing moves
+   * `center`; slot positions are planet-local terrain vertices.
+   */
+  heroWorldPosition() {
+    return this.heroSlot ? this.heroSlot.position.clone().add(this.center) : null;
   }
 
   // ── Internals ─────────────────────────────────────────────────────

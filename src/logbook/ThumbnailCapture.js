@@ -12,9 +12,11 @@
 //      a so-so thumbnail than no thumbnail.
 //
 // Capture goes through an offscreen WebGLRenderTarget so the live canvas
-// never blinks. We re-render the scene with the actual game camera at a
-// fixed thumbnail resolution and read pixels back into a 2D canvas, which
-// `toBlob('image/jpeg', 0.7)` encodes for upload.
+// never blinks. We re-render the scene through a dedicated capture camera
+// (live camera's world transform, re-aimed at the planet's hero and
+// roll-leveled — see _composeShot) at a fixed thumbnail resolution and
+// read pixels back into a 2D canvas, which `toBlob('image/jpeg', 0.7)`
+// encodes for upload.
 
 import * as THREE from 'three';
 
@@ -56,12 +58,14 @@ export class ThumbnailCapture {
   /**
    * Immediate snapshot. Returns the JPEG blob (or null on failure).
    * Used by the coverage-based claim: the plane is still flying through
-   * atmosphere when this fires, and the camera framing is already good
-   * because the player just spent ~30 seconds looking at the planet.
+   * atmosphere when this fires, so the camera position is authentic —
+   * but the *aim* is mid-flight luck. Pass the claimed planet to compose
+   * the shot: aim at the hero (the premise's subject) when it's on the
+   * player-facing side, and level the horizon either way.
    */
-  async snapshotNow() {
+  async snapshotNow({ planet = null } = {}) {
     try {
-      return await this._snapshot();
+      return await this._snapshot(planet);
     } catch (e) {
       console.warn('thumbnail snapshotNow failed:', e);
       return null;
@@ -105,29 +109,72 @@ export class ThumbnailCapture {
     }
   }
 
-  async _snapshot() {
+  /**
+   * Re-aim the capture camera (already carrying the live camera's world
+   * transform) for the keepsake shot. The camera never *moves* — the
+   * thumbnail stays "what I saw from the cockpit" — it only turns:
+   *
+   *   - up becomes planet-radial so the horizon is level, never banked;
+   *   - if the hero GLB is above the geometric horizon (small slack for
+   *     its height — heroes sit on spires/high ground), aim at it: the
+   *     hero is the premise's subject and belongs in the artifact;
+   *   - otherwise keep the current view direction, just leveled.
+   */
+  _composeShot(cam, planet) {
+    const up = cam.position.clone().sub(planet.center).normalize();
+    let target = null;
+    const heroPos = planet.heroWorldPosition?.();
+    if (heroPos) {
+      const d = Math.max(cam.position.distanceTo(planet.center), planet.radius * 1.001);
+      const heroDir = heroPos.clone().sub(planet.center).normalize();
+      if (heroDir.dot(up) > planet.radius / d - 0.08) target = heroPos;
+    }
+    if (!target) {
+      target = cam.getWorldDirection(new THREE.Vector3()).add(cam.position);
+    }
+    cam.up.copy(up);
+    cam.lookAt(target);
+  }
+
+  async _snapshot(planet = null) {
     if (!this._renderTarget) {
       this._renderTarget = new THREE.WebGLRenderTarget(THUMB_SIZE, THUMB_SIZE, {
         type: THREE.UnsignedByteType,
         format: THREE.RGBAFormat,
         depthBuffer: true,
+        // The default canvas pass converts linear→sRGB per
+        // renderer.outputColorSpace, but a render-target pass follows the
+        // RT texture's color space — leaving this unset reads back
+        // linear-light pixels that the JPEG encode treats as sRGB (the
+        // "thumbnails look dark" bug). MSAA matches the canvas's
+        // antialias: true.
+        colorSpace: THREE.SRGBColorSpace,
+        samples: 4,
       });
       this._readbackCanvas = document.createElement('canvas');
       this._readbackCanvas.width = THUMB_SIZE;
       this._readbackCanvas.height = THUMB_SIZE;
     }
 
+    // Dedicated capture camera: the live camera is never touched (no
+    // aspect juggling, no aim change the player would see). World
+    // transform comes from matrixWorld so a rig-parented camera works.
+    if (!this._captureCamera) this._captureCamera = this.camera.clone();
+    const cam = this._captureCamera;
+    cam.fov = this.camera.fov;
+    cam.near = this.camera.near;
+    cam.far = this.camera.far;
+    cam.aspect = 1;
+    this.camera.updateMatrixWorld();
+    this.camera.matrixWorld.decompose(cam.position, cam.quaternion, cam.scale);
+    if (planet) this._composeShot(cam, planet);
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+
     const prevTarget = this.renderer.getRenderTarget();
-    const prevAspect = this.camera.aspect;
-    this.camera.aspect = 1;
-    this.camera.updateProjectionMatrix();
-
     this.renderer.setRenderTarget(this._renderTarget);
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, cam);
     this.renderer.setRenderTarget(prevTarget);
-
-    this.camera.aspect = prevAspect;
-    this.camera.updateProjectionMatrix();
 
     // Read pixels out of the GPU.
     const pixels = new Uint8Array(THUMB_SIZE * THUMB_SIZE * 4);
@@ -155,5 +202,6 @@ export class ThumbnailCapture {
     this._renderTarget?.dispose();
     this._renderTarget = null;
     this._readbackCanvas = null;
+    this._captureCamera = null;
   }
 }

@@ -389,7 +389,7 @@ async function main() {
         await new Promise((r) => requestAnimationFrame(r));
       }
     }
-    const blob = await thumbnailCapture.snapshotNow();
+    const blob = await thumbnailCapture.snapshotNow({ planet });
     if (!blob) return;
     const entry = await entryPromise;
     if (entry) await logbookStore.attachThumbnail(entry.id, blob);
@@ -1010,6 +1010,37 @@ async function main() {
       activePlanet.group.add(group);
       console.log(`testAsset mounted on planet ${activePlanet.seed} at`, surfacePos);
       return group;
+    },
+    // Phase 11 — capture-parity bench. Renders one offscreen thumbnail and
+    // grabs the live canvas (ground truth: preserveDrawingBuffer is on),
+    // then overlays both side by side. Any brightness/color shift between
+    // the panes is a capture-path regression. Click the overlay to dismiss.
+    //   await __GAME.testThumbnail()
+    async testThumbnail() {
+      const captureBlob = await thumbnailCapture.snapshotNow({ planet: activePlanet });
+      const liveBlob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.7));
+      if (!captureBlob || !liveBlob) {
+        console.warn('testThumbnail: capture failed', { captureBlob, liveBlob });
+        return null;
+      }
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.85);'
+        + 'display:flex;gap:16px;align-items:center;justify-content:center;cursor:pointer;';
+      for (const [label, blob] of [['capture', captureBlob], ['live', liveBlob]]) {
+        const fig = document.createElement('figure');
+        fig.style.cssText = 'margin:0;color:#cfd6e0;font:12px monospace;text-align:center;';
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(blob);
+        img.style.cssText = 'height:60vh;display:block;margin-bottom:6px;';
+        fig.append(img, label);
+        overlay.appendChild(fig);
+      }
+      overlay.addEventListener('click', () => {
+        for (const img of overlay.querySelectorAll('img')) URL.revokeObjectURL(img.src);
+        overlay.remove();
+      });
+      document.body.appendChild(overlay);
+      return { captureBlob, liveBlob };
     },
   };
 
