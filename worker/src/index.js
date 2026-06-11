@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
 import { llm } from './routes/llm.js';
+import { assets } from './routes/assets.js';
 import { auth } from './routes/auth.js';
 import { logbook } from './routes/logbook.js';
 import { account } from './routes/account.js';
@@ -25,6 +26,9 @@ app.use('*', async (c, next) => {
 
 // LLM proxy mounted at root for backward compatibility (/tier1, /tier2, /tier3).
 app.route('/', llm);
+
+// Dynamic asset search (Poly Pizza proxy) under /assets/*.
+app.route('/', assets);
 
 // Accounts + logbook API under /api/*.
 app.route('/api/auth', auth);

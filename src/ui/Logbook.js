@@ -134,6 +134,12 @@ export class Logbook {
         ${statRow('distance', s.distance_m != null ? `${(s.distance_m / 1000).toFixed(2)} km` : '—')}
       </div>
     `;
+    // Dynamic-asset attribution (Phase 7) — Poly Pizza API ToS asks for
+    // model credits; bundled kit credits live on /credits.html.
+    const creditsHtml = (Array.isArray(e.credits) && e.credits.length > 0)
+      ? `<div class="detail-credits muted">${
+          e.credits.map((cr) => `“${esc(cr.name)}” by ${esc(cr.creator)} via <a href="https://poly.pizza" target="_blank" rel="noopener">Poly Pizza</a> (${esc(cr.license)})`).join(' · ')
+        }</div>` : '';
     this.list.innerHTML = `
       <button class="back-btn" data-back="1">← BACK</button>
       ${thumbHtml}
@@ -142,6 +148,7 @@ export class Logbook {
       ${lore}
       ${landmarksHtml}
       ${statsHtml}
+      ${creditsHtml}
       <div class="detail-ts">${formatDate(e.claimed_at)}</div>
     `;
   }

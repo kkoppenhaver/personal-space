@@ -56,6 +56,7 @@ export class LogbookStore extends EventTarget {
       thumbnailBlob: input.thumbnailBlob ?? null,
       thumbnail_sync_state: input.thumbnailBlob ? 'new' : null,
       stats: input.stats ?? null,
+      credits: input.credits ?? null,
       legacy: input.legacy === true,
       claimed_at: input.claimed_at,
       updated_at: now,

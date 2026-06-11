@@ -303,7 +303,7 @@ async function main() {
         // after the merged result) hits a warm cache instead of the network.
         onPicks: (picks) => {
           for (const id of selectedAssetIds(picks)) {
-            const a = getAssetById(id);
+            const a = (picks.dynamic_assets || {})[id] || getAssetById(id);
             if (a?.url) preloadAsset(a.url, renderer).catch(() => {});
           }
         },
@@ -328,7 +328,11 @@ async function main() {
         // ready). Only the successful resolution marks; a failed-then-retried
         // approach won't double-mark.
         if (planet.claimed) retrieverMarkUsed(selectedAssetIds(sel));
-        const hero = getAssetById(sel.hero);
+        // Dynamic assets (Phase 7): records resolved at pick time ride on
+        // the picks — they have no catalog entry, so check them first.
+        const dyn = sel.dynamic_assets || {};
+        const resolveAsset = (id) => (id && dyn[id]) || getAssetById(id);
+        const hero = resolveAsset(sel.hero);
         const landmarks = [sel.landmark_a, sel.landmark_b, sel.landmark_c]
           .map(getAssetById);
         const surfaces = [sel.surface_a, sel.surface_b]
@@ -701,6 +705,7 @@ async function main() {
           lore_status: 'pending',
           claimed_at: Date.now(),
           stats,
+          credits: _creditsOf(p),
         };
         const entryPromise = logbookStore.add(entryInput);
         upsell.noteClaim();
@@ -1017,6 +1022,21 @@ function selectedAssetIds(sel) {
   if (!sel) return [];
   return [sel.hero, sel.landmark_a, sel.landmark_b, sel.landmark_c, sel.surface_a, sel.surface_b, sel.creature_a, sel.creature_b]
     .filter(Boolean);
+}
+
+// Per-entry asset credits (Phase 7). Dynamic Poly Pizza models carry
+// creator attribution per the API ToS; bundled kit credits live on the
+// global /credits.html page.
+function _creditsOf(planet) {
+  const dyn = planet.meta?.selected_assets?.dynamic_assets;
+  if (!dyn) return null;
+  const credits = Object.values(dyn).map((r) => ({
+    name: r.name,
+    creator: r.creator || 'unknown',
+    source: 'Poly Pizza',
+    license: r.license || 'CC0',
+  }));
+  return credits.length ? credits : null;
 }
 
 // Compact concept recap for the Tier 2 context (Phase 14a). Null when the

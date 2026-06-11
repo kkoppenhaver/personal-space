@@ -816,5 +816,9 @@ function ss(a, b, t) {
 // Build the meta object passed to AssetCache.loadInstance / applyMaterialSet.
 function _assetMetaOf(asset) {
   if (!asset) return null;
-  return { family: asset.family || null, assetId: asset.id || '' };
+  return {
+    family: asset.family || null,
+    assetId: asset.id || '',
+    preserveMaterials: asset.preserve_materials === true,
+  };
 }
