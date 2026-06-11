@@ -62,12 +62,19 @@ export class LLMClient {
 
   /**
    * Tier 2 chain. `onDirect` (optional) fires as soon as /tier2/direct
-   * resolves — name, palette, atmosphere, and landmark names are final at
-   * that point, so callers can put the words on screen ~12s before the
-   * pick stage delivers asset IDs. Not called on a memo cache hit (the
-   * returned promise resolves immediately with the full merged object).
+   * resolves; `onPicks` (optional) fires as soon as asset IDs are known —
+   * callers use it to start GLB prefetch while the prose is still
+   * generating. Neither fires on a memo cache hit (the returned promise
+   * resolves immediately with the full merged object).
+   *
+   * Phase 9: when a concept rides in the context, the retrieval + pick
+   * chain runs IN PARALLEL with the Sonnet direct call, driven by the
+   * concept's keywords/premise (cached since spawn). Wall-clock drops
+   * from direct+pick (~26s serial) to max(direct, pick) (~14s). Without
+   * a concept (legacy client, concept call failed), the chain stays
+   * serial off the direct call's hints.
    */
-  async approach(seed, context = {}, { onDirect } = {}) {
+  async approach(seed, context = {}, { onDirect, onPicks } = {}) {
     const key = `2:${seed >>> 0}`;
     if (this.cache[key]) return this.cache[key];
     if (this.inflight.has(key)) return this.inflight.get(key);
@@ -75,6 +82,28 @@ export class LLMClient {
     const p = (async () => {
       await this._acquireTier2Slot();
       try {
+        // Concept-driven pick: fire before the direct call so both LLM
+        // round-trips overlap. Failures fall back to the serial path.
+        let parallelPick = null;
+        if (context?.concept) {
+          const direction = directionFromConcept(context.concept);
+          if (direction) {
+            parallelPick = this._pickAssets(seed, direction, context)
+              .then((picks) => {
+                if (picks) {
+                  try { onPicks?.(picks); } catch (err) {
+                    console.warn('[LLM] onPicks handler failed:', err);
+                  }
+                }
+                return picks;
+              })
+              .catch((err) => {
+                console.warn('[LLM] parallel pick failed; will retry off direct:', err.message);
+                return null;
+              });
+          }
+        }
+
         const direct = await this._call(2, seed, context, placeholderTier2, { suffix: '/direct', skipMemo: true });
         if (!direct) return null;
 
@@ -88,11 +117,13 @@ export class LLMClient {
           console.warn('[LLM] onDirect handler failed:', err);
         }
 
-        // Pick stage: only meaningful if the catalog can produce a useful
-        // shortlist. Empty catalog → skip; degraded mode → skip.
+        // Pick stage: parallel result when the concept drove it; serial
+        // fallback off the direct call's hints otherwise (or when the
+        // parallel attempt failed).
         let picks = null;
         try {
-          picks = await this._pickAssets(seed, direct, context);
+          picks = parallelPick ? await parallelPick : null;
+          if (!picks) picks = await this._pickAssets(seed, direct, context);
         } catch (err) {
           console.warn('[LLM] tier2 pick failed; continuing without asset IDs:', err.message);
         }
@@ -308,6 +339,33 @@ export class LLMClient {
     this.cache[key] = value;
     saveCache(this.cache);
   }
+}
+
+// Words that retrieval should route to the creature role rather than the
+// scene slots. Mirrors the species list in the bundled animal packs.
+const CREATURE_WORDS = /fox|deer|stag|wolf|husky|shiba|pug|dog|cat|horse|cow|bull|sheep|pig|llama|alpaca|donkey|zebra|animal|herd|creature|beast/i;
+
+// Phase 9: shape a spawn-time concept into the direction object the pick
+// chain expects, so retrieval + pick can run WITHOUT waiting for the
+// Sonnet direct call. The concept's keywords are coarser than Tier 2's
+// per-slot hints, but premise-first picking (the premise rides in the
+// pick payload) keeps the selection on-theme. Returns null when the
+// concept is too thin to retrieve against — caller falls back to serial.
+function directionFromConcept(concept) {
+  const kw = (concept.asset_keywords || []).filter(Boolean);
+  if (!kw.length && !concept.premise) return null;
+  const creatureWords = kw.filter((k) => CREATURE_WORDS.test(k));
+  const sceneWords = kw.filter((k) => !CREATURE_WORDS.test(k));
+  const rest = sceneWords.slice(1).length ? sceneWords.slice(1) : sceneWords;
+  return {
+    biome: concept.biome,
+    theme: concept.teaser,
+    density: concept.density,
+    hero_landmark_hints: [sceneWords[0] || kw[0], concept.premise].filter(Boolean),
+    landmark_anchor_hints: rest,
+    surface_feature_hints: rest,
+    inhabitant_hints: concept.creature_budget > 0 && creatureWords.length ? creatureWords : [],
+  };
 }
 
 // Most-common pack across the given shortlist entries; ties break toward
