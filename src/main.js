@@ -296,7 +296,18 @@ async function main() {
     llm.approach(
       planet.seed,
       { radius: planet.radius, tier: planet.tier, concept: _conceptContextOf(planet) },
-      { onDirect: applyWords },
+      {
+        onDirect: applyWords,
+        // Phase 9: picks usually resolve while Sonnet is still writing the
+        // prose — start GLB fetch/parse immediately so the mount (right
+        // after the merged result) hits a warm cache instead of the network.
+        onPicks: (picks) => {
+          for (const id of selectedAssetIds(picks)) {
+            const a = getAssetById(id);
+            if (a?.url) preloadAsset(a.url, renderer).catch(() => {});
+          }
+        },
+      },
     ).then(meta => {
       if (!meta) return;
       // Memo-cache hits resolve the merged object without firing onDirect.
@@ -908,11 +919,20 @@ async function main() {
     },
     // Phase 3 — exercise the full Tier 2 chain (direct call → retrieval
     // → pick) for an arbitrary seed. Returns the merged result.
+    // Phase 9: when the seed belongs to a loaded planet, its concept rides
+    // along — exercising the PARALLEL pick path exactly like tryApproach.
     //   await __GAME.testTier2(42)
     async testTier2(seed = 42) {
+      let planet = null;
+      for (const sys of galaxy.systems.values()) {
+        planet = sys.planets.find((p) => p.seed === (seed >>> 0)) || planet;
+      }
+      const context = planet
+        ? { radius: planet.radius, tier: planet.tier, concept: _conceptContextOf(planet) }
+        : {};
       const t0 = performance.now();
-      const result = await llm.approach(seed >>> 0, {});
-      console.log(`[testTier2] ${(performance.now() - t0).toFixed(0)}ms`);
+      const result = await llm.approach(seed >>> 0, context);
+      console.log(`[testTier2] ${(performance.now() - t0).toFixed(0)}ms (concept: ${!!context.concept})`);
       return result;
     },
     // Phase 2 — quickly verify the hybrid retrieval pipeline. Returns
