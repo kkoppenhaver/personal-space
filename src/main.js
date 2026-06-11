@@ -238,8 +238,10 @@ async function main() {
         // cost). The teaser the player navigates by IS the premise
         // compressed; the same cached object reshapes terrain (while the
         // planet is still a distant dot) and constrains Tier 2/3.
-        // name=null until Tier 2 returns the real planet name — the HUD
-        // chip renders a "DISCOVERING…" placeholder in that state.
+        // Name-first: the concept also coins the planet name, so the HUD
+        // chip and nav label fill in seconds after spawn instead of
+        // waiting out the Tier 2 Sonnet call. "DISCOVERING…" remains only
+        // for the gap before the concept resolves (or if it failed).
         llm.concept(p.seed, {
           radius: Math.round(p.radius),
           tier: rollTier(p.seed),
@@ -247,7 +249,9 @@ async function main() {
         }).then(c => {
           if (!c?.teaser) return;
           p.applyConcept(c);
-          pings.set(p.seed, { name: p.meta?.name?.toUpperCase() || null, teaser: c.teaser, planet: p });
+          const label = (c.name || p.meta?.name)?.toUpperCase() || null;
+          if (label) planetNav.setLabel(`planet:${p.seed}`, label);
+          pings.set(p.seed, { name: label, teaser: c.teaser, planet: p });
           refreshPings();
         }).catch(() => {});
       }
@@ -272,8 +276,13 @@ async function main() {
     // /tier2/direct as a hard constraint — Tier 2 elaborates the sentence
     // the player navigated by. hashContext folds it into the worker KV
     // key. Falls back to a bare-radius context if the concept call failed.
-    llm.approach(planet.seed, { radius: planet.radius, tier: planet.tier, concept: _conceptContextOf(planet) }).then(meta => {
-      if (!meta) return;
+    // Progressive disclosure: applyWords runs the moment /tier2/direct
+    // resolves — name confirmed, palette retint, landmark names,
+    // atmosphere — so the player reads the world ~12s before the pick
+    // stage delivers asset IDs. The final .then only mounts visuals.
+    let wordsApplied = false;
+    const applyWords = (meta) => {
+      wordsApplied = true;
       planet.applyLLM(meta);
       const label = (meta.name || `P?`).toUpperCase();
       planetNav.setLabel(`planet:${planet.seed}`, label);
@@ -283,6 +292,18 @@ async function main() {
         refreshPings();
       }
       if (planet === activePlanet) hud.setPlanetName(meta.name);
+    };
+    llm.approach(
+      planet.seed,
+      { radius: planet.radius, tier: planet.tier, concept: _conceptContextOf(planet) },
+      { onDirect: applyWords },
+    ).then(meta => {
+      if (!meta) return;
+      // Memo-cache hits resolve the merged object without firing onDirect.
+      if (!wordsApplied) applyWords(meta);
+      // Re-point meta at the merged object so selected_assets is recorded
+      // for the claim path / Tier 3 context (applyWords stored `direct`).
+      else planet.meta = meta;
 
       // GLB-driven visuals: resolve selected_assets IDs → catalog records and
       // kick off applyVisuals. The planet's visualGen token cancels the
@@ -603,7 +624,7 @@ async function main() {
           toast.show('↑ ENTERING SPACE ↑', 1500);
         }
       }
-      if (planetChanged) hud.setPlanetName(activePlanet.meta?.name || null);
+      if (planetChanged) hud.setPlanetName(activePlanet.meta?.name || activePlanet.concept?.name || null);
       prevInside = insideNow;
       prevActivePlanet = activePlanet;
 
@@ -984,6 +1005,8 @@ function _conceptContextOf(planet) {
   const c = planet.concept;
   if (!c) return null;
   return {
+    // The name the player has been navigating by — Tier 2 must keep it.
+    ...(c.name ? { name: c.name } : {}),
     teaser: c.teaser,
     premise: c.premise,
     question: c.question,
@@ -1003,7 +1026,7 @@ function _tier3ContextOf(planet) {
     .map((id) => getAssetById(id)?.name)
     .filter(Boolean);
   return {
-    name: planet.meta?.name,
+    name: planet.meta?.name || planet.concept?.name,
     biome: planet.meta?.biome,
     landmarks: planet.meta?.landmarks,
     concept: planet.concept
