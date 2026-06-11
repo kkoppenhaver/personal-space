@@ -10,15 +10,14 @@
 // asset IDs. With an empty catalog (Phase 3 baseline) the pick stage is
 // skipped and approach() returns just the direct-call output.
 
-import { placeholderTier1, placeholderTier2, placeholderTier3 } from './Placeholder.js';
+import { placeholderTier1, placeholderTier2, placeholderTier3, placeholderConcept } from './Placeholder.js';
 import { shortlist as retrieverShortlist } from '../world/AssetRetriever.js';
 
-// v3 bump invalidates cached Tier 2 responses that predate Phase 12a's
-// archetype context — without it, returning visitors keep direction
-// entries generated without the archetype constraint while their terrain
-// (rolled client-side) already honors it. v2 was the Phase 3 hint-array
-// bump.
-const LS_CACHE_KEY = 'paper-airplane:llmcache:v3';
+// v4 bump invalidates cached responses that predate Phase 14a's concept
+// spine (Tier 2 entries generated from archetype context, Tier 1 teasers
+// that never matched the world). v3 was the archetype-context bump, v2 the
+// Phase 3 hint arrays.
+const LS_CACHE_KEY = 'paper-airplane:llmcache:v4';
 
 // Per the plan: no more than 2 concurrent Tier 2 chains so a mid-flight
 // swerve doesn't stack billable calls. Older speculative calls aren't
@@ -49,6 +48,16 @@ export class LLMClient {
 
   async ping(seed, context = {}) {
     return this._call(1, seed, context, placeholderTier1);
+  }
+
+  /**
+   * Concept call (Phase 14a) — the planet's spine, fired at system spawn.
+   * Context carries { radius, tier, sparks } (all deterministic from the
+   * seed) so the worker KV key is stable. Returns the concept object;
+   * deterministic placeholder when no worker is configured.
+   */
+  async concept(seed, context = {}) {
+    return this._call('concept', seed, context, placeholderConcept);
   }
 
   async approach(seed, context = {}) {
@@ -234,13 +243,14 @@ export class LLMClient {
       }
       try {
         const ctl = new AbortController();
-        // Tier 1 = Haiku teaser (fast), Tier 2/direct = Sonnet 4.6 rich
+        // Tier 1 / concept = Haiku (fast), Tier 2/direct = Sonnet 4.6 rich
         // biome prose (consistently 12-16s p50 in prod), Tier 3 = Sonnet
         // landmark lore (similar profile). 12s was too tight and caused
         // every Tier 2/3 to abort + fall back to placeholder.
-        const timeoutMs = tier === 1 ? 8000 : 25000;
+        const timeoutMs = tier === 1 ? 8000 : (tier === 'concept' ? 15000 : 25000);
+        const path = typeof tier === 'number' ? `/tier${tier}${suffix}` : `/${tier}`;
         const timeoutId = setTimeout(() => ctl.abort(), timeoutMs);
-        const resp = await fetch(`${this.workerURL}/tier${tier}${suffix}`, {
+        const resp = await fetch(`${this.workerURL}${path}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ seed: seed >>> 0, context }),

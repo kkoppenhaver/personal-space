@@ -1,11 +1,26 @@
 ---
 title: Planet visuals Phase 14 — concept-as-spine (wild-but-cohesive worlds)
 type: feat
-status: planned
+status: active
 date: 2026-06-10
 parent: docs/plans/2026-05-23-001-feat-planet-visuals-llm-driven-assets-plan.md
 supersedes: the archetype TAXONOMY from Phase 12 (the parametric terrain, composition clamps, and creature/float machinery all survive as the engine this phase drives)
 ---
+
+> **14a shipped (2026-06-10).** Worker `/concept` route (Haiku, strict tool,
+> KV cached, few-shot per tier from the reference planets); `ConceptSeed.js`
+> (tier roll 60/33/7 + 4-axis spark dice); concept replaces Tier 1 at the
+> ping fan-out — the teaser the player navigates by IS the premise;
+> `Planet.applyConcept` reshapes terrain at spawn distance (geometry +
+> sampler + slot re-pick + Rapier collider swap with SolarSystem registry
+> re-key via `onColliderSwap`); concept context threads to Tier 2 (hard
+> constraint, "the sentence must keep its promise") and Tier 3 (voice spec,
+> lore against mounted assets, ends on the question); concept-aware
+> Placeholder carries the five reference planets for dev. `Archetypes.js`
+> is fully unimported (delete after real-Haiku concept quality is verified
+> in prod). Client cache v4. **Worker redeploy required.**
+> **14b remains:** the five motifs + singular-tier overrides; pick-prompt
+> premise-first.
 
 # Planet visuals Phase 14 — concept-as-spine
 

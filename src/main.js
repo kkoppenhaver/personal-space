@@ -9,7 +9,7 @@ import { FlightController } from './game/FlightController.js';
 import { CameraRig } from './game/CameraRig.js';
 
 import { Galaxy, CELL_SIZE } from './world/Galaxy.js';
-import { rollStats as archetypeRollStats } from './world/Archetypes.js';
+import { rollTier, rollSparks, tierStats } from './world/ConceptSeed.js';
 import { Origin } from './world/Origin.js';
 import { hashString } from './world/Seed.js';
 import { API_BASE, apiPost } from './net/api.js';
@@ -233,13 +233,21 @@ async function main() {
           getDistance: () => Math.max(0, plane.position().distanceTo(p.center) - p.radius),
         });
 
-        // Tier 1 teaser ping. KV cache makes revisits instant.
+        // Concept call (Phase 14a) — the planet's spine, replacing the old
+        // Tier 1 teaser at the same call site (same cadence, same Haiku
+        // cost). The teaser the player navigates by IS the premise
+        // compressed; the same cached object reshapes terrain (while the
+        // planet is still a distant dot) and constrains Tier 2/3.
         // name=null until Tier 2 returns the real planet name — the HUD
-        // chip renders a "DISCOVERING…" placeholder in that state so we
-        // never expose internal slot labels to the player.
-        llm.ping(p.seed, { starColor: sunCss }).then(r => {
-          if (!r?.teaser) return;
-          pings.set(p.seed, { name: p.meta?.name?.toUpperCase() || null, teaser: r.teaser, planet: p });
+        // chip renders a "DISCOVERING…" placeholder in that state.
+        llm.concept(p.seed, {
+          radius: Math.round(p.radius),
+          tier: rollTier(p.seed),
+          sparks: rollSparks(p.seed),
+        }).then(c => {
+          if (!c?.teaser) return;
+          p.applyConcept(c);
+          pings.set(p.seed, { name: p.meta?.name?.toUpperCase() || null, teaser: c.teaser, planet: p });
           refreshPings();
         }).catch(() => {});
       }
@@ -260,10 +268,11 @@ async function main() {
   const tryApproach = (planet) => {
     if (approachSent.has(planet.seed)) return;
     approachSent.add(planet.seed);
-    // Archetype context (Phase 12a): the engine's seed-derived creative
-    // constraint rides along to /tier2/direct. hashContext folds it into
-    // the worker KV key, so archetype table changes roll out naturally.
-    llm.approach(planet.seed, { radius: planet.radius, archetype: planet.archetype.llmContext }).then(meta => {
+    // Concept context (Phase 14a): the planet's premise rides along to
+    // /tier2/direct as a hard constraint — Tier 2 elaborates the sentence
+    // the player navigated by. hashContext folds it into the worker KV
+    // key. Falls back to a bare-radius context if the concept call failed.
+    llm.approach(planet.seed, { radius: planet.radius, concept: _conceptContextOf(planet) }).then(meta => {
       if (!meta) return;
       planet.applyLLM(meta);
       const label = (meta.name || `P?`).toUpperCase();
@@ -583,21 +592,13 @@ async function main() {
         if (insideNow) {
           toast.flash();
           toast.show('↓ ENTERING ATMOSPHERE ↓', 1500);
-          llm.land(activePlanet.seed, {
-            name: activePlanet.meta?.name,
-            biome: activePlanet.meta?.biome,
-            landmarks: activePlanet.meta?.landmarks,
-          }).catch(() => {});
+          llm.land(activePlanet.seed, _tier3ContextOf(activePlanet)).catch(() => {});
         }
       } else if (insideNow !== prevInside) {
         toast.flash();
         if (insideNow) {
           toast.show('↓ ENTERING ATMOSPHERE ↓', 1500);
-          llm.land(activePlanet.seed, {
-            name: activePlanet.meta?.name,
-            biome: activePlanet.meta?.biome,
-            landmarks: activePlanet.meta?.landmarks,
-          }).catch(() => {});
+          llm.land(activePlanet.seed, _tier3ContextOf(activePlanet)).catch(() => {});
         } else {
           toast.show('↑ ENTERING SPACE ↑', 1500);
         }
@@ -680,11 +681,7 @@ async function main() {
         }).catch(() => {});
 
         // Tier 3 — ownership keyed by entry, not Planet. Survives streaming.
-        llm.land(p.seed, {
-          name: p.meta?.name,
-          biome: p.meta?.biome,
-          landmarks: p.meta?.landmarks,
-        }).then(async (lore) => {
+        llm.land(p.seed, _tier3ContextOf(p)).then(async (lore) => {
           const entry = await entryPromise;
           if (lore?.surfaceLore) hud.setLandmark(lore.surfaceLore);
           if (!entry) return;
@@ -923,11 +920,10 @@ async function main() {
       }
       console.log(`[debugPlacement] refreshed across ${touched} planets (flag=${!!window.__GAME.debugPlacement})`);
     },
-    // Phase 12a — archetype distribution over n simulated seeds. Sanity
-    // check that the weighted table produces the intended mix (and a knob
-    // tuning aid: edit weights in Archetypes.js, re-run, compare).
+    // Phase 14a — tier distribution over n simulated seeds. Sanity check
+    // for the quiet/notable/singular pacing (~60/33/7).
     rollStats(n = 1000) {
-      const stats = archetypeRollStats(n);
+      const stats = tierStats(n);
       console.table(stats);
       return stats;
     },
@@ -980,6 +976,42 @@ function selectedAssetIds(sel) {
   if (!sel) return [];
   return [sel.hero, sel.landmark_a, sel.landmark_b, sel.landmark_c, sel.surface_a, sel.surface_b, sel.creature_a, sel.creature_b]
     .filter(Boolean);
+}
+
+// Compact concept recap for the Tier 2 context (Phase 14a). Null when the
+// concept call failed — the worker prompt invents freely in that case.
+function _conceptContextOf(planet) {
+  const c = planet.concept;
+  if (!c) return null;
+  return {
+    teaser: c.teaser,
+    premise: c.premise,
+    question: c.question,
+    biome: c.biome,
+    density: c.density,
+    landmark_slots: planet.composition.landmarkSlots,
+    creature_budget: planet.composition.creatureBudget,
+    motif: c.motif,
+    asset_keywords: c.asset_keywords,
+  };
+}
+
+// Tier 3 context (Phase 14a): lore is written against the planet's concept
+// AND the things actually mounted on its surface, in the journal voice.
+function _tier3ContextOf(planet) {
+  const mounted = [...new Set(selectedAssetIds(planet.meta?.selected_assets))]
+    .map((id) => getAssetById(id)?.name)
+    .filter(Boolean);
+  return {
+    name: planet.meta?.name,
+    biome: planet.meta?.biome,
+    landmarks: planet.meta?.landmarks,
+    concept: planet.concept
+      ? { teaser: planet.concept.teaser, premise: planet.concept.premise, question: planet.concept.question }
+      : null,
+    tier: rollTier(planet.seed),
+    mounted,
+  };
 }
 
 // Per-entry id for new logbook entries. crypto.randomUUID is universally
