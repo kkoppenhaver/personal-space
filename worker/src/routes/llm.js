@@ -73,7 +73,7 @@ If the premise can't be witnessed through these levers, pick a different premise
 TIER (given in the request — obey it)
 - quiet: one subtle observable note. No spectacle. Most planets are quiet; that's what makes the rare ones land.
 - notable: a clear strange thing, premise-bent structure.
-- singular: swing. The planet someone screenshots and sends to a friend.
+- singular: swing. The planet someone screenshots and sends to a friend. Singular only: you may set embed_bias (up to 0.45) to settle things INTO the terrain — hull-down ships, monuments buried to the shoulders.
 
 SPARKS (given in the request)
 A few words of inspiration grit. Keep what sparks, discard freely. NEVER use the spark words themselves in the teaser or premise.
@@ -118,6 +118,9 @@ const CONCEPT_TOOL = [{
         },
         required: ['kind', 'subjects'],
       },
+      // Optional, singular tier only: settle things INTO the terrain
+      // (0.4 = hull-down ships, half-buried monuments).
+      embed_bias: { type: 'number', minimum: 0, maximum: 0.45 },
       asset_keywords: { type: 'array', items: { type: 'string' } },
     },
     required: ['teaser','premise','question','biome','terrain','landmark_slots','hero_on_water','creature_budget','density','motif','asset_keywords'],
@@ -127,6 +130,7 @@ const CONCEPT_TOOL = [{
 // Static system prompt for the asset-pick stage. Cached via prompt-caching
 // (we mark this string with cache_control when constructing the request).
 const PICK_SYSTEM = `You are picking 3D assets from a retrieval-produced shortlist for a single planet.
+When direction.premise is given, it is the planet's reason to exist — your FIRST question for every candidate is "does this asset serve the premise?" Taste comes second. A weaker-looking asset that serves the premise beats a prettier one that dilutes it.
 The shortlist for each slot is ranked by surface similarity to creative direction prose — NOT by taste. Picking rank-1 every time means the retriever is doing your job.
 Apply art direction:
 - Avoid theme collisions: if hero is crystal-themed, secondary picks should add contrast (organic / mechanical / atmospheric) unless creative direction explicitly calls for monothematic.

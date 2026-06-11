@@ -82,7 +82,7 @@ const CONCEPTS = {
       question: 'where did the sea go — or did they ever sail at all?',
       biome: 'desert', terrain: { sea_level: 0, amplitude: 0.8 },
       landmark_slots: 3, hero_on_water: false, creature_budget: 0, density: 'sparse',
-      motif: { kind: 'shared-heading', subjects: 'landmarks' },
+      motif: { kind: 'shared-heading', subjects: 'landmarks' }, embed_bias: 0.4,
       asset_keywords: ['shipwreck sailing ships', 'bones', 'dead trees'] },
     { teaser: 'one tower, and the ten thousand stones that almost made it taller',
       premise: 'A single colossal tower on an empty world, ringed by neat piles of cut stone that never made it up — abandoned one course from done.',

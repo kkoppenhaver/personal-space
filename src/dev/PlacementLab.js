@@ -68,6 +68,31 @@ export async function runPlacementLab() {
   const planet = new Planet({ rapier: RAPIER, world, seed, radius, center: new THREE.Vector3() });
   scene.add(planet.group);
 
+  // Forced concept (Phase 14b): sea/amp/slots/motif/subjects/embed/tier
+  // params build a synthetic concept so the reference planets are
+  // reproducible without a worker. e.g.
+  //   ?placementLab=1&sea=0&amp=0.8&slots=3&motif=shared-heading&subjects=landmarks&embed=0.4&tier=singular
+  if (['sea', 'amp', 'slots', 'motif', 'embed'].some((k) => params.has(k))) {
+    if (params.has('tier')) planet.tier = params.get('tier');
+    planet.applyConcept({
+      teaser: 'forced lab concept',
+      premise: 'forced lab concept',
+      question: 'is the placement right?',
+      biome,
+      terrain: {
+        sea_level: parseFloat(params.get('sea') ?? '0.42'),
+        amplitude: parseFloat(params.get('amp') ?? '1.0'),
+      },
+      landmark_slots: parseInt(params.get('slots') ?? '4', 10),
+      hero_on_water: params.has('heroWater'),
+      creature_budget: parseFloat(params.get('creatures_budget') ?? '0.35'),
+      density,
+      motif: { kind: params.get('motif') ?? 'none', subjects: params.get('subjects') ?? 'surface' },
+      ...(params.has('embed') ? { embed_bias: parseFloat(params.get('embed')) } : {}),
+      asset_keywords: [],
+    });
+  }
+
   const ids = (key) => (params.get(key) ?? DEFAULTS[key] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const heroAsset = getAssetById(params.get('hero') || DEFAULTS.hero);
   const landmarkAssets = ids('landmarks').map(getAssetById);
