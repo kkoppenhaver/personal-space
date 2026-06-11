@@ -9,8 +9,8 @@ logbook; deploy manually with `cd worker && npx wrangler deploy`).
 
 - **`docs/plans/2026-05-23-001-feat-planet-visuals-llm-driven-assets-plan.md`**
   — the planet-visuals master plan. Its **Progress table is the source of
-  truth** for what's shipped (12/14 phases as of 2026-06-11; Phase 8
-  performance + Phase 11 thumbnails remain). Each phase has a sub-plan doc in
+  truth** for what's shipped (13/14 phases as of 2026-06-11; Phase 8
+  performance remains). Each phase has a sub-plan doc in
   `docs/plans/` with shipped-notes in its header.
 - `plan.md` — the older whole-project plan (galaxy streaming, logbook, auth);
   still accurate for non-visuals systems.
