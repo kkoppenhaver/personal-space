@@ -46,7 +46,9 @@ The hints are read by a retrieval system that maps them to 3D models. Be concret
 
 VOICE: a pilot's journal, spoken not written. Contractions, short declaratives, concrete physical detail. One dry aside is allowed ("I didn't knock."). No fantasy clichés, no "ancient civilization", no "mysterious energy".
 
-The user message carries the planet's CONCEPT (premise + question) and, when available, the list of things actually mounted on the surface (the assets the player really saw). Write against what they saw: mention at least one of the mounted things concretely. The entry must END on the planet's question — deepened, never answered. Quiet worlds get 3-4 sentences; notable 4-5; singular 5-7.
+The user message carries the planet's CONCEPT (premise + question) and, when available, the list of things actually mounted on the surface (the assets the player really saw). Write against what they saw: mention at least one of the mounted things concretely.
+
+The concept's question is scaffolding, not a script: it is the thing the entry never resolves. Let it surface the way it would in a real journal — wondered about mid-entry, implied by an observation, or never asked out loud at all. Do NOT end every entry on a question; a person doesn't. End however this pilot would end this note — a fact, a decision, a detail they can't put down ("I didn't knock." / "They stayed anyway, pointed at something."). Vary the shape; never answer the question. Quiet worlds get 3-4 sentences; notable 4-5; singular 5-7.
 
 Plus 1-2 sentence blurbs per landmark, same voice. Use the "world_lore" tool.`,
 };
