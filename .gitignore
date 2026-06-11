@@ -7,3 +7,4 @@ dist/
 .wrangler/
 worker/.dev.vars
 *.log
+.claude/worktrees/

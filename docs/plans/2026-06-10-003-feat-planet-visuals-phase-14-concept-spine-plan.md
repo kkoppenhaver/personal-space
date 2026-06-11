@@ -1,7 +1,7 @@
 ---
 title: Planet visuals Phase 14 — concept-as-spine (wild-but-cohesive worlds)
 type: feat
-status: active
+status: completed
 date: 2026-06-10
 parent: docs/plans/2026-05-23-001-feat-planet-visuals-llm-driven-assets-plan.md
 supersedes: the archetype TAXONOMY from Phase 12 (the parametric terrain, composition clamps, and creature/float machinery all survive as the engine this phase drives)
@@ -19,8 +19,19 @@ supersedes: the archetype TAXONOMY from Phase 12 (the parametric terrain, compos
 > Placeholder carries the five reference planets for dev. `Archetypes.js`
 > is fully unimported (delete after real-Haiku concept quality is verified
 > in prod). Client cache v4. **Worker redeploy required.**
-> **14b remains:** the five motifs + singular-tier overrides; pick-prompt
-> premise-first.
+> **14b shipped (2026-06-10).** `Motifs.js` (twistToFace signed-angle math,
+> uniform-lean up blending, grid-rows + procession generators); all five
+> motifs wired through Features (orientation motifs in the transform loop,
+> layout motifs replace cluster sampling, heights via the terrain sampler,
+> drowned-row water policy) and Landmarks (orient param — the fleet shares
+> a heading, gravestones face the crypt); singular-tier overrides:
+> embed-as-expression (`embed_bias` in the concept schema, max'd against
+> family embed) and cross-role landmark slots (retriever accepts role
+> arrays); pick prompt is premise-first with `direction.premise` in the
+> payload; placement lab accepts forced-concept params. Verified: fleet
+> heading alignment 1.0000 / hull-down 40% embed; 480 gravestones facing
+> the crypt at 0.99; orchard grid-rows walking into the sea (screenshot);
+> procession ladder 86 lamps in two lanes. Worker redeploy required.
 
 # Planet visuals Phase 14 — concept-as-spine
 

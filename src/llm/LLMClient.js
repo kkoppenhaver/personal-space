@@ -75,7 +75,7 @@ export class LLMClient {
         // shortlist. Empty catalog → skip; degraded mode → skip.
         let picks = null;
         try {
-          picks = await this._pickAssets(seed, direct);
+          picks = await this._pickAssets(seed, direct, context);
         } catch (err) {
           console.warn('[LLM] tier2 pick failed; continuing without asset IDs:', err.message);
         }
@@ -118,7 +118,7 @@ export class LLMClient {
 
   // ── Tier 2 pick: retrieve shortlist + strict-tool pick ──────────────
 
-  async _pickAssets(seed, direct) {
+  async _pickAssets(seed, direct, context = {}) {
     // Build per-slot queries from the direct call's hints.
     let heroQuery = (direct.hero_landmark_hints || []).join(' ');
     let landmarkQuery = (direct.landmark_anchor_hints || []).join(' ');
@@ -152,8 +152,12 @@ export class LLMClient {
     // hints — most worlds are uninhabited and skip the role entirely. No
     // pack-cohesion boost: the animal packs are their own kit by design.
     const creatureQuery = (direct.inhabitant_hints || []).join(' ');
+    // Singular-tier exception (Phase 14b): landmark slots may draw from
+    // hero-role assets — eight ships need more ships than the landmark
+    // pool carries.
+    const landmarkRole = context?.tier === 'singular' ? ['landmark', 'hero'] : 'landmark';
     const [landmark, surface, creature] = await Promise.all([
-      retrieverShortlist({ query: landmarkQuery, role: 'landmark', k: SHORTLIST_K.landmark, biomeAffinity: direct.biome, preferPack: anchorPack }),
+      retrieverShortlist({ query: landmarkQuery, role: landmarkRole, k: SHORTLIST_K.landmark, biomeAffinity: direct.biome, preferPack: anchorPack }),
       retrieverShortlist({ query: surfaceQuery, role: 'surface', k: SHORTLIST_K.surface, biomeAffinity: direct.biome, preferPack: anchorPack }),
       creatureQuery
         ? retrieverShortlist({ query: creatureQuery, role: 'creature', k: SHORTLIST_K.creature, biomeAffinity: direct.biome })
@@ -201,7 +205,15 @@ export class LLMClient {
         signal: ctl.signal,
         body: JSON.stringify({
           seed: seed >>> 0,
-          direction: { theme: direct.theme, biome: direct.biome, density: direct.density, anchor_pack: anchorPack },
+          direction: {
+            theme: direct.theme,
+            biome: direct.biome,
+            density: direct.density,
+            anchor_pack: anchorPack,
+            // Premise-first picking (Phase 14b): the pick model's leading
+            // question is "does this asset serve the premise?"
+            premise: context?.concept?.premise ?? null,
+          },
           // Bare-id arrays drive the strict-tool enum (unchanged → same KV
           // cache key). shortlist_meta carries pack/family for prose context
           // so Haiku can honor the pack-cohesion line in the system prompt.

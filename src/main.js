@@ -272,7 +272,7 @@ async function main() {
     // /tier2/direct as a hard constraint — Tier 2 elaborates the sentence
     // the player navigated by. hashContext folds it into the worker KV
     // key. Falls back to a bare-radius context if the concept call failed.
-    llm.approach(planet.seed, { radius: planet.radius, concept: _conceptContextOf(planet) }).then(meta => {
+    llm.approach(planet.seed, { radius: planet.radius, tier: planet.tier, concept: _conceptContextOf(planet) }).then(meta => {
       if (!meta) return;
       planet.applyLLM(meta);
       const label = (meta.name || `P?`).toUpperCase();

@@ -11,6 +11,8 @@ import {
   buildInstancedFeaturesFromAssets,
 } from './Features.js';
 import { Coverage } from './Coverage.js';
+import { rollTier } from './ConceptSeed.js';
+import { seededDirection } from './Motifs.js';
 import { buildMaterialSet, disposeMaterialSet } from './MaterialSet.js';
 import { loadInstance } from './AssetCache.js';
 import { isDebugOn, attachInstanceHelpers, detachInstanceHelpers } from './DebugPlacement.js';
@@ -82,6 +84,10 @@ export class Planet {
     // applyConcept — invisible at spawn distance. The concept object is
     // the single source of truth every LLM tier elaborates.
     this.concept = null;
+    // Rarity tier (Phase 14b): quiet/notable/singular. Deterministic from
+    // the seed; singular unlocks the coordination-budget exceptions
+    // (embed-as-expression, cross-role slots).
+    this.tier = rollTier(seed);
     this.terrainParams = { seaLevelQuantile: 0.42, ampScale: 1.0 };
     this.composition = {
       landmarkSlots: 4,
@@ -358,6 +364,14 @@ export class Planet {
     if (Array.isArray(landmarkAssets)) landmarkAssets = landmarkAssets.slice(0, comp.landmarkSlots);
     if (Array.isArray(surfaceAssets)) surfaceAssets = surfaceAssets.slice(0, Math.max(1, comp.surfaceKinds));
 
+    // Motif + singular-tier overrides (Phase 14b). The motif comes from
+    // the concept; embed-as-expression only unlocks on singular planets
+    // (hull-down fleets, monuments buried to the shoulders).
+    const motif = (this.concept?.motif && this.concept.motif.kind !== 'none') ? this.concept.motif : null;
+    const embedBias = (this.tier === 'singular' && typeof this.concept?.embed_bias === 'number')
+      ? Math.min(0.45, Math.max(0, this.concept.embed_bias))
+      : 0;
+
     // ── Palette + matSet refresh (always synchronous) ────────────────
     if (palette) {
       this.palette = { ...this.palette, ...palette };
@@ -436,6 +450,17 @@ export class Planet {
     const newLandmarkGroup = new THREE.Group();
     const slotsHandled = new Set();
 
+    // Landmark-subject motifs (Phase 14b): the fleet shares one heading
+    // (hero included); all-facing-point turns the landmarks toward the
+    // hero (the hero keeps its own twist — it doesn't face itself).
+    const headingDir = motif?.kind === 'shared-heading' && motif.subjects === 'landmarks'
+      ? seededDirection(this.seed ^ 0x44) : null;
+    const landmarkOrient = motif?.subjects === 'landmarks'
+      ? (headingDir ? { dir: headingDir }
+        : (motif.kind === 'all-facing-point' && heroSlot ? { dir: heroSlot.direction } : null))
+      : null;
+    const heroOrient = headingDir ? { dir: headingDir } : null;
+
     // Hero — bind GLB if available, otherwise fall back to a procedural
     // marker so the slot still has something.
     if (heroSlot) {
@@ -449,6 +474,8 @@ export class Planet {
           assetMeta: heroAsset,
           role: 'hero',
           scaleBoost: comp.heroScale,
+          orient: heroOrient,
+          embedBias,
           seed: this.seed,
         });
         hero.userData.role = 'hero';
@@ -476,6 +503,8 @@ export class Planet {
           family: asset?.family,
           assetMeta: asset,
           role: 'landmark',
+          orient: landmarkOrient,
+          embedBias,
           seed: this.seed,
         });
         lm.userData.role = 'landmark';
@@ -540,6 +569,11 @@ export class Planet {
         excludeZones.push({ direction: slot.direction, minDot: Math.cos(angle) });
       }
 
+      // Procession runs from a lowland slot (basin > coast > whatever's
+      // left) up to the hero — the graveyard's lamp-lined path.
+      const fromSlot = remainingSlots.find((s) => s.kind === 'basin')
+        || remainingSlots.find((s) => s.kind === 'coast')
+        || remainingSlots[0];
       newFeaturesGroup = buildInstancedFeaturesFromAssets({
         geometry: this.geometry,
         elevations: this.elevations,
@@ -549,6 +583,11 @@ export class Planet {
         density,
         seaLevel: this.seaLevel,
         excludeZones,
+        motif: motif && motif.subjects !== 'landmarks' ? motif : null,
+        heroDir: heroSlot?.direction ?? this.landmarks[0]?.direction ?? null,
+        processionFrom: fromSlot?.direction ?? null,
+        sampleHeight: this.sample,
+        embedBias,
       });
     }
 

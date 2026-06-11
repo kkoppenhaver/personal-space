@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mulberry32 } from './Seed.js';
 import { axisUpQuaternionFor, groundOffsetFor, bboxHeightFor, lateralCenterFor } from './AxisUp.js';
 import { blendedUp, embedFractionFor, resolveScale } from './PlacementRules.js';
+import { twistToFace } from './Motifs.js';
 
 // Pick 3..6 hero landmark slots from the terrain mesh.
 //
@@ -318,11 +319,14 @@ function buildProceduralLandmarkMesh(lm, palette) {
  * @param {string} [args.family]                - catalog family for placement rules
  * @param {object} [args.assetMeta]             - catalog record (axis/scale overrides)
  * @param {'hero'|'landmark'} [args.role]       - drives the target world height
- * @param {number} [args.scaleBoost]            - archetype hero boost
+ * @param {number} [args.scaleBoost]            - concept hero boost
+ * @param {{ dir: THREE.Vector3 }|null} [args.orient] - motif facing: twist toward this
+ *   direction instead of random (shared-heading / all-facing-point, Phase 14b)
+ * @param {number} [args.embedBias=0]           - singular-tier embed override (max vs family)
  * @param {number} args.seed                    - planet seed for deterministic per-slot scale
  * @returns {THREE.Object3D} the same clone, now positioned + scaled
  */
-export function buildLandmarkInstance({ slot, gltfClone, scaleRange = [4, 8], pack = null, family = null, assetMeta = null, role = 'landmark', scaleBoost = 1, seed }) {
+export function buildLandmarkInstance({ slot, gltfClone, scaleRange = [4, 8], pack = null, family = null, assetMeta = null, role = 'landmark', scaleBoost = 1, orient = null, embedBias = 0, seed }) {
   // Deterministic per-slot scale so repeat visits to the same planet pick
   // the same scale (no LLM call needed to re-derive). Bbox-normalized
   // (Phase 13b): the target is a world HEIGHT for the role; authored kit
@@ -350,7 +354,10 @@ export function buildLandmarkInstance({ slot, gltfClone, scaleRange = [4, 8], pa
   // Multiplications apply right-to-left, so we want quaternion = twist * surface * axisUp.
   const axisUp = axisUpQuaternionFor(pack, assetMeta);
   const surfaceUp = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
-  const twist = new THREE.Quaternion().setFromAxisAngle(up, rand() * Math.PI * 2);
+  // Motif facing (Phase 14b): the fleet shares a heading, the gravestones
+  // face the crypt. Otherwise a random per-slot twist.
+  const twistAngle = orient?.dir ? twistToFace(up, orient.dir) : rand() * Math.PI * 2;
+  const twist = new THREE.Quaternion().setFromAxisAngle(up, twistAngle);
   gltfClone.quaternion.copy(twist).multiply(surfaceUp).multiply(axisUp);
   gltfClone.scale.setScalar(scale);
 
@@ -360,10 +367,12 @@ export function buildLandmarkInstance({ slot, gltfClone, scaleRange = [4, 8], pa
   // settled into the faceted terrain rather than balanced on one facet.
   // Floating assets sit hull-deep in the water (the slot position is the
   // waterline); grounded assets settle by their family's embed fraction.
+  // embedBias (singular tier, Phase 14b) deepens either — hull-down ships
+  // in the dunes, monuments buried to the shoulders.
   const FLOAT_DRAFT = 0.12;
   const bbox = gltfClone.userData?.bbox;
   const groundOffset = groundOffsetFor(bbox, pack, assetMeta) * scale;
-  const embedFrac = floats ? FLOAT_DRAFT : embedFractionFor(family);
+  const embedFrac = Math.max(floats ? FLOAT_DRAFT : embedFractionFor(family), embedBias);
   const embed = embedFrac * bboxHeightFor(bbox, pack, assetMeta) * scale;
   gltfClone.position.copy(slot.position).addScaledVector(up, groundOffset - embed);
 

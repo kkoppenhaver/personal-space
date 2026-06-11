@@ -216,7 +216,11 @@ export async function shortlist({ query, role, k = 8, recentIds, biomeAffinity, 
   // to all role matches and demote off-biome candidates at the scoring
   // stage instead — diversity beats purity at this catalog size.
   const OFF_BIOME_PENALTY = 0.5;
-  const roleMatches = catalog.assets.filter((a) => !role || a.role === role);
+  // Role may be an array (Phase 14b: singular-tier landmark slots draw
+  // from hero-role assets too — the fleet's landmark ships).
+  const roleSet = Array.isArray(role) ? new Set(role) : null;
+  const roleKey = Array.isArray(role) ? role[0] : role;   // recency half-life lookup
+  const roleMatches = catalog.assets.filter((a) => !role || (roleSet ? roleSet.has(a.role) : a.role === role));
   const biomeMatches = biomeAffinity
     ? roleMatches.filter((a) => (a.biome_affinity || []).includes(biomeAffinity))
     : roleMatches;
@@ -266,7 +270,7 @@ export async function shortlist({ query, role, k = 8, recentIds, biomeAffinity, 
   // dense don't double-penalize the same recently-used asset.
   for (const [id, entry] of fused) {
     const age = recentAge.get(id);
-    if (age !== undefined) entry.score *= recencyMultiplier(age, role);
+    if (age !== undefined) entry.score *= recencyMultiplier(age, roleKey);
   }
 
   // ── Off-biome demotion (soft biome filter fallback) ───────────────

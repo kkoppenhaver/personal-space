@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './Seed.js';
 import { axisUpQuaternionFor, groundOffsetFor, bboxHeightFor, lateralCenterFor } from './AxisUp.js';
 import { blendedUp, embedFractionFor, maxSlopeFor, surfaceBandFor, resolveScale } from './PlacementRules.js';
+import { LAYOUT_MOTIFS, seededDirection, leanUp, twistToFace, gridRowPositions, processionPositions } from './Motifs.js';
 
 // Density hint → instance count multiplier. Applied to the per-asset base
 // count so a "dense" jungle planet really feels dense without flooding the
@@ -43,13 +44,27 @@ const CLUSTER_SHARE = 0.8;
  * @param {number} args.seed
  * @param {{ glbClone: THREE.Object3D, scaleRange: [number, number] }[]} args.assets
  * @param {'sparse'|'medium'|'dense'} [args.density='medium']
- * @param {number} [args.seaLevel=0.42] - elevation quantile (archetype-driven)
+ * @param {number} [args.seaLevel=0.42] - elevation quantile (concept-driven)
  * @param {{ direction: THREE.Vector3, minDot: number }[]} [args.excludeZones] - landmark footprints
+ * @param {{ kind: string, subjects: string }|null} [args.motif] - concept arrangement motif (Phase 14b)
+ * @param {THREE.Vector3|null} [args.heroDir]        - facing target / layout anchor
+ * @param {THREE.Vector3|null} [args.processionFrom] - procession start (lowland slot)
+ * @param {function|null} [args.sampleHeight]        - terrain sampler for off-vertex layout points
+ * @param {number} [args.embedBias=0]                - singular-tier embed override (max vs family)
  * @returns {THREE.Group}
  */
-export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius, seed, assets, density = 'medium', seaLevel = 0.42, excludeZones = [] }) {
+export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius, seed, assets, density = 'medium', seaLevel = 0.42, excludeZones = [], motif = null, heroDir = null, processionFrom = null, sampleHeight = null, embedBias = 0 }) {
   const group = new THREE.Group();
   if (!assets || assets.length === 0) return group;
+
+  // Which scatter assets the motif drives ('landmarks' is handled by the
+  // landmark mount path in Planet, not here).
+  const motifApplies = (a) => {
+    if (!motif || motif.kind === 'none') return false;
+    if (motif.subjects === 'creatures') return a.family === 'creature';
+    if (motif.subjects === 'surface') return a.family !== 'creature';
+    return false;
+  };
 
   const densityMult = DENSITY_MULTIPLIERS[density] ?? 1.0;
   const pos = geometry.attributes.position;
@@ -90,13 +105,15 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
     [all[i], all[j]] = [all[j], all[i]];
   }
 
-  // Per-asset placement constants.
+  // Per-asset placement constants. embedBias (singular tier) deepens the
+  // settle — it never lifts (max against the family fraction).
   const perAsset = assets.map((a) => {
     const bbox = a.glbClone?.userData?.bbox;
+    const bboxH = bboxHeightFor(bbox, a.pack, a.assetMeta);
     return {
       bboxOffset: groundOffsetFor(bbox, a.pack, a.assetMeta),
-      embedHeight: embedFractionFor(a.family) * bboxHeightFor(bbox, a.pack, a.assetMeta),
-      bboxHeight: bboxHeightFor(bbox, a.pack, a.assetMeta),
+      embedHeight: Math.max(embedFractionFor(a.family), embedBias) * bboxH,
+      bboxHeight: bboxH,
       axisUp: axisUpQuaternionFor(a.pack, a.assetMeta),
       lateral: lateralCenterFor(bbox, a.pack, a.assetMeta),
       maxSlope: maxSlopeFor(a.family),
@@ -111,9 +128,49 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
 
   for (let aIdx = 0; aIdx < assets.length; aIdx++) {
     const pa = perAsset[aIdx];
+    const assetBudget0 = budgetFor(assets[aIdx]);
+
+    // ── Layout motifs (Phase 14b): generated positions, not clusters ──
+    // grid-rows / procession place members on exact lines; heights come
+    // from the terrain sampler since the points fall between vertices.
+    if (motifApplies(assets[aIdx]) && LAYOUT_MOTIFS.has(motif.kind) && sampleHeight) {
+      const anchor = heroDir || seededDirection(seed);
+      let entries = [];
+      if (motif.kind === 'grid-rows') {
+        entries = gridRowPositions({ anchorDir: anchor, radius, count: assetBudget0, seed });
+      } else if (motif.kind === 'procession') {
+        const from = processionFrom || seededDirection(seed ^ 0x77);
+        entries = processionPositions({ fromDir: from, toDir: anchor, radius, count: assetBudget0 });
+      }
+      if (entries.length) {
+        // Water policy: rows may walk into the sea (the drowned-orchard
+        // read), but only the leading edge — cap and embed them deeper.
+        const waterH = radius * 0.9951;
+        const waterCap = Math.ceil(entries.length * 0.35);
+        let waterUsed = 0;
+        for (const e of entries) {
+          const h = sampleHeight(e.dir.x, e.dir.y, e.dir.z);
+          const inWater = h <= waterH;
+          if (inWater && ++waterUsed > waterCap) continue;
+          const scale = resolveScale({
+            role: 'surface',
+            scaleRange: assets[aIdx].assetMeta?.scale_range ?? assets[aIdx].scaleRange,
+            scaleOverride: assets[aIdx].assetMeta?.scale_override ?? null,
+            bboxHeight: pa.bboxHeight,
+            rand,
+          });
+          buckets[aIdx].push({
+            dir: e.dir, normal: e.dir.clone(), height: h, scale,
+            twist: 0, along: e.along, extraEmbed: inWater ? pa.bboxHeight * 0.3 : 0,
+          });
+        }
+        continue;   // layout replaces the cluster path for this asset
+      }
+    }
+
     let eligible = all.filter((c) => !used.has(c) && c.slope <= pa.maxSlope
       && c.e >= pa.band[0] && c.e <= pa.band[1]);
-    const assetBudget = budgetFor(assets[aIdx]);
+    const assetBudget = assetBudget0;
     if (eligible.length < assetBudget * 0.5) {
       // Thin band (high sea level, crowded planet) — relax the band but
       // keep the slope gate; floating-tree glitches beat empty planets,
@@ -179,16 +236,27 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
     const surfaceUp = new THREE.Quaternion();
     const spin = new THREE.Quaternion();
     const recenter = new THREE.Vector3();
+    // Orientation motifs (Phase 14b): a shared lean/heading direction for
+    // the whole group, or a per-instance twist that faces the hero.
+    const assetMotif = motifApplies(assets[aIdx]) ? motif : null;
+    const leanDir = assetMotif?.kind === 'uniform-lean' ? seededDirection(seed) : null;
+    const headingDir = assetMotif?.kind === 'shared-heading' ? seededDirection(seed ^ 0x44) : null;
+    const faceDir = assetMotif?.kind === 'all-facing-point' ? heroDir : null;
     transforms.forEach((t, i) => {
       // Up-vector: radial leaned toward the terrain normal per family
       // (rocks conform to the hillside, flora stays near-plumb).
       blendedUp(t.dir, t.normal, family, up);
+      if (leanDir) leanUp(up, leanDir);
       // Grounding: signed bbox base offset (pull-down included) minus the
       // family's embed depth, applied along the instance's up.
       dummy.position.copy(t.dir).multiplyScalar(t.height)
-        .addScaledVector(up, (bboxOffset - embedHeight) * t.scale);
+        .addScaledVector(up, (bboxOffset - embedHeight) * t.scale - (t.extraEmbed ?? 0));
       surfaceUp.setFromUnitVectors(yAxis, up);
-      spin.setFromAxisAngle(up, t.twist);
+      let twist = t.twist;
+      if (faceDir) twist = twistToFace(up, faceDir);
+      else if (headingDir) twist = twistToFace(up, headingDir);
+      else if (t.along) twist = twistToFace(up, t.along);
+      spin.setFromAxisAngle(up, twist);
       // Compose: axisUp (asset-local) → surfaceUp (slot) → spin.
       dummy.quaternion.copy(spin).multiply(surfaceUp).multiply(axisUp);
       // Corner-pivot fix: keep the footprint centered on the sample point.
