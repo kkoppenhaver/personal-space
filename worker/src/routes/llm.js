@@ -29,7 +29,7 @@ const SYSTEM = {
 The user message carries the planet's CONCEPT — a teaser, a premise, and a question, generated when the planet first appeared on the player's instruments. The player has been navigating BY the teaser; arriving must feel like that sentence kept its promise. The concept is a HARD constraint: the name, palette, landmark names, and every hint must be a specific elaboration of the premise — never a generic version of its biome. The engine has already shaped the terrain to match. When concept.landmark_slots is small (0-2), emptiness is the point. Landmark names should deepen the question, never answer it. If no concept is given (legacy client), invent freely and avoid your own habits.
 
 Produce:
-- a coined proper noun (1-2 words, not English)
+- the world's proper noun — when concept.name is given, return it VERBATIM (it has been on the player's instruments since the planet appeared; renaming it on arrival breaks the promise). Only coin one (1-2 words, not English) when no concept is given.
 - a biome (from archetype.biomes when given)
 - a 6-color hex palette
 - a one-sentence atmosphere description
@@ -80,13 +80,16 @@ TIER (given in the request — obey it)
 SPARKS (given in the request)
 A few words of inspiration grit. Keep what sparks, discard freely. NEVER use the spark words themselves in the teaser or premise.
 
+THE NAME
+A coined proper noun for the world — 1-2 words, not English, pronounceable. It appears on the player's instruments next to the teaser, long before arrival, so it must sound like it belongs to the premise (a burial world should not sound like a beach resort).
+
 THE TEASER
 ≤80 chars, lowercase, no proper nouns, no "the planet of" preambles. It is the hook the player navigates by — a compressed version of the premise, not a summary ("a fleet at anchor on a world with no sea").
 
 EXAMPLES (one per tier)
-quiet → {"teaser":"pines here, and a wind that bent every one of them the same way","premise":"A forest world where every tree leans the same few degrees toward sunrise, as if the wind only ever blew once, hard.","question":"what bent them?","biome":"forest","terrain":{"sea_level":0.42,"amplitude":1.0},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"medium","motif":{"kind":"uniform-lean","subjects":"surface"},"asset_keywords":["pine trees","birch trees","mossy rocks"]}
-notable → {"teaser":"a thousand graves, and every one of them faces the same door","premise":"A dry burial world where every gravestone, no two alike, faces a single crypt on the hill; lamp posts make two lines up to its door.","question":"what walks between the lamps at night?","biome":"desert","terrain":{"sea_level":0.15,"amplitude":0.9},"landmark_slots":2,"hero_on_water":false,"creature_budget":0,"density":"dense","motif":{"kind":"all-facing-point","subjects":"surface"},"asset_keywords":["gravestones","crypt","lamp posts","crooked pines"]}
-singular → {"teaser":"a fleet at anchor on a world with no sea","premise":"Eight sailing ships sit hull-down in the dunes of a waterless world, bows all on one heading, sails still rigged for a wind going nowhere.","question":"where did the sea go — or did they ever sail at all?","biome":"desert","terrain":{"sea_level":0,"amplitude":0.8},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"sparse","motif":{"kind":"shared-heading","subjects":"landmarks"},"asset_keywords":["shipwreck sailing ships","bones","dead trees"]}
+quiet → {"name":"Veleth","teaser":"pines here, and a wind that bent every one of them the same way","premise":"A forest world where every tree leans the same few degrees toward sunrise, as if the wind only ever blew once, hard.","question":"what bent them?","biome":"forest","terrain":{"sea_level":0.42,"amplitude":1.0},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"medium","motif":{"kind":"uniform-lean","subjects":"surface"},"asset_keywords":["pine trees","birch trees","mossy rocks"]}
+notable → {"name":"Carnmor","teaser":"a thousand graves, and every one of them faces the same door","premise":"A dry burial world where every gravestone, no two alike, faces a single crypt on the hill; lamp posts make two lines up to its door.","question":"what walks between the lamps at night?","biome":"desert","terrain":{"sea_level":0.15,"amplitude":0.9},"landmark_slots":2,"hero_on_water":false,"creature_budget":0,"density":"dense","motif":{"kind":"all-facing-point","subjects":"surface"},"asset_keywords":["gravestones","crypt","lamp posts","crooked pines"]}
+singular → {"name":"Sarqand","teaser":"a fleet at anchor on a world with no sea","premise":"Eight sailing ships sit hull-down in the dunes of a waterless world, bows all on one heading, sails still rigged for a wind going nowhere.","question":"where did the sea go — or did they ever sail at all?","biome":"desert","terrain":{"sea_level":0,"amplitude":0.8},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"sparse","motif":{"kind":"shared-heading","subjects":"landmarks"},"asset_keywords":["shipwreck sailing ships","bones","dead trees"]}
 
 Do not reuse the examples. Use the "world_concept" tool.`;
 
@@ -96,6 +99,7 @@ const CONCEPT_TOOL = [{
   input_schema: {
     type: 'object',
     properties: {
+      name: { type: 'string' },
       teaser: { type: 'string', maxLength: 80 },
       premise: { type: 'string' },
       question: { type: 'string' },
@@ -125,7 +129,7 @@ const CONCEPT_TOOL = [{
       embed_bias: { type: 'number', minimum: 0, maximum: 0.45 },
       asset_keywords: { type: 'array', items: { type: 'string' } },
     },
-    required: ['teaser','premise','question','biome','terrain','landmark_slots','hero_on_water','creature_budget','density','motif','asset_keywords'],
+    required: ['name','teaser','premise','question','biome','terrain','landmark_slots','hero_on_water','creature_budget','density','motif','asset_keywords'],
   },
 }];
 
@@ -357,13 +361,20 @@ llm.post('/tier2/pick', async (c) => {
 
 // ─── Shared handler for /tier1 /tier2 /tier3 + /tier2/direct ───────────
 
+// Per-tier prompt versions. Bump a tier here when its system prompt or tool
+// schema changes shape enough that old cached responses are wrong (concept
+// v2: the concept owns the planet name — pre-v2 entries have no name).
+// Tiers absent from the map stay on their historical un-versioned keys.
+const PROMPT_VERSION = { concept: 2 };
+
 async function handleTier(c, tier) {
   const body = await c.req.json().catch(() => null);
   if (!body) return c.json({ error: 'bad json' }, 400);
 
   const seed = (body.seed | 0) >>> 0;
   const context = body.context || {};
-  const cacheKey = `t${tier}:${seed}:${hashContext(context)}`;
+  const ver = PROMPT_VERSION[tier] ? `v${PROMPT_VERSION[tier]}:` : '';
+  const cacheKey = `t${tier}:${ver}${seed}:${hashContext(context)}`;
 
   if (c.env.LLM_CACHE) {
     const cached = await c.env.LLM_CACHE.get(cacheKey, { type: 'json' });

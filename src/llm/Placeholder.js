@@ -20,6 +20,10 @@ const BIOMES = ['desert','ocean','forest','ice','volcanic','crystalline','alien'
 const NAME_SYL_A = ['Vor','Thal','Sil','Kel','Bren','Ash','Mor','Lir','Tyr','Cal','Quen','Drev','Aer','Pir','Ulm'];
 const NAME_SYL_B = ['en','os','ar','ith','um','iel','an','ord','ux','eth','iri','un','ai','onth'];
 
+function coinName(r) {
+  return `${NAME_SYL_A[Math.floor(r() * NAME_SYL_A.length)]}${NAME_SYL_B[Math.floor(r() * NAME_SYL_B.length)]}`;
+}
+
 export function placeholderTier1(seed) {
   const r = mulberry32(seed >>> 0);
   return { teaser: TEASERS[Math.floor(r() * TEASERS.length)] };
@@ -98,17 +102,21 @@ export function placeholderConcept(seed, context = {}) {
   const r = mulberry32((seed ^ 0xC0CE) >>> 0);
   const tier = context?.tier && CONCEPTS[context.tier] ? context.tier : 'quiet';
   const pool = CONCEPTS[tier];
-  return { ...pool[Math.floor(r() * pool.length)] };
+  // Name-first: the concept owns the planet name (the premises in the
+  // table are shared across seeds; the coined name varies per seed).
+  return { ...pool[Math.floor(r() * pool.length)], name: coinName(r) };
 }
 
 export function placeholderTier2(seed, context = {}) {
   const r = mulberry32((seed ^ 0xa53f) >>> 0);
-  const name = `${NAME_SYL_A[Math.floor(r() * NAME_SYL_A.length)]}${NAME_SYL_B[Math.floor(r() * NAME_SYL_B.length)]}`;
+  const coined = coinName(r);
   // Concept-aware (Phase 14a): elaborate the spine when present — biome,
   // density, and retrieval hints all derive from the premise the player
   // navigated by. Falls back to biome-table behavior for legacy callers.
   // Spread-copy: the per-keyword overrides below must not mutate the table.
   const concept = context?.concept || null;
+  // The concept's name is the one on the player's instruments — keep it.
+  const name = concept?.name || coined;
   const biome = concept?.biome || BIOMES[Math.floor(r() * BIOMES.length)];
   const palette = paletteForBiome(biome, r);
   const hints = { ...hintsForBiome(biome) };

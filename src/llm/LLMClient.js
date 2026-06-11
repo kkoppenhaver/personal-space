@@ -13,11 +13,11 @@
 import { placeholderTier1, placeholderTier2, placeholderTier3, placeholderConcept } from './Placeholder.js';
 import { shortlist as retrieverShortlist } from '../world/AssetRetriever.js';
 
-// v4 bump invalidates cached responses that predate Phase 14a's concept
-// spine (Tier 2 entries generated from archetype context, Tier 1 teasers
-// that never matched the world). v3 was the archetype-context bump, v2 the
-// Phase 3 hint arrays.
-const LS_CACHE_KEY = 'paper-airplane:llmcache:v4';
+// v5 bump invalidates cached responses that predate name-first concepts
+// (v4 concept entries have no name; v4 Tier 2 entries coined names the
+// player never navigated by). v4 was the concept-spine bump, v3 the
+// archetype-context bump, v2 the Phase 3 hint arrays.
+const LS_CACHE_KEY = 'paper-airplane:llmcache:v5';
 
 // Per the plan: no more than 2 concurrent Tier 2 chains so a mid-flight
 // swerve doesn't stack billable calls. Older speculative calls aren't
@@ -60,7 +60,14 @@ export class LLMClient {
     return this._call('concept', seed, context, placeholderConcept);
   }
 
-  async approach(seed, context = {}) {
+  /**
+   * Tier 2 chain. `onDirect` (optional) fires as soon as /tier2/direct
+   * resolves — name, palette, atmosphere, and landmark names are final at
+   * that point, so callers can put the words on screen ~12s before the
+   * pick stage delivers asset IDs. Not called on a memo cache hit (the
+   * returned promise resolves immediately with the full merged object).
+   */
+  async approach(seed, context = {}, { onDirect } = {}) {
     const key = `2:${seed >>> 0}`;
     if (this.cache[key]) return this.cache[key];
     if (this.inflight.has(key)) return this.inflight.get(key);
@@ -70,6 +77,16 @@ export class LLMClient {
       try {
         const direct = await this._call(2, seed, context, placeholderTier2, { suffix: '/direct', skipMemo: true });
         if (!direct) return null;
+
+        // The concept named this world at spawn and the player has been
+        // navigating by that name. The Tier 2 prompt says to repeat it
+        // verbatim, but enforce it here so one disobedient sample can't
+        // rename the planet between the nav ping and the approach.
+        if (context?.concept?.name) direct.name = context.concept.name;
+
+        try { onDirect?.(direct); } catch (err) {
+          console.warn('[LLM] onDirect handler failed:', err);
+        }
 
         // Pick stage: only meaningful if the catalog can produce a useful
         // shortlist. Empty catalog → skip; degraded mode → skip.
