@@ -196,6 +196,55 @@ export class LLMClient {
     });
     const anchorPack = topPackOf(hero.slice(0, 3));
 
+    // Phase 7: when the catalog can't render the premise (weak hero match)
+    // and the concept names what should exist ("votive candles"), search
+    // Poly Pizza's CC0 library via the worker proxy. Results join the hero
+    // shortlist as 'polypizza' candidates; if one is picked, its resolved
+    // record rides back on the picks as `dynamic_assets` so the client can
+    // mount it without a catalog entry. Best-effort: any failure here means
+    // "catalog only", never an error (their API guarantees no uptime).
+    const dynamicRecords = new Map();
+    const DYNAMIC_HERO_THRESHOLD = 0.02;   // RRF fused; ~ "one retriever, low rank"
+    if (this.workerURL && context?.concept?.asset_keywords?.length
+        && (hero[0]?.score ?? 0) < DYNAMIC_HERO_THRESHOLD) {
+      try {
+        const kw = context.concept.asset_keywords[0];
+        const ctl = new AbortController();
+        const tid = setTimeout(() => ctl.abort(), 6000);
+        const resp = await fetch(`${this.workerURL}/assets/search?q=${encodeURIComponent(kw)}&limit=4`, { signal: ctl.signal });
+        clearTimeout(tid);
+        if (resp.ok) {
+          const { results } = await resp.json();
+          for (const r of (results || []).slice(0, 2)) {
+            dynamicRecords.set(r.id, {
+              id: r.id,
+              name: r.name,
+              url: r.url,                     // direct Poly Pizza CDN URL
+              pack: 'polypizza',
+              creator: r.creator,
+              license: r.license,
+              family: 'default',
+              role: 'hero',
+              preserve_materials: true,       // keep authored look (and skip cohesion recolor)
+            });
+            hero.push({ id: r.id, score: 0, pack: 'polypizza', family: 'default' });
+          }
+        }
+      } catch (err) {
+        console.info('[LLM] dynamic asset search skipped:', err.message);
+      }
+    }
+    // Attach resolved records for any dynamic id that won a slot.
+    const withDynamic = (picks) => {
+      if (!picks || !dynamicRecords.size) return picks;
+      const dyn = {};
+      for (const id of [picks.hero]) {
+        if (dynamicRecords.has(id)) dyn[id] = dynamicRecords.get(id);
+      }
+      if (Object.keys(dyn).length) picks.dynamic_assets = dyn;
+      return picks;
+    };
+
     // Creature shortlist (Phase 12b) only when Tier 2 emitted inhabitant
     // hints — most worlds are uninhabited and skip the role entirely. No
     // pack-cohesion boost: the animal packs are their own kit by design.
@@ -237,7 +286,7 @@ export class LLMClient {
 
     if (!this.workerURL) {
       // No worker — pick top-1 per slot deterministically.
-      return degradedPick(hero, landmark, surface, creature);
+      return withDynamic(degradedPick(hero, landmark, surface, creature));
     }
 
     try {
@@ -281,10 +330,10 @@ export class LLMClient {
       });
       clearTimeout(timeoutId);
       if (!resp.ok) throw new Error(`worker ${resp.status}`);
-      return await resp.json();
+      return withDynamic(await resp.json());
     } catch (err) {
       console.warn('[LLM] tier2 pick fetch failed; degraded pick:', err.message);
-      return degradedPick(hero, landmark, surface, creature);
+      return withDynamic(degradedPick(hero, landmark, surface, creature));
     }
   }
 

@@ -29,7 +29,8 @@ export class AccountDrawer {
       return;
     }
     this.list.innerHTML = u.anonymous ? this._anonymousHTML() : this._knownHTML(u);
-    if (this.btn) this.btn.textContent = u.anonymous ? 'ACCOUNT · ANON' : `ACCOUNT · ${shortEmail(u.email)}`;
+    if (this.btn) this.btn.textContent = u.anonymous ? 'ACCOUNT · ANON' : `ACCOUNT · ${shortEmail(u.email)}  <p class="muted small"><a href="/credits.html" target="_blank" rel="noopener">model & world credits</a></p>
+    `;
   }
 
   _anonymousHTML() {
@@ -43,6 +44,7 @@ export class AccountDrawer {
       <hr>
       <button data-act="export">DOWNLOAD MY DATA</button>
       <button data-act="forget" class="danger">FORGET THIS BROWSER</button>
+      <p class="muted small"><a href="/credits.html" target="_blank" rel="noopener">model & world credits</a></p>
     `;
   }
 

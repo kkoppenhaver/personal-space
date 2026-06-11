@@ -104,7 +104,10 @@ export async function loadInstance(url, matSet, renderer, assetMeta) {
   // meshes since we override materials on the cloned tree below.
   const root = gltf.scene.clone(true);
   root.userData.bbox = gltf.scene.userData.bbox;
-  if (matSet) applyMaterialSet(root, matSet, assetMeta || {});
+  // Dynamic assets (Poly Pizza, Phase 7) keep their authored materials —
+  // they're textured/vertex-colored one-offs, not kit pieces that need the
+  // planet's cohesion recolor.
+  if (matSet && !assetMeta?.preserveMaterials) applyMaterialSet(root, matSet, assetMeta || {});
   // Recompute bounding spheres so frustum culling under floating-origin is
   // correct (GLB-supplied bounds are valid pre-clone but become stale on
   // any per-mesh transform we apply downstream).
