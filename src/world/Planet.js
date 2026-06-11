@@ -6,7 +6,6 @@ import {
   buildLandmarkMeshes,
   buildLandmarkInstance,
 } from './Landmarks.js';
-import { rollArchetype } from './Archetypes.js';
 import {
   buildInstancedFeatures,
   buildInstancedFeaturesFromAssets,
@@ -77,22 +76,30 @@ export class Planet {
     // Null means "no GLB visuals" → claim captures the procedural frame now.
     this.reveal = null;
 
-    // Archetype roll (Phase 12a) — deterministic from the seed, known
-    // BEFORE any LLM round-trip, so terrain can actually be an ocean when
-    // the world is an ocean world. Also sent to /tier2/direct as a creative
-    // constraint (see LLMClient/main.js).
-    this.archetype = rollArchetype(seed);
+    // Concept spine (Phase 14a). Planets construct with seed-default
+    // terrain; the spawn-time concept call (LLMClient.concept, cached per
+    // seed) lands async and may reshape terrain + composition via
+    // applyConcept — invisible at spawn distance. The concept object is
+    // the single source of truth every LLM tier elaborates.
+    this.concept = null;
+    this.terrainParams = { seaLevelQuantile: 0.42, ampScale: 1.0 };
+    this.composition = {
+      landmarkSlots: 4,
+      surfaceKinds: 2,
+      openWaterHero: false,
+      heroScale: 1.0,
+      creatureBudget: 0.35,
+      densityHint: null,
+    };
 
-    const built = buildPlanetGeometry({
-      seed,
-      radius,
-      seaLevelQuantile: this.archetype.terrain.seaLevelQuantile,
-      ampScale: this.archetype.terrain.ampScale,
-    });
-    this.geometry = built.geometry;
-    this.elevations = built.elevations;
-    this.palette = built.palette;
-    this.seaLevel = built.seaLevel;
+    // Rapier refs kept for applyConcept's collider rebuild.
+    this._rapier = rapier;
+    this._world = world;
+    // Set by SolarSystem so its collider-handle registry survives terrain
+    // rebuilds (a Rapier trimesh can't mutate — swap means a new handle).
+    this.onColliderSwap = null;
+
+    this._buildTerrainState();
 
     const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
     this.mesh = new THREE.Mesh(this.geometry, mat);
@@ -101,43 +108,6 @@ export class Planet {
     // Tag so the MaterialSet audit (Phase 6) exempts the terrain — it uses
     // its own vertex-colored material, not a per-mesh matSet clone.
     this.mesh.userData.matSlot = 'terrain';
-
-    // Sampler for fast altitude queries without raycasting.
-    this.sample = makeTerrainSampler({
-      seed, radius,
-      seaLevel: built.seaLevel,
-      ampScale: this.archetype.terrain.ampScale,
-    });
-
-    // Pick landmark slots from the actual mesh. Stable for a given seed —
-    // applyVisuals later binds GLB clones to these same slots. Slot count
-    // is archetype-driven: hero slot + composition.landmarkSlots (a
-    // monolith world is one colossal thing and nothing else).
-    this.landmarks = pickLandmarkSlots({
-      geometry: this.geometry,
-      elevations: this.elevations,
-      radius,
-      seed,
-      count: Math.max(1, 1 + this.archetype.composition.landmarkSlots),
-      seaLevel: this.seaLevel,
-    });
-
-    // Ocean-ish archetypes put the hero ON the water (a ship, a wreck) —
-    // add a deep-water slot after the land slots. Best-effort: a planet
-    // with no deep water just keeps its land hero.
-    if (this.archetype.composition.openWaterHero) {
-      const waterSlot = pickOpenWaterSlot({
-        geometry: this.geometry,
-        elevations: this.elevations,
-        seed,
-        seaLevel: this.seaLevel,
-        avoidDirs: this.landmarks.map((s) => s.direction),
-      });
-      if (waterSlot) {
-        waterSlot.slotId = this.landmarks.length;
-        this.landmarks.push(waterSlot);
-      }
-    }
 
     // Procedural landmark + feature groups — visible from spawn so the planet
     // never looks empty during approach. applyVisuals will swap these out
@@ -165,6 +135,64 @@ export class Planet {
     this.group.position.copy(this.center);
 
     // Rapier trimesh collider
+    const bodyDesc = rapier.RigidBodyDesc.fixed().setTranslation(center.x, center.y, center.z);
+    this.body = world.createRigidBody(bodyDesc);
+    this.collider = this._createCollider();
+  }
+
+  // ── Concept spine (Phase 14a) ───────────────────────────────────────
+
+  /**
+   * Build (or rebuild) everything derived from the terrain parameters:
+   * geometry, elevations, sea level, altitude sampler, landmark slots
+   * (incl. the open-water hero slot when composition asks for one).
+   * Pure state — mesh/groups/collider wiring is the caller's job.
+   */
+  _buildTerrainState() {
+    const built = buildPlanetGeometry({
+      seed: this.seed,
+      radius: this.radius,
+      seaLevelQuantile: this.terrainParams.seaLevelQuantile,
+      ampScale: this.terrainParams.ampScale,
+    });
+    this.geometry = built.geometry;
+    this.elevations = built.elevations;
+    // Don't clobber an LLM-supplied palette on rebuild (applyConcept runs
+    // before Tier 2, but belt-and-braces).
+    if (!this.palette) this.palette = built.palette;
+    this.seaLevel = built.seaLevel;
+
+    this.sample = makeTerrainSampler({
+      seed: this.seed,
+      radius: this.radius,
+      seaLevel: built.seaLevel,
+      ampScale: this.terrainParams.ampScale,
+    });
+
+    this.landmarks = pickLandmarkSlots({
+      geometry: this.geometry,
+      elevations: this.elevations,
+      radius: this.radius,
+      seed: this.seed,
+      count: Math.max(1, 1 + this.composition.landmarkSlots),
+      seaLevel: this.seaLevel,
+    });
+    if (this.composition.openWaterHero) {
+      const waterSlot = pickOpenWaterSlot({
+        geometry: this.geometry,
+        elevations: this.elevations,
+        seed: this.seed,
+        seaLevel: this.seaLevel,
+        avoidDirs: this.landmarks.map((s) => s.direction),
+      });
+      if (waterSlot) {
+        waterSlot.slotId = this.landmarks.length;
+        this.landmarks.push(waterSlot);
+      }
+    }
+  }
+
+  _createCollider() {
     const indices = this.geometry.index ? this.geometry.index.array : null;
     const vertices = this.geometry.attributes.position.array;
     const idxArray = indices ? new Uint32Array(indices) : new Uint32Array((() => {
@@ -173,12 +201,75 @@ export class Planet {
       for (let i = 0; i < n; i++) a[i] = i;
       return a;
     })());
-    const bodyDesc = rapier.RigidBodyDesc.fixed().setTranslation(center.x, center.y, center.z);
-    this.body = world.createRigidBody(bodyDesc);
-    const colDesc = rapier.ColliderDesc.trimesh(new Float32Array(vertices), idxArray)
+    const colDesc = this._rapier.ColliderDesc.trimesh(new Float32Array(vertices), idxArray)
       .setFriction(0.6).setRestitution(0.2)
-      .setActiveEvents(rapier.ActiveEvents.COLLISION_EVENTS);
-    this.collider = world.createCollider(colDesc, this.body);
+      .setActiveEvents(this._rapier.ActiveEvents.COLLISION_EVENTS);
+    return this._world.createCollider(colDesc, this.body);
+  }
+
+  /**
+   * Apply the spawn-time concept (Phase 14a): store it as the spine for
+   * the LLM tiers, update composition, and — while the planet is still
+   * untouched (no Tier 2 visuals, not claimed) — reshape the terrain to
+   * match. A Rapier trimesh can't mutate, so the collider is swapped and
+   * `onColliderSwap` lets SolarSystem re-key its registry.
+   *
+   * Runs at system spawn while the planet is a distant dot; the rebuild
+   * is invisible. If visuals are already in flight (instant re-approach
+   * edge), the concept still stores — only the terrain reshape is skipped.
+   */
+  applyConcept(concept) {
+    if (!concept) return;
+    this.concept = concept;
+
+    const clamp = (v, lo, hi, d) => (typeof v === 'number' ? Math.min(hi, Math.max(lo, v)) : d);
+    const comp = this.composition;
+    comp.landmarkSlots = clamp(concept.landmark_slots, 0, 4, comp.landmarkSlots);
+    comp.openWaterHero = !!concept.hero_on_water;
+    comp.creatureBudget = clamp(concept.creature_budget, 0, 1, comp.creatureBudget);
+    comp.densityHint = concept.density ?? comp.densityHint;
+
+    if (this.visualGen > 0 || this.claimed) return;
+
+    const sea = clamp(concept.terrain?.sea_level, 0, 0.95, this.terrainParams.seaLevelQuantile);
+    const amp = clamp(concept.terrain?.amplitude, 0.4, 1.4, this.terrainParams.ampScale);
+    const landSlots = this.landmarks.filter((s) => s.kind !== 'open-water').length;
+    const changed = Math.abs(sea - this.terrainParams.seaLevelQuantile) > 0.02
+      || Math.abs(amp - this.terrainParams.ampScale) > 0.05
+      || Math.max(1, 1 + comp.landmarkSlots) !== landSlots
+      || comp.openWaterHero !== this.landmarks.some((s) => s.kind === 'open-water');
+    if (!changed) return;
+
+    this.terrainParams = { seaLevelQuantile: sea, ampScale: amp };
+
+    const oldGeometry = this.geometry;
+    this._buildTerrainState();
+    this.mesh.geometry = this.geometry;
+    oldGeometry.dispose();
+
+    const newLandmarks = buildLandmarkMeshes(this.landmarks, this.palette);
+    newLandmarks.userData.procedural = true;
+    this._replaceGroup('landmarkGroup', newLandmarks);
+
+    const newFeatures = buildInstancedFeatures({
+      geometry: this.geometry,
+      elevations: this.elevations,
+      radius: this.radius,
+      seed: this.seed,
+      palette: this.palette,
+      seaLevel: this.seaLevel,
+    });
+    newFeatures.userData.procedural = true;
+    this._replaceGroup('featuresGroup', newFeatures);
+
+    // Match SolarSystem's spawn-time culling policy for the new children.
+    this.group.traverse((child) => { child.frustumCulled = false; });
+
+    // Collider swap — new handle, registry re-key via callback.
+    const oldHandle = this.collider.handle;
+    this._world.removeCollider(this.collider, false);
+    this.collider = this._createCollider();
+    this.onColliderSwap?.(oldHandle, this.collider.handle);
   }
 
   // Distance from `pos` (world coords) along surface up direction → altitude above terrain.
@@ -260,10 +351,10 @@ export class Planet {
 
     // Archetype composition clamps (Phase 12a). The pick schema always
     // returns 3 landmarks + 2 surface kinds; the engine mounts only what
-    // the archetype calls for (a monolith world mounts none of them). The
+    // the concept calls for (a monolith world mounts none of them). The
     // clamp lives here — not in the LLM chain — so degraded/fallback picks
     // honor the composition too.
-    const comp = this.archetype.composition;
+    const comp = this.composition;
     if (Array.isArray(landmarkAssets)) landmarkAssets = landmarkAssets.slice(0, comp.landmarkSlots);
     if (Array.isArray(surfaceAssets)) surfaceAssets = surfaceAssets.slice(0, Math.max(1, comp.surfaceKinds));
 

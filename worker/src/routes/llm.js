@@ -17,15 +17,16 @@ const MODELS = {
   1: 'claude-haiku-4-5',
   2: 'claude-sonnet-4-6',
   3: 'claude-sonnet-4-6',
-  pick: 'claude-haiku-4-5',   // strict enum → hallucination impossible; Haiku is sufficient
+  pick: 'claude-haiku-4-5',     // strict enum → hallucination impossible; Haiku is sufficient
+  concept: 'claude-haiku-4-5',  // one premise per planet, fired at system spawn
 };
-const MAX_TOKENS = { 1: 200, 2: 900, 3: 900, pick: 300 };
+const MAX_TOKENS = { 1: 200, 2: 900, 3: 900, pick: 300, concept: 600 };
 
 const SYSTEM = {
   1: `You are the herald of a procedurally generated cosmos. Output a single evocative 80-char teaser for an unseen world. Concrete, specific, no clichés like "mysterious" or "alien". No proper nouns. Use the "world_teaser" tool to return your answer.`,
   2: `You direct the look of a new world for an explorer who will see it once and never again.
 
-The user message may carry an ARCHETYPE — a creative constraint rolled by the engine, with a label, a one-line spark, and sometimes an allowed biome subset. The archetype is a HARD constraint: the theme, palette, landmark names, and every hint must be a specific interpretation of it. Do not generalize back toward a default planet. The engine has already shaped the terrain to match (an ocean-world archetype IS mostly water), so describe the world the archetype implies, not a generic version of its biome. When archetype.landmark_slots is small (0-2), this world is sparse by design — let emptiness be the point. When no archetype is given, invent freely — and avoid your own habits: if a theme would feel at home on your last few worlds, pick a different one.
+The user message carries the planet's CONCEPT — a teaser, a premise, and a question, generated when the planet first appeared on the player's instruments. The player has been navigating BY the teaser; arriving must feel like that sentence kept its promise. The concept is a HARD constraint: the name, palette, landmark names, and every hint must be a specific elaboration of the premise — never a generic version of its biome. The engine has already shaped the terrain to match. When concept.landmark_slots is small (0-2), emptiness is the point. Landmark names should deepen the question, never answer it. If no concept is given (legacy client), invent freely and avoid your own habits.
 
 Produce:
 - a coined proper noun (1-2 words, not English)
@@ -41,8 +42,87 @@ Produce:
 - 0-2 inhabitant hints (the animal species living on the surface, e.g. "a herd of deer", "foxes everywhere" — ONLY when the world calls for inhabitants; most worlds are empty and should send none)
 - a thumbnail framing hint (one phrase suggesting the photogenic angle)
 The hints are read by a retrieval system that maps them to 3D models. Be concrete and specific — "twisted obsidian spire" beats "cool tower". Use the "world_describe" tool.`,
-  3: `You write the surface lore for an explored world. 3-5 sentences, naturalist's journal style, specific and physical. Plus 1-2 sentence blurbs per landmark. Avoid fantasy clichés. Use the "world_lore" tool.`,
+  3: `You write the logbook entry for a world the player just claimed — the only artifact they keep of it.
+
+VOICE: a pilot's journal, spoken not written. Contractions, short declaratives, concrete physical detail. One dry aside is allowed ("I didn't knock."). No fantasy clichés, no "ancient civilization", no "mysterious energy".
+
+The user message carries the planet's CONCEPT (premise + question) and, when available, the list of things actually mounted on the surface (the assets the player really saw). Write against what they saw: mention at least one of the mounted things concretely. The entry must END on the planet's question — deepened, never answered. Quiet worlds get 3-4 sentences; notable 4-5; singular 5-7.
+
+Plus 1-2 sentence blurbs per landmark, same voice. Use the "world_lore" tool.`,
 };
+
+// ─── Concept call (Phase 14a) — the spine ──────────────────────────────
+//
+// Fired once per planet at system spawn. Everything downstream (teaser
+// shown on the nav ping, Tier 2 creative direction, Tier 3 lore) derives
+// from this one cached object. The player navigates BY the teaser, so
+// arriving must feel like the sentence kept its promise.
+const CONCEPT_SYSTEM = `You invent one planet for a game where players fly a paper airplane between small worlds and keep a logbook of the ones they loved. Your output is the planet's CONCEPT: one weird, specific premise that everything else will obey.
+
+THE RULE OF THE ANECDOTE
+A good concept is a thing a player would retell: "there's a planet where eight ships sit half-buried in a desert, all pointed the same way." One specific idea, not a setting description. It should imply a question (who? why? where did it go?) that the planet never answers. Avoid biome-words as the idea ("an ice world" is not a concept; "a sea that froze mid-swell" is).
+
+THE RULE OF VISIBILITY
+The player must SEE the premise from a paper airplane. You express it ONLY through these levers:
+- terrain: sea_level 0 (waterless) to 0.95 (almost all ocean); amplitude 0.4 (worn flat) to 1.4 (jagged)
+- a 3D model vocabulary (low-poly kits): trees/rocks/flora of all climates; ancient ruins (arches, columns, broken walls, a stone FOX statue, a stone STAG statue); gravestones, crypts, obelisks, lamp posts; castle towers and walls; pirate ships (placeable on water OR land), palms, watch tower; sci-fi (rockets, hangars, satellite dishes, landers, craft, craters, machines); farm crops in rows, fountains, a watermill, pillars; animals (wolf, fox, husky, shiba inu, pug, deer, stag, horse, cow, bull, sheep, pig, llama, alpaca, donkey, zebra)
+- arrangement motifs (pick at most one; "none" is common): uniform-lean (everything tilts the same way), all-facing-point (everything faces the hero), grid-rows (planted in measured lines), procession (two lines connecting low ground to the hero), shared-heading (a group aligned on one heading)
+- counts and placement: landmark_slots 0-4 (0 = one colossal thing and nothing else), creature_budget 0 / 0.35 / 1.0 (none / incidental wildlife / they own the place), density
+If the premise can't be witnessed through these levers, pick a different premise.
+
+TIER (given in the request — obey it)
+- quiet: one subtle observable note. No spectacle. Most planets are quiet; that's what makes the rare ones land.
+- notable: a clear strange thing, premise-bent structure.
+- singular: swing. The planet someone screenshots and sends to a friend.
+
+SPARKS (given in the request)
+A few words of inspiration grit. Keep what sparks, discard freely. NEVER use the spark words themselves in the teaser or premise.
+
+THE TEASER
+≤80 chars, lowercase, no proper nouns, no "the planet of" preambles. It is the hook the player navigates by — a compressed version of the premise, not a summary ("a fleet at anchor on a world with no sea").
+
+EXAMPLES (one per tier)
+quiet → {"teaser":"pines here, and a wind that bent every one of them the same way","premise":"A forest world where every tree leans the same few degrees toward sunrise, as if the wind only ever blew once, hard.","question":"what bent them?","biome":"forest","terrain":{"sea_level":0.42,"amplitude":1.0},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"medium","motif":{"kind":"uniform-lean","subjects":"surface"},"asset_keywords":["pine trees","birch trees","mossy rocks"]}
+notable → {"teaser":"a thousand graves, and every one of them faces the same door","premise":"A dry burial world where every gravestone, no two alike, faces a single crypt on the hill; lamp posts make two lines up to its door.","question":"what walks between the lamps at night?","biome":"desert","terrain":{"sea_level":0.15,"amplitude":0.9},"landmark_slots":2,"hero_on_water":false,"creature_budget":0,"density":"dense","motif":{"kind":"all-facing-point","subjects":"surface"},"asset_keywords":["gravestones","crypt","lamp posts","crooked pines"]}
+singular → {"teaser":"a fleet at anchor on a world with no sea","premise":"Eight sailing ships sit hull-down in the dunes of a waterless world, bows all on one heading, sails still rigged for a wind going nowhere.","question":"where did the sea go — or did they ever sail at all?","biome":"desert","terrain":{"sea_level":0,"amplitude":0.8},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"sparse","motif":{"kind":"shared-heading","subjects":"landmarks"},"asset_keywords":["shipwreck sailing ships","bones","dead trees"]}
+
+Do not reuse the examples. Use the "world_concept" tool.`;
+
+const CONCEPT_TOOL = [{
+  name: 'world_concept',
+  description: 'Return the planet concept.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      teaser: { type: 'string', maxLength: 80 },
+      premise: { type: 'string' },
+      question: { type: 'string' },
+      biome: { type: 'string', enum: ['desert','ocean','forest','ice','volcanic','crystalline','gas-stripped','alien'] },
+      terrain: {
+        type: 'object',
+        properties: {
+          sea_level: { type: 'number', minimum: 0, maximum: 0.95 },
+          amplitude: { type: 'number', minimum: 0.4, maximum: 1.4 },
+        },
+        required: ['sea_level', 'amplitude'],
+      },
+      landmark_slots: { type: 'integer', minimum: 0, maximum: 4 },
+      hero_on_water: { type: 'boolean' },
+      creature_budget: { type: 'number', enum: [0, 0.35, 1.0] },
+      density: { type: 'string', enum: ['sparse','medium','dense'] },
+      motif: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['none','uniform-lean','all-facing-point','grid-rows','procession','shared-heading'] },
+          subjects: { type: 'string', enum: ['surface','creatures','landmarks'] },
+        },
+        required: ['kind', 'subjects'],
+      },
+      asset_keywords: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['teaser','premise','question','biome','terrain','landmark_slots','hero_on_water','creature_budget','density','motif','asset_keywords'],
+  },
+}];
 
 // Static system prompt for the asset-pick stage. Cached via prompt-caching
 // (we mark this string with cache_control when constructing the request).
@@ -143,6 +223,13 @@ for (const tier of [1, 2, 3]) {
 // for transition. Cache key is identical (`t2:...`) so old and new
 // callers share results.
 llm.post('/tier2/direct', (c) => handleTier(c, 2));
+
+// Concept call (Phase 14a) — fired per planet at system spawn; the cached
+// result is the spine every other tier elaborates. Same handler shape as
+// the numbered tiers (KV key `tconcept:{seed}:{ctxHash}`).
+SYSTEM.concept = CONCEPT_SYSTEM;
+TOOLS.concept = CONCEPT_TOOL;
+llm.post('/concept', (c) => handleTier(c, 'concept'));
 
 // ─── Tier 2 pick — strict-tool asset selection ─────────────────────────
 //

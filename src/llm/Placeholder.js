@@ -25,28 +25,109 @@ export function placeholderTier1(seed) {
   return { teaser: TEASERS[Math.floor(r() * TEASERS.length)] };
 }
 
+// Deterministic offline concepts (Phase 14a). A small rotation of premade
+// premises — including the five reference planets from the Phase 14 plan —
+// so dev mode (no worker) exercises the full spine: teaser on the ping,
+// terrain override, concept-constrained Tier 2, lore against the question.
+const CONCEPTS = {
+  quiet: [
+    { teaser: 'pines here, and a wind that bent every one of them the same way',
+      premise: 'A forest world where every tree leans the same few degrees toward sunrise, as if the wind only ever blew once, hard.',
+      question: 'what bent them?',
+      biome: 'forest', terrain: { sea_level: 0.42, amplitude: 1.0 },
+      landmark_slots: 3, hero_on_water: false, creature_budget: 0, density: 'medium',
+      motif: { kind: 'uniform-lean', subjects: 'surface' },
+      asset_keywords: ['pine trees', 'birch trees', 'mossy rocks'] },
+    { teaser: 'somebody stacked every rock on this planet, once',
+      premise: 'A bare world where the loose stones sit in tidy piles, long enough ago that moss has opinions about it.',
+      question: 'who counts rocks?',
+      biome: 'gas-stripped', terrain: { sea_level: 0.2, amplitude: 0.9 },
+      landmark_slots: 2, hero_on_water: false, creature_budget: 0, density: 'sparse',
+      motif: { kind: 'none', subjects: 'surface' },
+      asset_keywords: ['stacked stones', 'small rocks', 'dead grass'] },
+    { teaser: 'an ordinary green world except all the flowers face away from the sun',
+      premise: 'A mild meadow planet whose flowers all turn their backs to the light, every one of them, like a grudge.',
+      question: 'what are they looking at instead?',
+      biome: 'forest', terrain: { sea_level: 0.4, amplitude: 1.0 },
+      landmark_slots: 3, hero_on_water: false, creature_budget: 0.35, density: 'dense',
+      motif: { kind: 'uniform-lean', subjects: 'surface' },
+      asset_keywords: ['flowers', 'grass clumps', 'bushes', 'deer'] },
+  ],
+  notable: [
+    { teaser: 'a thousand graves, and every one of them faces the same door',
+      premise: 'A dry burial world where every gravestone, no two alike, faces a single crypt on the hill; lamp posts make two lines up to its door.',
+      question: 'what walks between the lamps at night?',
+      biome: 'desert', terrain: { sea_level: 0.15, amplitude: 0.9 },
+      landmark_slots: 2, hero_on_water: false, creature_budget: 0, density: 'dense',
+      motif: { kind: 'all-facing-point', subjects: 'surface' },
+      asset_keywords: ['gravestones', 'crypt', 'lamp posts', 'crooked pines'] },
+    { teaser: 'the foxes keep a statue of a fox',
+      premise: 'Ruins overrun by foxes, and at the center a stone fox four times life size, worn smooth at the base. Nothing else here is carved.',
+      question: 'who carved it — and why only the one?',
+      biome: 'forest', terrain: { sea_level: 0.42, amplitude: 1.0 },
+      landmark_slots: 2, hero_on_water: false, creature_budget: 1.0, density: 'medium',
+      motif: { kind: 'all-facing-point', subjects: 'creatures' },
+      asset_keywords: ['fox statue', 'broken columns', 'overgrown walls', 'foxes'] },
+    { teaser: 'an orchard in perfect rows; the sea took the back half',
+      premise: 'Crops planted in measured rows that run straight at the shore and keep going in — stalk tops still visible in the shallows.',
+      question: 'where did the waterline used to be?',
+      biome: 'ocean', terrain: { sea_level: 0.6, amplitude: 1.0 },
+      landmark_slots: 2, hero_on_water: false, creature_budget: 0, density: 'medium',
+      motif: { kind: 'grid-rows', subjects: 'surface' },
+      asset_keywords: ['corn crops in rows', 'palm trees', 'watermill', 'fountain'] },
+  ],
+  singular: [
+    { teaser: 'a fleet at anchor on a world with no sea',
+      premise: 'Eight sailing ships sit hull-down in the dunes of a waterless world, bows all on one heading, sails still rigged for a wind going nowhere.',
+      question: 'where did the sea go — or did they ever sail at all?',
+      biome: 'desert', terrain: { sea_level: 0, amplitude: 0.8 },
+      landmark_slots: 3, hero_on_water: false, creature_budget: 0, density: 'sparse',
+      motif: { kind: 'shared-heading', subjects: 'landmarks' },
+      asset_keywords: ['shipwreck sailing ships', 'bones', 'dead trees'] },
+    { teaser: 'one tower, and the ten thousand stones that almost made it taller',
+      premise: 'A single colossal tower on an empty world, ringed by neat piles of cut stone that never made it up — abandoned one course from done.',
+      question: 'what made them stop?',
+      biome: 'ice', terrain: { sea_level: 0.1, amplitude: 0.5 },
+      landmark_slots: 0, hero_on_water: false, creature_budget: 0, density: 'sparse',
+      motif: { kind: 'none', subjects: 'surface' },
+      asset_keywords: ['colossal tower', 'cut stone blocks', 'stone piles'] },
+  ],
+};
+
+export function placeholderConcept(seed, context = {}) {
+  const r = mulberry32((seed ^ 0xC0CE) >>> 0);
+  const tier = context?.tier && CONCEPTS[context.tier] ? context.tier : 'quiet';
+  const pool = CONCEPTS[tier];
+  return { ...pool[Math.floor(r() * pool.length)] };
+}
+
 export function placeholderTier2(seed, context = {}) {
   const r = mulberry32((seed ^ 0xa53f) >>> 0);
   const name = `${NAME_SYL_A[Math.floor(r() * NAME_SYL_A.length)]}${NAME_SYL_B[Math.floor(r() * NAME_SYL_B.length)]}`;
-  // Honor the engine's archetype constraint the way the real Tier 2 would:
-  // biome from the allowed subset, theme from the label, density from the
-  // hint, and (for a few archetypes) hero hints that retrieval can map to
-  // the right kit. Keeps dev mode (no worker) exercising ocean worlds etc.
-  const arch = context?.archetype || null;
-  const biomePool = arch?.biomes?.length ? arch.biomes : BIOMES;
-  const biome = biomePool[Math.floor(r() * biomePool.length)];
+  // Concept-aware (Phase 14a): elaborate the spine when present — biome,
+  // density, and retrieval hints all derive from the premise the player
+  // navigated by. Falls back to biome-table behavior for legacy callers.
+  // Spread-copy: the per-keyword overrides below must not mutate the table.
+  const concept = context?.concept || null;
+  const biome = concept?.biome || BIOMES[Math.floor(r() * BIOMES.length)];
   const palette = paletteForBiome(biome, r);
-  const hints = { ...hintsForBiome(biome), ...archetypeHintOverrides(arch?.id) };
+  const hints = { ...hintsForBiome(biome) };
+  if (concept?.asset_keywords?.length) {
+    const kw = concept.asset_keywords;
+    hints.hero = [kw[0]];
+    hints.landmark = kw.slice(1).length ? kw.slice(1) : hints.landmark;
+    hints.surface = kw.slice(1).length ? kw.slice(1) : hints.surface;
+  }
   const densities = ['sparse', 'medium', 'dense'];
-  const density = arch?.density_hint || densities[Math.floor(r() * densities.length)];
+  const density = concept?.density || densities[Math.floor(r() * densities.length)];
   return {
     name,
     biome,
     palette,
     atmosphere: 'Thin air, a faint hum.',
-    theme: arch?.label || hints.theme,
+    theme: concept?.teaser?.split(',')[0]?.slice(0, 40) || hints.theme,
     density,
-    ...(hints.inhabitants ? { inhabitant_hints: hints.inhabitants } : {}),
+    ...(concept?.creature_budget > 0 ? { inhabitant_hints: [concept.asset_keywords?.find((k) => /fox|deer|wolf|husky|animal|sheep|pig|cow|herd/i.test(k)) || 'wild animals'] } : {}),
     hero_landmark_hints:    hints.hero,
     landmark_anchor_hints:  hints.landmark,
     surface_feature_hints:  hints.surface,
@@ -66,32 +147,6 @@ export function placeholderTier3(seed) {
     surfaceLore: 'The surface is quieter than expected. Strange how a place can feel deserted and watched at the same time.',
     landmarkLore: [],
   };
-}
-
-// Per-archetype hint overrides — the placeholder's stand-in for the real
-// LLM interpreting the spark. Only archetypes whose hero differs sharply
-// from their biome default need an entry; everything else falls through
-// to the biome table.
-function archetypeHintOverrides(id) {
-  const table = {
-    'ruled-by-creatures':  {
-      hero: ['great weathered statue of the ruling species', 'monumental stone animal figure'],
-      inhabitants: ['a herd of wild animals everywhere', 'deer fox wolf husky shiba inu roaming'],
-    },
-    'garden-world':        {
-      hero: ['great fountain among tended fields', 'old windmill over crop rows'],
-      inhabitants: ['farm animals grazing', 'sheep pig cow donkey in pastures'],
-    },
-    'ocean-world':         { hero: ['weathered sailing ship adrift on open water', 'ghost ship with torn sails'] },
-    'shipwreck-graveyard': { hero: ['wrecked pirate ship broken on the rocks', 'half-sunk hull on the shore'] },
-    'frozen-ocean':        { hero: ['ship frozen into the ice mid-voyage', 'icebound ghost ship'] },
-    'necropolis':          { hero: ['monumental crypt on a barren rise', 'great stone mausoleum'] },
-    'fortress-world':      { hero: ['towering castle keep on a crag', 'fortified stone tower'] },
-    'launch-site':         { hero: ['abandoned rocket on its launch pad', 'tall gantry tower with cargo'] },
-    'monolith-world':      { hero: ['one colossal monolith dominating the horizon', 'a single immense tower'] },
-    'ruin-field':          { hero: ['broken triumphal arch of a lost city', 'ruined colonnade on a hill'] },
-  };
-  return table[id] || {};
 }
 
 // Per-biome retrieval hints. These mirror what the real Tier 2 LLM would
