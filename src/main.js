@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 
 import { TUNING } from './game/Tuning.js';
+import { Contrail } from './game/Contrail.js';
 import { GameLoop } from './game/GameLoop.js';
 import { Input } from './game/Input.js';
 import { Plane } from './game/Plane.js';
@@ -87,16 +88,25 @@ async function main() {
 
   const camera = new THREE.PerspectiveCamera(TUNING.FOV_BASE, innerWidth / innerHeight, 0.1, 20000);
 
-  // Lights. Tuned for "no truly dark side" — even when the planet is between
-  // the player and the sun, surface remains readable.
-  const sunLight = new THREE.DirectionalLight(0xfff2d6, 0.75);
+  // Lights. The key light comes from the ACTIVE SYSTEM'S SUN (re-aimed
+  // every frame at the active planet) — it used to be a fixed world
+  // direction, so the terminator never matched the sun you could see.
+  // The night side stays readable via a cool, low fill + a hemisphere
+  // light whose "up" follows the plane's radial up (a world-Y hemisphere
+  // painted the bottom of every planet in ground color).
+  const sunLight = new THREE.DirectionalLight(0xfff2d6, 3.4);
   sunLight.position.set(220, 180, 120);
   scene.add(sunLight);
-  const fill = new THREE.DirectionalLight(0xcbd9ff, 0.45);
+  scene.add(sunLight.target);
+  const fill = new THREE.DirectionalLight(0x9fb4ff, 1.35);
   fill.position.set(-220, -120, -150);
   scene.add(fill);
-  scene.add(new THREE.HemisphereLight(0xc4dcff, 0x6b573d, 0.95));
-  scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+  scene.add(fill.target);
+  const hemi = new THREE.HemisphereLight(0xc4dcff, 0x4a3d2c, 0.9);
+  scene.add(hemi);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.12));
+  const _sunDir = new THREE.Vector3();
+  const _radialUp = new THREE.Vector3();
 
   // 3. Rapier world (no global gravity — we apply our own per-frame radial pull)
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
@@ -109,6 +119,7 @@ async function main() {
   // 4. Plane allocation (spawn deferred — needs galaxy.defaultSpawn() below)
   const plane = new Plane({ rapier: RAPIER, world });
   scene.add(plane.group);
+  const contrail = new Contrail(scene);
 
   // 5. Flight + camera
   const input = new Input();
@@ -766,10 +777,21 @@ async function main() {
       // Floating-origin rebase. Runs after physics + sync so every per-step
       // computation above sees consistent positions; the shift applies to the
       // plane and every loaded system together so the player never sees a pop.
+      // Wingtip contrails: sampled at the fixed rate so trail length is
+      // time-constant regardless of display refresh. Stronger with speed,
+      // hidden when grounded/crashed.
+      if (plane.state === 'flying') {
+        const spd = plane.velocity().length();
+        contrail.update(plane.group, plane.right(), THREE.MathUtils.clamp((spd - 12) / 20, 0.25, 1));
+      } else {
+        contrail.clear();
+      }
+
       const shift = origin.maybeRebase(plane.position());
       if (shift) {
         plane.translate(shift);
         galaxy.translate(shift);
+        contrail.translate(shift);
       }
 
       // Galaxy streaming pass. Spawns systems entering SPAWN_RADIUS (bounded
@@ -821,19 +843,39 @@ async function main() {
       for (const ref of galaxy.allPlanets()) {
         if (ref.planet.reveal) ref.planet.tickReveal(dt, planePos, camera, ref.atmosphere);
       }
-      // Sky color blend (sun tint near the surface)
-      const r = activeAtmosphere.density(plane.position());
+      // Key light from the active system's sun onto the active planet.
+      const sunPos = activeSystem?.sun?.position;
+      if (sunPos && activePlanet) {
+        _sunDir.copy(sunPos).sub(activePlanet.center).normalize();
+        sunLight.target.position.copy(activePlanet.center);
+        sunLight.position.copy(activePlanet.center).addScaledVector(_sunDir, 400);
+        fill.target.position.copy(activePlanet.center);
+        fill.position.copy(activePlanet.center).addScaledVector(_sunDir, -400);
+        sunLight.color.copy(activeSystem.sunColor).lerp(new THREE.Color(0xffffff), 0.55);
+        _radialUp.copy(planePos).sub(activePlanet.center).normalize();
+        hemi.position.copy(_radialUp);
+      }
+      for (const ref of galaxy.allPlanets()) {
+        if (ref.system.sun) ref.atmosphere.setSun(ref.system.sun.position, ref.system.sunColor);
+      }
+
+      // Sky: the atmosphere shell now paints the sky itself (thin overhead,
+      // pale at the horizon, dark on the night side), so the clear color
+      // only needs to be a deep backdrop — slightly lifted inside so the
+      // zenith reads as deep blue rather than space-black.
+      const r = activeAtmosphere.density(planePos);
+      const dayAtPlane = sunPos ? THREE.MathUtils.smoothstep(_radialUp.dot(_sunDir), -0.2, 0.4) : 1;
       const skyA = new THREE.Color(0x04060c);
-      const tintSun = activeSystem?.sunColor || new THREE.Color(0xfff2d6);
-      const skyB = new THREE.Color(0x8bb8dc).lerp(tintSun, 0.25);
-      scene.background = null;
-      renderer.setClearColor(new THREE.Color().lerpColors(skyA, skyB, r), 1.0);
-      scene.fog.density = 0.00018 * r + 0.00004;
-      // Tint the haze toward the active planet's sky so the pre-entry veil
-      // reads as colored atmosphere rather than a dark void. Falls back to the
-      // original deep-space color when no palette is available.
       const skyHex = activePlanet?.palette?.sky;
-      scene.fog.color.set(skyHex || 0x05060a).lerp(new THREE.Color(0x05060a), 1 - r);
+      const skyB = new THREE.Color(skyHex || 0x8bb8dc).multiplyScalar(0.18 * dayAtPlane);
+      scene.background = null;
+      galaxy.starfield.material.opacity = 0.95 * (1 - 0.92 * r * dayAtPlane);
+      renderer.setClearColor(new THREE.Color().lerpColors(skyA, skyB, r), 1.0);
+      scene.fog.density = 0.0012 * r + 0.00004;
+      // Haze toward the planet's sky color (daylit) so distant terrain
+      // melts into the horizon; night side hazes toward dark blue.
+      scene.fog.color.set(skyHex || 0x8bb8dc).multiplyScalar(0.25 + 0.6 * dayAtPlane)
+        .lerp(new THREE.Color(0x05060a), 1 - r);
       renderer.render(scene, camera);
     },
   });

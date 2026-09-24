@@ -129,17 +129,18 @@ export class SolarSystem {
     );
     group.add(core);
 
-    // Two halo shells for a soft falloff that reads from far away.
-    const halo = new THREE.Mesh(
-      new THREE.SphereGeometry(SUN_RADIUS * 1.6, 28, 18),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.30, depthWrite: false, side: THREE.BackSide }),
-    );
-    group.add(halo);
-    const outerHalo = new THREE.Mesh(
-      new THREE.SphereGeometry(SUN_RADIUS * 2.8, 28, 18),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.BackSide }),
-    );
-    group.add(outerHalo);
+    // Camera-facing additive glow instead of nested translucent shells —
+    // shells read as flat "onion rings" when you fly near them.
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: sunGlowTexture(),
+      color,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      fog: false,
+    }));
+    glow.scale.setScalar(SUN_RADIUS * 9);
+    group.add(glow);
 
     return group;
   }
@@ -237,4 +238,24 @@ function shuffled(n, rand) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+let _sunGlowTex = null;
+function sunGlowTexture() {
+  if (_sunGlowTex) return _sunGlowTex;
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0.0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.11, 'rgba(255,255,255,0.9)');
+  g.addColorStop(0.2, 'rgba(255,255,255,0.35)');
+  g.addColorStop(0.45, 'rgba(255,255,255,0.08)');
+  g.addColorStop(1.0, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  _sunGlowTex = new THREE.CanvasTexture(c);
+  _sunGlowTex.colorSpace = THREE.SRGBColorSpace;
+  return _sunGlowTex;
 }
