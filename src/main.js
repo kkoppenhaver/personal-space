@@ -4,6 +4,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from './game/Tuning.js';
 import { Contrail } from './game/Contrail.js';
 import { Motes, moteKindFor } from './world/Motes.js';
+import { WATER_TIME } from './world/Water.js';
 import { GameLoop } from './game/GameLoop.js';
 import { Input } from './game/Input.js';
 import { Plane } from './game/Plane.js';
@@ -53,6 +54,14 @@ function readSavedPosition(saved) {
 // Galaxy-space cell key, matching Galaxy._cellKeyOf semantics.
 function cellKeyOf(pos) {
   return `${Math.floor(pos[0] / CELL_SIZE)},${Math.floor(pos[1] / CELL_SIZE)},${Math.floor(pos[2] / CELL_SIZE)}`;
+}
+
+// The name the player navigated by. The concept coins it at spawn and
+// every surface should agree; a Tier 2 response cached by seed alone can
+// carry an older name (it showed up as a different name on the survey
+// bar than on the teaser strip), so the concept wins.
+function planetNameOf(p) {
+  return p?.concept?.name || p?.meta?.name || null;
 }
 
 async function main() {
@@ -113,6 +122,7 @@ async function main() {
   scene.add(new THREE.AmbientLight(0xffffff, 0.12));
   const _sunDir = new THREE.Vector3();
   const _radialUp = new THREE.Vector3();
+  const _waterSun = new THREE.Vector3();
 
   // 3. Rapier world (no global gravity — we apply our own per-frame radial pull)
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
@@ -247,7 +257,7 @@ async function main() {
 
         planetNav.track(`planet:${p.seed}`, {
           object: p.group,
-          label: (p.meta?.name || `P${i + 1}`).toUpperCase(),
+          label: (planetNameOf(p) || `P${i + 1}`).toUpperCase(),
           color: '#9ec8ff',
           getDistance: () => Math.max(0, plane.position().distanceTo(p.center) - p.radius),
         });
@@ -307,14 +317,15 @@ async function main() {
     const applyWords = (meta) => {
       wordsApplied = true;
       planet.applyLLM(meta);
-      const label = (meta.name || `P?`).toUpperCase();
+      const name = planetNameOf(planet);
+      const label = (name || `P?`).toUpperCase();
       planetNav.setLabel(`planet:${planet.seed}`, label);
       const existing = pings.get(planet.seed);
       if (existing) {
         existing.name = label;
         refreshPings();
       }
-      if (planet === activePlanet) hud.setPlanetName(meta.name);
+      if (planet === activePlanet) hud.setPlanetName(name);
     };
     llm.approach(
       planet.seed,
@@ -666,13 +677,13 @@ async function main() {
       }
       if (entered) {
         toast.flash();
-        const name = activePlanet.meta?.name || activePlanet.concept?.name;
+        const name = planetNameOf(activePlanet);
         if (name) toast.arrive(name.toUpperCase(), activePlanet.concept?.teaser);
         else toast.show('↓ ENTERING ATMOSPHERE ↓', 1500);
         llm.land(activePlanet.seed, _tier3ContextOf(activePlanet)).catch(() => {});
       }
       if (insideNow !== prevInside || planetChanged) document.body.classList.toggle('in-atmosphere', insideNow);
-      if (planetChanged) hud.setPlanetName(activePlanet.meta?.name || activePlanet.concept?.name || null);
+      if (planetChanged) hud.setPlanetName(planetNameOf(activePlanet));
       prevInside = insideNow;
       prevActivePlanet = activePlanet;
 
@@ -708,7 +719,7 @@ async function main() {
           const baseline = cov.baseline();
           const denom = Math.max(0.001, TUNING.CLAIM_COVERAGE - baseline);
           const progress = Math.min(1, Math.max(0, (cov.pct() - baseline) / denom));
-          hud.setClaimProgress(activePlanet.meta?.name || `P${activePlanet.seed}`, progress);
+          hud.setClaimProgress(planetNameOf(activePlanet) || 'UNCHARTED', progress);
         } else {
           hud.setClaimProgress(null, 0);
         }
@@ -716,7 +727,7 @@ async function main() {
         if (claimCandidate) {
           const p = claimCandidate;
           p.claimed = true;
-          const name = p.meta?.name || `Unnamed-${p.seed}`;
+          const name = planetNameOf(p) || `Unnamed-${p.seed}`;
           toast.show(`${name.toUpperCase()} · CLAIMED`, 2200, '#ffd66b');
 
           // Diversity: demote this planet's chosen assets so the next
@@ -880,8 +891,14 @@ async function main() {
         _radialUp.copy(planePos).sub(activePlanet.center).normalize();
         hemi.position.copy(_radialUp);
       }
+      WATER_TIME.value += dt;
       for (const ref of galaxy.allPlanets()) {
-        if (ref.system.sun) ref.atmosphere.setSun(ref.system.sun.position, ref.system.sunColor);
+        if (!ref.system.sun) continue;
+        ref.atmosphere.setSun(ref.system.sun.position, ref.system.sunColor);
+        if (ref.planet.water?.mesh.visible) {
+          _waterSun.copy(ref.system.sun.position).sub(ref.planet.center).normalize();
+          ref.planet.water.setSun(_waterSun, ref.system.sunColor);
+        }
       }
 
       // Sky: the atmosphere shell now paints the sky itself (thin overhead,
@@ -1181,7 +1198,7 @@ function _tier3ContextOf(planet) {
     .map((id) => getAssetById(id)?.name)
     .filter(Boolean);
   return {
-    name: planet.meta?.name || planet.concept?.name,
+    name: planetNameOf(planet),
     biome: planet.meta?.biome,
     landmarks: planet.meta?.landmarks,
     concept: planet.concept

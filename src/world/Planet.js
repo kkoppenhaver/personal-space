@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildPlanetGeometry, colorizeTerrain } from './TerrainGen.js';
+import { buildWater } from './Water.js';
 import { rollShape, rollPattern, normalizeShape, normalizePattern } from './TerrainShapes.js';
 import {
   pickLandmarkSlots,
@@ -145,6 +146,11 @@ export class Planet {
 
     this.group = new THREE.Group();
     this.group.add(this.mesh);
+    // Animated sea shell (Phase 15c). Hidden on waterless worlds; the
+    // SolarSystem traverse disposes its geometry/material with the rest.
+    this.water = buildWater(this);
+    this.water.mesh.visible = this.terrainParams.seaLevelQuantile > 0.001;
+    this.group.add(this.water.mesh);
     this.group.add(this.landmarkGroup);
     this.group.add(this.featuresGroup);
     this.group.position.copy(this.center);
@@ -260,6 +266,7 @@ export class Planet {
     if (!changed) return;
 
     this.terrainParams = { seaLevelQuantile: sea, ampScale: amp, shape, pattern };
+    if (this.water) this.water.mesh.visible = sea > 0.001 || shape === 'archipelago';
 
     const oldGeometry = this.geometry;
     this._buildTerrainState();
@@ -813,6 +820,7 @@ export class Planet {
 
   _reTintVertexColors() {
     colorizeTerrain(this.geometry, this.surface, this.palette);
+    this.water?.setPalette(this.palette);
   }
 }
 
