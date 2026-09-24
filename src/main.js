@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 
 import { TUNING } from './game/Tuning.js';
 import { Contrail } from './game/Contrail.js';
+import { Motes, moteKindFor } from './world/Motes.js';
 import { GameLoop } from './game/GameLoop.js';
 import { Input } from './game/Input.js';
 import { Plane } from './game/Plane.js';
@@ -125,6 +126,8 @@ async function main() {
   const plane = new Plane({ rapier: RAPIER, world });
   scene.add(plane.group);
   const contrail = new Contrail(scene);
+  const motes = new Motes(scene);
+  let moteKindAt = 0;
 
   // 5. Flight + camera
   const input = new Input();
@@ -499,10 +502,25 @@ async function main() {
         const crashPoint = plane.position().clone();
         const radialOut = crashPoint.clone().sub(activePlanet.center).normalize();
         if (radialOut.lengthSq() < 1e-3) radialOut.set(1, 0, 0);
-        const safeAlt = TUNING.ATM_TOP + 30;
-        const respawnPos = activePlanet.center.clone().add(
-          radialOut.clone().multiplyScalar(activePlanet.radius + safeAlt)
-        );
+        // Respawn INSIDE the atmosphere, well above the local ground — it
+        // used to drop you above the atmosphere (ATM_TOP + 30), which also
+        // reset survey progress: a crash cost you the whole planet.
+        // Landforms are tall now (needles, one colossal peak), so clear the
+        // highest ground in a small cap around the crash site.
+        let groundMax = activePlanet.radius;
+        if (activePlanet.sample) {
+          const t1 = new THREE.Vector3().crossVectors(radialOut, new THREE.Vector3(0, 1, 0));
+          if (t1.lengthSq() < 1e-3) t1.set(1, 0, 0);
+          t1.normalize();
+          const t2 = new THREE.Vector3().crossVectors(radialOut, t1);
+          const probe = new THREE.Vector3();
+          for (const [a, b] of [[0, 0], [0.12, 0], [-0.12, 0], [0, 0.12], [0, -0.12]]) {
+            probe.copy(radialOut).addScaledVector(t1, a).addScaledVector(t2, b).normalize();
+            groundMax = Math.max(groundMax, activePlanet.sample(probe.x, probe.y, probe.z));
+          }
+        }
+        const respawnR = Math.min(groundMax + 40, activePlanet.radius + TUNING.ATM_TOP - 12);
+        const respawnPos = activePlanet.center.clone().add(radialOut.clone().multiplyScalar(respawnR));
         let respawnFwd = plane.lastSafeFwd.clone();
         respawnFwd.sub(radialOut.clone().multiplyScalar(respawnFwd.dot(radialOut)));
         if (respawnFwd.lengthSq() < 0.05) {
@@ -877,6 +895,12 @@ async function main() {
       const skyB = new THREE.Color(skyHex || 0x8bb8dc).multiplyScalar(0.18 * dayAtPlane);
       scene.background = null;
       galaxy.starfield.material.opacity = 0.95 * (1 - 0.92 * r * dayAtPlane);
+      // Ambient motes (pollen / snow / embers / spray / fireflies at night).
+      if (performance.now() > moteKindAt) {
+        motes.setKind(moteKindFor(activePlanet));
+        moteKindAt = performance.now() + 1000;
+      }
+      motes.update(dt, camera, _radialUp, r, dayAtPlane < 0.2);
       renderer.setClearColor(new THREE.Color().lerpColors(skyA, skyB, r), 1.0);
       scene.fog.density = 0.0012 * r + 0.00004;
       // Haze toward the planet's sky color (daylit) so distant terrain

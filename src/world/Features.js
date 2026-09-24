@@ -17,6 +17,8 @@ const CLUSTER_MEMBERS = 24;       // target instances per cluster — groves rea
 const CLUSTER_RADIUS_DOT = 0.978; // ~12° — grove radius (≈21m at radius 100)
 const CENTER_SPREAD_DOT = 0.92;   // ~23° minimum spacing between centers
 const CLUSTER_SHARE = 0.8;
+const HERO_CLUSTER_SHARE = 0.55; // share of groves seeded near the hero
+const HERO_NEAR_DOT = 0.57;      // ~55°
 
 /**
  * Build instanced surface scatter from selected GLB assets.
@@ -192,10 +194,21 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
     // Cluster centers: greedy angular spread over the (shuffled) pool.
     const nClusters = Math.max(1, Math.round(count / CLUSTER_MEMBERS));
     const centers = [];
-    for (const c of eligible) {
-      if (centers.length >= nClusters) break;
+    const tryCenter = (c) => {
+      if (centers.length >= nClusters) return;
       if (centers.every((ct) => ct.dir.dot(c.dir) < CENTER_SPREAD_DOT)) centers.push(c);
+    };
+    // The hero is the heart of a place: over half the groves gather
+    // within ~55° of it and thin out beyond, so flying toward the hero
+    // flies INTO something instead of over evenly-sprinkled confetti.
+    if (heroDir) {
+      const nearQuota = Math.ceil(nClusters * HERO_CLUSTER_SHARE);
+      for (const c of eligible) {
+        if (centers.length >= nearQuota) break;
+        if (c.dir.dot(heroDir) > HERO_NEAR_DOT) tryCenter(c);
+      }
     }
+    for (const c of eligible) tryCenter(c);
 
     // Members within a grove radius of any center vs strays everywhere.
     const clustered = [];
