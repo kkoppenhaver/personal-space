@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { dealShape, dealPattern } from './TerrainShapes.js';
 import { Planet } from './Planet.js';
 import { Atmosphere } from './Atmosphere.js';
 import { TUNING } from '../game/Tuning.js';
@@ -89,7 +90,10 @@ export class SolarSystem {
 
       const radius = TUNING.PLANET_RADIUS * (0.8 + prand() * 0.6);
 
-      const planet = new Planet({ rapier, world, seed: planetSeed, radius, center });
+      const planet = new Planet({
+        rapier, world, seed: planetSeed, radius, center,
+        shape: dealShape(this.seed, i), pattern: dealPattern(this.seed, i),
+      });
       const atmosphere = new Atmosphere({ planet, radius: radius + TUNING.ATM_TOP });
 
       // Disable per-mesh frustum culling under each planet. Tiny landmark and

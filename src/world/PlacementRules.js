@@ -92,18 +92,27 @@ export function slopeOf(radialDir, terrainNormal) {
 // HEIGHT per role and derive the multiplier from the asset's actual bbox.
 
 // Per-role target world height in meters [lo, hi].
+// Le Petit Prince scale: things are big relative to the world. The plane
+// is ~4.5m across and cruises 20-40m up; surface cover under ~2m tall was
+// sub-pixel from the cockpit (an orchard read as specks).
 const TARGET_HEIGHT = {
-  hero: [12, 22],
-  landmark: [5, 11],
-  surface: [0.8, 3.2],
-  creature: [0.7, 1.5],
-  default: [1, 4],
+  hero: [18, 30],
+  landmark: [7, 14],
+  surface: [3.2, 7.0],
+  creature: [1.4, 2.6],
+  default: [1.5, 5],
 };
 
 // The catalog's kit-level scale_range midpoints, per role, as authored for
 // the legacy multiplier system. A record's own scale_range mid relative to
 // this becomes a soft size bias (a "small rock" trends small) without
 // reintroducing trust in authored units.
+// Footprint caps (meters, largest horizontal extent). Height-only
+// normalization let low, wide assets balloon — a 1-unit-tall wall scaled
+// to an 8m landmark came out ~80m long and paved a quarter of a 100m
+// planet. Scale is the min of the height target and this cap.
+const MAX_FOOTPRINT = { hero: 38, landmark: 20, surface: 7, creature: 3.5, default: 8 };
+
 const ROLE_RANGE_MID = { hero: 9, landmark: 4.5, surface: 1.0, creature: 1.0, default: 1.0 };
 
 /**
@@ -124,7 +133,7 @@ const ROLE_RANGE_MID = { hero: 9, landmark: 4.5, surface: 1.0, creature: 1.0, de
  * @param {function} args.rand     - seeded PRNG ( () => [0,1) )
  * @param {number} [args.boost=1]  - archetype hero boost etc.
  */
-export function resolveScale({ role, scaleRange = null, scaleOverride = null, bboxHeight, rand, boost = 1 }) {
+export function resolveScale({ role, scaleRange = null, scaleOverride = null, bboxHeight, bboxFootprint = 0, rand, boost = 1 }) {
   const pickIn = (range) => Array.isArray(range)
     ? range[0] + (range[1] - range[0]) * rand()
     : (typeof range === 'number' ? range : 1);
@@ -142,7 +151,12 @@ export function resolveScale({ role, scaleRange = null, scaleOverride = null, bb
     const mid = (scaleRange[0] + scaleRange[1]) / 2;
     bias = Math.min(1.6, Math.max(0.5, mid / (ROLE_RANGE_MID[role] ?? ROLE_RANGE_MID.default)));
   }
-  return (target * bias * boost) / bboxHeight;
+  let scale = (target * bias * boost) / bboxHeight;
+  if (bboxFootprint > 0) {
+    const cap = ((MAX_FOOTPRINT[role] ?? MAX_FOOTPRINT.default) * boost) / bboxFootprint;
+    scale = Math.min(scale, cap);
+  }
+  return scale;
 }
 
 /**

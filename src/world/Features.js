@@ -1,22 +1,24 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from './Seed.js';
-import { axisUpQuaternionFor, groundOffsetFor, bboxHeightFor, lateralCenterFor } from './AxisUp.js';
+import { axisUpQuaternionFor, groundOffsetFor, bboxHeightFor, bboxFootprintFor, lateralCenterFor } from './AxisUp.js';
 import { blendedUp, embedFractionFor, maxSlopeFor, surfaceBandFor, resolveScale } from './PlacementRules.js';
 import { LAYOUT_MOTIFS, seededDirection, leanUp, twistToFace, gridRowPositions, processionPositions } from './Motifs.js';
 
 // Density hint → instance count multiplier. Applied to the per-asset base
 // count so a "dense" jungle planet really feels dense without flooding the
 // same vertex positions repeatedly.
-const DENSITY_MULTIPLIERS = { sparse: 0.4, medium: 1.0, dense: 2.0 };
+const DENSITY_MULTIPLIERS = { sparse: 0.45, medium: 1.0, dense: 1.8 };
 
 // Clustering tuning (Phase 13b). Real places group: groves, rock fields,
 // debris. Each asset's budget lands ~80% in a handful of angular clusters
 // and ~20% as global strays so the space between clusters isn't sterile.
-const CLUSTER_MEMBERS = 12;       // target instances per cluster
-const CLUSTER_RADIUS_DOT = 0.985; // ~10° — grove radius (≈10u at radius 60)
+const CLUSTER_MEMBERS = 24;       // target instances per cluster — groves read as masses from the air
+const CLUSTER_RADIUS_DOT = 0.978; // ~12° — grove radius (≈21m at radius 100)
 const CENTER_SPREAD_DOT = 0.92;   // ~23° minimum spacing between centers
 const CLUSTER_SHARE = 0.8;
+const HERO_CLUSTER_SHARE = 0.55; // share of groves seeded near the hero
+const HERO_NEAR_DOT = 0.57;      // ~55°
 
 /**
  * Build instanced surface scatter from selected GLB assets.
@@ -71,7 +73,7 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
   const nor = geometry.attributes.normal;
   const vCount = pos.count;
 
-  const BASE_PER_ASSET = 120;
+  const BASE_PER_ASSET = 240;
   // Per-asset budget; `budgetScale` lets creatures take a fraction of a
   // full slot (incidental wildlife) or a full one (ruled-by-creatures).
   const budgetFor = (a) => Math.floor(BASE_PER_ASSET * densityMult * (a.budgetScale ?? 1));
@@ -84,10 +86,17 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
   const tmp = new THREE.Vector3();
   const nrm = new THREE.Vector3();
   const all = [];
+  // The icosphere is non-indexed: every surface point appears in ~6
+  // triangles. Without this dedupe, candidates repeat and instances stack
+  // on the same spot.
+  const seen = new Set();
   for (let i = 0; i < vCount; i++) {
     const e = elevations[i];
     if (e < seaLevel + 0.005) continue;
     tmp.fromBufferAttribute(pos, i);
+    const key = `${Math.round(tmp.x * 20)},${Math.round(tmp.y * 20)},${Math.round(tmp.z * 20)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     const r = tmp.length();
     const dir = tmp.clone().divideScalar(r);
     let excluded = false;
@@ -114,6 +123,7 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
       bboxOffset: groundOffsetFor(bbox, a.pack, a.assetMeta),
       embedHeight: Math.max(embedFractionFor(a.family), embedBias) * bboxH,
       bboxHeight: bboxH,
+      bboxFootprint: bboxFootprintFor(bbox, a.pack, a.assetMeta),
       axisUp: axisUpQuaternionFor(a.pack, a.assetMeta),
       lateral: lateralCenterFor(bbox, a.pack, a.assetMeta),
       maxSlope: maxSlopeFor(a.family),
@@ -157,6 +167,7 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
             scaleRange: assets[aIdx].assetMeta?.scale_range ?? assets[aIdx].scaleRange,
             scaleOverride: assets[aIdx].assetMeta?.scale_override ?? null,
             bboxHeight: pa.bboxHeight,
+            bboxFootprint: pa.bboxFootprint,
             rand,
           });
           buckets[aIdx].push({
@@ -183,10 +194,21 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
     // Cluster centers: greedy angular spread over the (shuffled) pool.
     const nClusters = Math.max(1, Math.round(count / CLUSTER_MEMBERS));
     const centers = [];
-    for (const c of eligible) {
-      if (centers.length >= nClusters) break;
+    const tryCenter = (c) => {
+      if (centers.length >= nClusters) return;
       if (centers.every((ct) => ct.dir.dot(c.dir) < CENTER_SPREAD_DOT)) centers.push(c);
+    };
+    // The hero is the heart of a place: over half the groves gather
+    // within ~55° of it and thin out beyond, so flying toward the hero
+    // flies INTO something instead of over evenly-sprinkled confetti.
+    if (heroDir) {
+      const nearQuota = Math.ceil(nClusters * HERO_CLUSTER_SHARE);
+      for (const c of eligible) {
+        if (centers.length >= nearQuota) break;
+        if (c.dir.dot(heroDir) > HERO_NEAR_DOT) tryCenter(c);
+      }
     }
+    for (const c of eligible) tryCenter(c);
 
     // Members within a grove radius of any center vs strays everywhere.
     const clustered = [];
@@ -208,6 +230,7 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
         scaleRange: assets[aIdx].assetMeta?.scale_range ?? assets[aIdx].scaleRange,
         scaleOverride: assets[aIdx].assetMeta?.scale_override ?? null,
         bboxHeight: pa.bboxHeight,
+        bboxFootprint: pa.bboxFootprint,
         rand,
       });
       buckets[aIdx].push({ dir: c.dir, normal: c.normal, height: c.height, scale, twist: rand() * Math.PI * 2 });

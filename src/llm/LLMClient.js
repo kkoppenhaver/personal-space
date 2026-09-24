@@ -39,6 +39,56 @@ const RETRIEVAL_MIN_TOP_SCORE = 0.01;
 // Per-slot shortlist size handed to the pick call.
 const SHORTLIST_K = { hero: 8, landmark: 10, surface: 15, creature: 10 };
 
+/**
+ * Run one shortlist per query and fuse by best rank (ties → best score).
+ * Keeps each noun's top hits in the pool instead of letting one long
+ * blended query drift toward whatever it mentions most.
+ */
+async function multiShortlist(queries, { role, k, biomeAffinity, preferPack = null }) {
+  if (queries.length <= 1) {
+    return retrieverShortlist({ query: queries[0] || '', role, k, biomeAffinity, preferPack });
+  }
+  const per = Math.max(3, Math.ceil((k * 1.5) / queries.length));
+  const lists = await Promise.all(queries.map((query) =>
+    retrieverShortlist({ query, role, k: per, biomeAffinity, preferPack })));
+  const best = new Map();
+  lists.forEach((list) => list.forEach((c, rank) => {
+    const prev = best.get(c.id);
+    if (!prev || rank < prev.rank || (rank === prev.rank && c.score > prev.c.score)) best.set(c.id, { c, rank });
+  }));
+  return [...best.values()]
+    .sort((a, b) => (a.rank - b.rank) || (b.c.score - a.c.score))
+    .slice(0, k)
+    .map((e) => e.c);
+}
+
+// Keywords that name ground, not things — the landform/pattern system
+// already renders these, and Poly Pizza returns generic rocks and grass
+// for them. Dynamic searches skip them.
+const TERRAIN_NOUNS = new Set([
+  'dune', 'hill', 'grass', 'stone', 'rock', 'terrain', 'valley', 'ridge', 'sand', 'water', 'sea', 'ocean',
+  'field', 'meadow', 'ground', 'soil', 'earth', 'plain', 'cliff', 'canyon', 'crater', 'terrace', 'mountain',
+  'pool', 'lake', 'river', 'shore', 'island', 'formation', 'outcrop', 'deposit', 'moss', 'dust', 'ice', 'snow',
+]);
+
+/** A concept keyword worth a Poly Pizza search: names an object, not ground. */
+function isObjectKeyword(kw) {
+  const noun = headNounOf(kw);
+  return !!noun && !TERRAIN_NOUNS.has(noun);
+}
+
+/** "shipwreck sailing ships" → "ship"; "lighthouses" → "lighthouse". */
+function headNounOf(phrase) {
+  if (!phrase) return null;
+  const words = String(phrase).toLowerCase().match(/[a-z]+/g);
+  if (!words?.length) return null;
+  let w = words[words.length - 1];
+  if (w.length > 4 && w.endsWith('ies')) w = `${w.slice(0, -3)}y`;
+  else if (w.length > 3 && w.endsWith('es') && /(ch|sh|x|s)es$/.test(w)) w = w.slice(0, -2);
+  else if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) w = w.slice(0, -1);
+  return w.length >= 3 ? w : null;
+}
+
 export class LLMClient {
   constructor({ workerURL = '' } = {}) {
     this.workerURL = workerURL.replace(/\/$/, '');
@@ -193,8 +243,20 @@ export class LLMClient {
     // This is a probabilistic anchor (the LLM still picks freely from the
     // shortlist); it does NOT add a second LLM round-trip — only one extra
     // ~10-30ms shortlist hop before the parallel pair.
-    const hero = await retrieverShortlist({
-      query: heroQuery, role: 'hero', k: SHORTLIST_K.hero, biomeAffinity: direct.biome,
+    // Hero pool (Phase 15b): ANY non-creature asset can be the colossal
+    // subject. The hero-role pool is 59 assets — mostly rocket parts,
+    // spacecraft, ships and crypts — so every premise outside sci-fi /
+    // pirate / graveyard got a column or a watermill (the orchard world's
+    // hero was a bridge support). Heroes scale to 18-30m regardless of
+    // role, so a giant tree or cabbage is a legitimate Petit-Prince hero.
+    // Multi-query: each concept keyword and each hero hint gets its own
+    // retrieval, fused by best rank — one long prose query let incidental
+    // nouns win ("…orchard canopies… smooth GRASS ridge" → six grasses).
+    const conceptKw = (context?.concept?.asset_keywords || []).filter(Boolean);
+    const heroQueries = [conceptKw[0], ...(direct.hero_landmark_hints || []), heroQuery]
+      .filter(Boolean).slice(0, 4);
+    const hero = await multiShortlist(heroQueries, {
+      role: ['hero', 'landmark', 'surface'], k: SHORTLIST_K.hero, biomeAffinity: direct.biome,
     });
     const anchorPack = topPackOf(hero.slice(0, 3));
 
@@ -207,41 +269,65 @@ export class LLMClient {
     // "catalog only", never an error (their API guarantees no uptime).
     const dynamicRecords = new Map();
     const DYNAMIC_HERO_THRESHOLD = 0.02;   // RRF fused; ~ "one retriever, low rank"
-    if (this.workerURL && context?.concept?.asset_keywords?.length
-        && (hero[0]?.score ?? 0) < DYNAMIC_HERO_THRESHOLD) {
+    // Search Poly Pizza's CC0 library for `kw` and splice up to two hits
+    // into `list`. Called when the catalog can't carry the premise: a weak
+    // match, or the keyword's head noun ("lighthouses") appears in NO
+    // candidate (a decent RRF score on "tower-roof" still isn't a
+    // lighthouse). Hits lead the list with a name + note riding in
+    // shortlist_meta — appended at score 0 as opaque ids, the picker never
+    // chose them.
+    const addDynamic = async (list, kw, role, direct) => {
       try {
-        const kw = context.concept.asset_keywords[0];
         const ctl = new AbortController();
         const tid = setTimeout(() => ctl.abort(), 6000);
         const resp = await fetch(`${this.workerURL}/assets/search?q=${encodeURIComponent(kw)}&limit=4`, { signal: ctl.signal });
         clearTimeout(tid);
-        if (resp.ok) {
-          const { results } = await resp.json();
-          for (const r of (results || []).slice(0, 2)) {
-            dynamicRecords.set(r.id, {
-              id: r.id,
-              name: r.name,
-              url: r.url,                     // direct Poly Pizza CDN URL
-              pack: 'polypizza',
-              creator: r.creator,
-              license: r.license,
-              family: 'default',
-              role: 'hero',
-              preserve_materials: true,       // keep authored look (and skip cohesion recolor)
-            });
-            hero.push({ id: r.id, score: 0, pack: 'polypizza', family: 'default' });
-          }
+        if (!resp.ok) return;
+        const { results } = await resp.json();
+        for (const r of (results || []).slice(0, 2)) {
+          dynamicRecords.set(r.id, {
+            id: r.id,
+            name: r.name,
+            url: r.url,                     // direct Poly Pizza CDN URL
+            pack: 'polypizza',
+            creator: r.creator,
+            license: r.license,
+            family: 'default',
+            role,
+            preserve_materials: true,       // keep authored look (and skip cohesion recolor)
+          });
+          const cand = {
+            id: r.id, score: 0, pack: 'polypizza', family: 'default', name: r.name,
+            note: direct
+              ? `searched for "${kw}" — the catalog has nothing matching this key noun of the premise; this is a direct match`
+              : `searched for "${kw}"`,
+          };
+          if (direct) list.unshift(cand); else list.push(cand);
         }
       } catch (err) {
         console.info('[LLM] dynamic asset search skipped:', err.message);
       }
+    };
+    const missingFrom = (list, kw) => {
+      const noun = headNounOf(kw);
+      return !!noun && !list.some((c) => c.id.toLowerCase().includes(noun));
+    };
+    const objectKw = conceptKw.filter(isObjectKeyword);
+    const heroKw = objectKw[0];
+    const nounMissing = heroKw ? missingFrom(hero, heroKw) : false;
+    if (this.workerURL && heroKw
+        && ((hero[0]?.score ?? 0) < DYNAMIC_HERO_THRESHOLD || nounMissing)) {
+      await addDynamic(hero, heroKw, 'hero', nounMissing);
+    }
+    if (globalThis.__debugPicks) {
+      console.info('[LLM] hero queries', heroQueries, '→', hero.map((h) => h.id));
     }
     // Attach resolved records for any dynamic id that won a slot.
     const withDynamic = (picks) => {
       if (!picks || !dynamicRecords.size) return picks;
       const dyn = {};
-      for (const id of [picks.hero]) {
-        if (dynamicRecords.has(id)) dyn[id] = dynamicRecords.get(id);
+      for (const id of [picks.hero, picks.landmark_a, picks.landmark_b, picks.landmark_c, picks.surface_a, picks.surface_b]) {
+        if (id && dynamicRecords.has(id)) dyn[id] = dynamicRecords.get(id);
       }
       if (Object.keys(dyn).length) picks.dynamic_assets = dyn;
       return picks;
@@ -257,11 +343,21 @@ export class LLMClient {
     const landmarkRole = context?.tier === 'singular' ? ['landmark', 'hero'] : 'landmark';
     const [landmark, surface, creature] = await Promise.all([
       retrieverShortlist({ query: landmarkQuery, role: landmarkRole, k: SHORTLIST_K.landmark, biomeAffinity: direct.biome, preferPack: anchorPack }),
-      retrieverShortlist({ query: surfaceQuery, role: 'surface', k: SHORTLIST_K.surface, biomeAffinity: direct.biome, preferPack: anchorPack }),
+      multiShortlist(
+        [...(direct.surface_feature_hints || []), ...conceptKw.slice(1), surfaceQuery].filter(Boolean).slice(0, 6),
+        { role: 'surface', k: SHORTLIST_K.surface, biomeAffinity: direct.biome, preferPack: anchorPack },
+      ),
       creatureQuery
         ? retrieverShortlist({ query: creatureQuery, role: 'creature', k: SHORTLIST_K.creature, biomeAffinity: direct.biome })
         : Promise.resolve([]),
     ]);
+
+    // Landmarks go dynamic too (Phase 15b): the landmark pool is heavy on
+    // graveyard pillars and ruins, which filled 4 of 6 sampled planets
+    // regardless of premise. The concept's first secondary keyword whose
+    // noun the landmark shortlist can't carry gets a Poly Pizza search.
+    const landmarkKw = objectKw.slice(1, 3).find((kw) => missingFrom(landmark, kw));
+    if (this.workerURL && landmarkKw) await addDynamic(landmark, landmarkKw, 'landmark', true);
 
     // Threshold guard: if every shortlist is empty OR top scores are too
     // weak, skip the pick call. Saves an LLM call on garbage shortlists
@@ -438,7 +534,10 @@ function topPackOf(entries) {
 
 // Project a shortlist entry to the {id, pack, family} the worker prompt uses.
 function metaOf(e) {
-  return { id: e.id, pack: e.pack ?? null, family: e.family ?? null };
+  const m = { id: e.id, pack: e.pack ?? null, family: e.family ?? null };
+  if (e.name) m.name = e.name;
+  if (e.note) m.note = e.note;
+  return m;
 }
 
 // Deterministic top-1 fallback for when /tier2/pick can't run (no worker,

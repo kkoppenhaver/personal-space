@@ -33,12 +33,24 @@ const RECENT_KEY_PREFIX = 'personalspace:recent-assets:v1';
 // they age off the buffer (hero half-life is 12 → cap 32 ≈ 2.7×).
 const RECENT_CAP = 32;
 
-// MMR + RRF defaults. λ=0.5 is the small-catalog sweet spot (the canonical
-// 0.7 is tuned for web-scale search where relevance dominates; at ~50
-// candidates per slot our relevance ceiling is low, so we can afford to
-// lean harder on diversity). RRF k=60 is the documented default; smaller k
-// amplifies rank-1, larger averages across retrievers.
-const MMR_LAMBDA = 0.5;
+// RRF k=60 is the documented default; smaller k amplifies rank-1, larger
+// averages across retrievers.
+// Relevance weight. Relevance is max-normalized to 0..1 inside mmr() — it
+// used to be the raw RRF score (~0.01-0.03) against cosine diversity
+// (~0.2-0.9), so at λ=0.5 diversity outweighed relevance ~20× and every
+// shortlist after rank 1 was "the most dissimilar assets" (rocket panels
+// for an orchard).
+const MMR_LAMBDA = 0.7;
+
+// Prose/spatial words that match asset filenames by accident ("either
+// SIDE" → rocket_sidesA, "INNER" → terrain_sideCornerInner). Dropped at
+// index and query time.
+const BM25_STOP = new Set([
+  'a', 'an', 'the', 'of', 'on', 'in', 'at', 'to', 'and', 'or', 'with', 'its', 'their', 'is', 'are', 'as', 'by',
+  'from', 'into', 'like', 'that', 'this', 'every', 'each', 'either', 'both', 'same', 'all', 'one', 'two', 'three',
+  'side', 'sides', 'corner', 'inner', 'outer', 'edge', 'end', 'rising', 'half', 'over', 'under', 'between',
+  'across', 'along', 'around', 'still', 'never', 'always', 'near', 'far', 'where', 'which', 'who', 'what',
+]);
 const RRF_K = 60;
 
 // Recency demotion: per-role half-life on a smooth decay curve, replacing
@@ -173,10 +185,12 @@ function bm25() {
     extractField: (doc, f) =>
       Array.isArray(doc[f]) ? doc[f].join(' ') : (doc[f] ?? ''),
     processTerm: (term) =>
-      term.toLowerCase().replace(/[_-]/g, ' ').split(/\s+/).filter(Boolean),
+      term.toLowerCase().replace(/[_-]/g, ' ').split(/\s+/).filter((t) => t && !BM25_STOP.has(t)),
     searchOptions: {
       boost: { tags: 3, biome_affinity: 2, theme_affinity: 1.5, name: 1 },
-      fuzzy: 0.2,
+      // Fuzzy only on long words: at 0.2, 5-letter words tolerate one edit
+      // and "glass" matched "grass" (every greenhouse became a lawn).
+      fuzzy: (term) => (term.length >= 7 ? 0.2 : false),
       prefix: true,
       combineWith: 'OR',
     },
@@ -363,6 +377,7 @@ function mmr(candidates, queryVec, k) {
   const embeddings = new Map(catalog.assets.map((a) => [a.id, a.embedding]));
   const picked = [];
   const pool = candidates.slice();
+  const maxRel = pool.reduce((m, c) => Math.max(m, c.score || 0), 0) || 1;
   while (picked.length < k && pool.length) {
     let best = -Infinity;
     let bestIdx = 0;
@@ -370,7 +385,7 @@ function mmr(candidates, queryVec, k) {
       const c = pool[i];
       const cVec = embeddings.get(c.id);
       if (!cVec) continue;
-      const rel = c.score; // already RRF-fused
+      const rel = (c.score || 0) / maxRel; // RRF-fused, normalized to 0..1
       let div = 0;
       for (const p of picked) {
         const pVec = embeddings.get(p.id);

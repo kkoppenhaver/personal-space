@@ -3,6 +3,8 @@ import RAPIER from '@dimforge/rapier3d-compat';
 
 import { TUNING } from './game/Tuning.js';
 import { Contrail } from './game/Contrail.js';
+import { Motes, moteKindFor } from './world/Motes.js';
+import { WATER_TIME } from './world/Water.js';
 import { GameLoop } from './game/GameLoop.js';
 import { Input } from './game/Input.js';
 import { Plane } from './game/Plane.js';
@@ -54,6 +56,14 @@ function cellKeyOf(pos) {
   return `${Math.floor(pos[0] / CELL_SIZE)},${Math.floor(pos[1] / CELL_SIZE)},${Math.floor(pos[2] / CELL_SIZE)}`;
 }
 
+// The name the player navigated by. The concept coins it at spawn and
+// every surface should agree; a Tier 2 response cached by seed alone can
+// carry an older name (it showed up as a different name on the survey
+// bar than on the teaser strip), so the concept wins.
+function planetNameOf(p) {
+  return p?.concept?.name || p?.meta?.name || null;
+}
+
 async function main() {
   // Dev tools: `?contactSheet=1` boots the catalog audit grid,
   // `?placementLab=1` boots a single forced-asset planet bench — instead of
@@ -61,6 +71,11 @@ async function main() {
   if (new URLSearchParams(location.search).has('contactSheet')) {
     const { runContactSheet } = await import('./dev/ContactSheet.js');
     await runContactSheet();
+    return;
+  }
+  if (new URLSearchParams(location.search).has('terrainLab')) {
+    const { runTerrainLab } = await import('./dev/TerrainLab.js');
+    await runTerrainLab();
     return;
   }
   if (new URLSearchParams(location.search).has('placementLab')) {
@@ -107,6 +122,7 @@ async function main() {
   scene.add(new THREE.AmbientLight(0xffffff, 0.12));
   const _sunDir = new THREE.Vector3();
   const _radialUp = new THREE.Vector3();
+  const _waterSun = new THREE.Vector3();
 
   // 3. Rapier world (no global gravity — we apply our own per-frame radial pull)
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
@@ -120,6 +136,8 @@ async function main() {
   const plane = new Plane({ rapier: RAPIER, world });
   scene.add(plane.group);
   const contrail = new Contrail(scene);
+  const motes = new Motes(scene);
+  let moteKindAt = 0;
 
   // 5. Flight + camera
   const input = new Input();
@@ -239,7 +257,7 @@ async function main() {
 
         planetNav.track(`planet:${p.seed}`, {
           object: p.group,
-          label: (p.meta?.name || `P${i + 1}`).toUpperCase(),
+          label: (planetNameOf(p) || `P${i + 1}`).toUpperCase(),
           color: '#9ec8ff',
           getDistance: () => Math.max(0, plane.position().distanceTo(p.center) - p.radius),
         });
@@ -259,6 +277,8 @@ async function main() {
           sparks: rollSparks(p.seed),
           register: rollRegister(sys.seed, i),
           name_initial: rollNameInitial(sys.seed, i),
+          terrain_shape: p.terrainParams.shape,
+          ground_pattern: p.terrainParams.pattern,
         }).then(c => {
           if (!c?.teaser) return;
           p.applyConcept(c);
@@ -297,14 +317,15 @@ async function main() {
     const applyWords = (meta) => {
       wordsApplied = true;
       planet.applyLLM(meta);
-      const label = (meta.name || `P?`).toUpperCase();
+      const name = planetNameOf(planet);
+      const label = (name || `P?`).toUpperCase();
       planetNav.setLabel(`planet:${planet.seed}`, label);
       const existing = pings.get(planet.seed);
       if (existing) {
         existing.name = label;
         refreshPings();
       }
-      if (planet === activePlanet) hud.setPlanetName(meta.name);
+      if (planet === activePlanet) hud.setPlanetName(name);
     };
     llm.approach(
       planet.seed,
@@ -347,9 +368,9 @@ async function main() {
         const resolveAsset = (id) => (id && dyn[id]) || getAssetById(id);
         const hero = resolveAsset(sel.hero);
         const landmarks = [sel.landmark_a, sel.landmark_b, sel.landmark_c]
-          .map(getAssetById);
+          .map(resolveAsset);
         const surfaces = [sel.surface_a, sel.surface_b]
-          .map(getAssetById)
+          .map(resolveAsset)
           .filter(Boolean);
         // Creature picks (Phase 12b) — deduped: the pick prompt favors one
         // species in both slots, which would double its scatter budget.
@@ -492,10 +513,25 @@ async function main() {
         const crashPoint = plane.position().clone();
         const radialOut = crashPoint.clone().sub(activePlanet.center).normalize();
         if (radialOut.lengthSq() < 1e-3) radialOut.set(1, 0, 0);
-        const safeAlt = TUNING.ATM_TOP + 30;
-        const respawnPos = activePlanet.center.clone().add(
-          radialOut.clone().multiplyScalar(activePlanet.radius + safeAlt)
-        );
+        // Respawn INSIDE the atmosphere, well above the local ground — it
+        // used to drop you above the atmosphere (ATM_TOP + 30), which also
+        // reset survey progress: a crash cost you the whole planet.
+        // Landforms are tall now (needles, one colossal peak), so clear the
+        // highest ground in a small cap around the crash site.
+        let groundMax = activePlanet.radius;
+        if (activePlanet.sample) {
+          const t1 = new THREE.Vector3().crossVectors(radialOut, new THREE.Vector3(0, 1, 0));
+          if (t1.lengthSq() < 1e-3) t1.set(1, 0, 0);
+          t1.normalize();
+          const t2 = new THREE.Vector3().crossVectors(radialOut, t1);
+          const probe = new THREE.Vector3();
+          for (const [a, b] of [[0, 0], [0.12, 0], [-0.12, 0], [0, 0.12], [0, -0.12]]) {
+            probe.copy(radialOut).addScaledVector(t1, a).addScaledVector(t2, b).normalize();
+            groundMax = Math.max(groundMax, activePlanet.sample(probe.x, probe.y, probe.z));
+          }
+        }
+        const respawnR = Math.min(groundMax + 40, activePlanet.radius + TUNING.ATM_TOP - 12);
+        const respawnPos = activePlanet.center.clone().add(radialOut.clone().multiplyScalar(respawnR));
         let respawnFwd = plane.lastSafeFwd.clone();
         respawnFwd.sub(radialOut.clone().multiplyScalar(respawnFwd.dot(radialOut)));
         if (respawnFwd.lengthSq() < 0.05) {
@@ -641,13 +677,13 @@ async function main() {
       }
       if (entered) {
         toast.flash();
-        const name = activePlanet.meta?.name || activePlanet.concept?.name;
+        const name = planetNameOf(activePlanet);
         if (name) toast.arrive(name.toUpperCase(), activePlanet.concept?.teaser);
         else toast.show('↓ ENTERING ATMOSPHERE ↓', 1500);
         llm.land(activePlanet.seed, _tier3ContextOf(activePlanet)).catch(() => {});
       }
       if (insideNow !== prevInside || planetChanged) document.body.classList.toggle('in-atmosphere', insideNow);
-      if (planetChanged) hud.setPlanetName(activePlanet.meta?.name || activePlanet.concept?.name || null);
+      if (planetChanged) hud.setPlanetName(planetNameOf(activePlanet));
       prevInside = insideNow;
       prevActivePlanet = activePlanet;
 
@@ -683,7 +719,7 @@ async function main() {
           const baseline = cov.baseline();
           const denom = Math.max(0.001, TUNING.CLAIM_COVERAGE - baseline);
           const progress = Math.min(1, Math.max(0, (cov.pct() - baseline) / denom));
-          hud.setClaimProgress(activePlanet.meta?.name || `P${activePlanet.seed}`, progress);
+          hud.setClaimProgress(planetNameOf(activePlanet) || 'UNCHARTED', progress);
         } else {
           hud.setClaimProgress(null, 0);
         }
@@ -691,7 +727,7 @@ async function main() {
         if (claimCandidate) {
           const p = claimCandidate;
           p.claimed = true;
-          const name = p.meta?.name || `Unnamed-${p.seed}`;
+          const name = planetNameOf(p) || `Unnamed-${p.seed}`;
           toast.show(`${name.toUpperCase()} · CLAIMED`, 2200, '#ffd66b');
 
           // Diversity: demote this planet's chosen assets so the next
@@ -855,8 +891,14 @@ async function main() {
         _radialUp.copy(planePos).sub(activePlanet.center).normalize();
         hemi.position.copy(_radialUp);
       }
+      WATER_TIME.value += dt;
       for (const ref of galaxy.allPlanets()) {
-        if (ref.system.sun) ref.atmosphere.setSun(ref.system.sun.position, ref.system.sunColor);
+        if (!ref.system.sun) continue;
+        ref.atmosphere.setSun(ref.system.sun.position, ref.system.sunColor);
+        if (ref.planet.water?.mesh.visible) {
+          _waterSun.copy(ref.system.sun.position).sub(ref.planet.center).normalize();
+          ref.planet.water.setSun(_waterSun, ref.system.sunColor);
+        }
       }
 
       // Sky: the atmosphere shell now paints the sky itself (thin overhead,
@@ -870,6 +912,12 @@ async function main() {
       const skyB = new THREE.Color(skyHex || 0x8bb8dc).multiplyScalar(0.18 * dayAtPlane);
       scene.background = null;
       galaxy.starfield.material.opacity = 0.95 * (1 - 0.92 * r * dayAtPlane);
+      // Ambient motes (pollen / snow / embers / spray / fireflies at night).
+      if (performance.now() > moteKindAt) {
+        motes.setKind(moteKindFor(activePlanet));
+        moteKindAt = performance.now() + 1000;
+      }
+      motes.update(dt, camera, _radialUp, r, dayAtPlane < 0.2);
       renderer.setClearColor(new THREE.Color().lerpColors(skyA, skyB, r), 1.0);
       scene.fog.density = 0.0012 * r + 0.00004;
       // Haze toward the planet's sky color (daylit) so distant terrain
@@ -1150,7 +1198,7 @@ function _tier3ContextOf(planet) {
     .map((id) => getAssetById(id)?.name)
     .filter(Boolean);
   return {
-    name: planet.meta?.name || planet.concept?.name,
+    name: planetNameOf(planet),
     biome: planet.meta?.biome,
     landmarks: planet.meta?.landmarks,
     concept: planet.concept
