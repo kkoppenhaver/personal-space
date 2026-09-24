@@ -368,9 +368,9 @@ async function main() {
         const resolveAsset = (id) => (id && dyn[id]) || getAssetById(id);
         const hero = resolveAsset(sel.hero);
         const landmarks = [sel.landmark_a, sel.landmark_b, sel.landmark_c]
-          .map(getAssetById);
+          .map(resolveAsset);
         const surfaces = [sel.surface_a, sel.surface_b]
-          .map(getAssetById)
+          .map(resolveAsset)
           .filter(Boolean);
         // Creature picks (Phase 12b) — deduped: the pick prompt favors one
         // species in both slots, which would double its scatter budget.

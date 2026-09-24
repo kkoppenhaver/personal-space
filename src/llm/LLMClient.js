@@ -62,6 +62,21 @@ async function multiShortlist(queries, { role, k, biomeAffinity, preferPack = nu
     .map((e) => e.c);
 }
 
+// Keywords that name ground, not things — the landform/pattern system
+// already renders these, and Poly Pizza returns generic rocks and grass
+// for them. Dynamic searches skip them.
+const TERRAIN_NOUNS = new Set([
+  'dune', 'hill', 'grass', 'stone', 'rock', 'terrain', 'valley', 'ridge', 'sand', 'water', 'sea', 'ocean',
+  'field', 'meadow', 'ground', 'soil', 'earth', 'plain', 'cliff', 'canyon', 'crater', 'terrace', 'mountain',
+  'pool', 'lake', 'river', 'shore', 'island', 'formation', 'outcrop', 'deposit', 'moss', 'dust', 'ice', 'snow',
+]);
+
+/** A concept keyword worth a Poly Pizza search: names an object, not ground. */
+function isObjectKeyword(kw) {
+  const noun = headNounOf(kw);
+  return !!noun && !TERRAIN_NOUNS.has(noun);
+}
+
 /** "shipwreck sailing ships" → "ship"; "lighthouses" → "lighthouse". */
 function headNounOf(phrase) {
   if (!phrase) return null;
@@ -254,50 +269,55 @@ export class LLMClient {
     // "catalog only", never an error (their API guarantees no uptime).
     const dynamicRecords = new Map();
     const DYNAMIC_HERO_THRESHOLD = 0.02;   // RRF fused; ~ "one retriever, low rank"
-    // Also go dynamic when the premise's head noun ("lighthouses") appears
-    // in NO hero candidate — a decent RRF score on "tower-roof" still
-    // isn't a lighthouse, and the catalog has none.
-    const headNoun = headNounOf(conceptKw[0]);
-    const nounMissing = headNoun && !hero.some((h) => h.id.toLowerCase().includes(headNoun));
-    if (this.workerURL && conceptKw.length
-        && ((hero[0]?.score ?? 0) < DYNAMIC_HERO_THRESHOLD || nounMissing)) {
+    // Search Poly Pizza's CC0 library for `kw` and splice up to two hits
+    // into `list`. Called when the catalog can't carry the premise: a weak
+    // match, or the keyword's head noun ("lighthouses") appears in NO
+    // candidate (a decent RRF score on "tower-roof" still isn't a
+    // lighthouse). Hits lead the list with a name + note riding in
+    // shortlist_meta — appended at score 0 as opaque ids, the picker never
+    // chose them.
+    const addDynamic = async (list, kw, role, direct) => {
       try {
-        const kw = conceptKw[0];
         const ctl = new AbortController();
         const tid = setTimeout(() => ctl.abort(), 6000);
         const resp = await fetch(`${this.workerURL}/assets/search?q=${encodeURIComponent(kw)}&limit=4`, { signal: ctl.signal });
         clearTimeout(tid);
-        if (resp.ok) {
-          const { results } = await resp.json();
-          for (const r of (results || []).slice(0, 2)) {
-            dynamicRecords.set(r.id, {
-              id: r.id,
-              name: r.name,
-              url: r.url,                     // direct Poly Pizza CDN URL
-              pack: 'polypizza',
-              creator: r.creator,
-              license: r.license,
-              family: 'default',
-              role: 'hero',
-              preserve_materials: true,       // keep authored look (and skip cohesion recolor)
-            });
-            // When the catalog has nothing carrying the premise's noun,
-            // the dynamic hits are the only true matches — lead with them
-            // (appended at score 0, the picker never chose them).
-            // name + note ride in shortlist_meta so the picker can tell an
-            // opaque "polypizza:UyH95…" is literally the premise's noun.
-            const cand = {
-              id: r.id, score: 0, pack: 'polypizza', family: 'default', name: r.name,
-              note: nounMissing
-                ? `searched for "${kw}" — the catalog has nothing matching the premise's key noun; this is a direct match`
-                : `searched for "${kw}"`,
-            };
-            if (nounMissing) hero.unshift(cand); else hero.push(cand);
-          }
+        if (!resp.ok) return;
+        const { results } = await resp.json();
+        for (const r of (results || []).slice(0, 2)) {
+          dynamicRecords.set(r.id, {
+            id: r.id,
+            name: r.name,
+            url: r.url,                     // direct Poly Pizza CDN URL
+            pack: 'polypizza',
+            creator: r.creator,
+            license: r.license,
+            family: 'default',
+            role,
+            preserve_materials: true,       // keep authored look (and skip cohesion recolor)
+          });
+          const cand = {
+            id: r.id, score: 0, pack: 'polypizza', family: 'default', name: r.name,
+            note: direct
+              ? `searched for "${kw}" — the catalog has nothing matching this key noun of the premise; this is a direct match`
+              : `searched for "${kw}"`,
+          };
+          if (direct) list.unshift(cand); else list.push(cand);
         }
       } catch (err) {
         console.info('[LLM] dynamic asset search skipped:', err.message);
       }
+    };
+    const missingFrom = (list, kw) => {
+      const noun = headNounOf(kw);
+      return !!noun && !list.some((c) => c.id.toLowerCase().includes(noun));
+    };
+    const objectKw = conceptKw.filter(isObjectKeyword);
+    const heroKw = objectKw[0];
+    const nounMissing = heroKw ? missingFrom(hero, heroKw) : false;
+    if (this.workerURL && heroKw
+        && ((hero[0]?.score ?? 0) < DYNAMIC_HERO_THRESHOLD || nounMissing)) {
+      await addDynamic(hero, heroKw, 'hero', nounMissing);
     }
     if (globalThis.__debugPicks) {
       console.info('[LLM] hero queries', heroQueries, '→', hero.map((h) => h.id));
@@ -306,8 +326,8 @@ export class LLMClient {
     const withDynamic = (picks) => {
       if (!picks || !dynamicRecords.size) return picks;
       const dyn = {};
-      for (const id of [picks.hero]) {
-        if (dynamicRecords.has(id)) dyn[id] = dynamicRecords.get(id);
+      for (const id of [picks.hero, picks.landmark_a, picks.landmark_b, picks.landmark_c, picks.surface_a, picks.surface_b]) {
+        if (id && dynamicRecords.has(id)) dyn[id] = dynamicRecords.get(id);
       }
       if (Object.keys(dyn).length) picks.dynamic_assets = dyn;
       return picks;
@@ -331,6 +351,13 @@ export class LLMClient {
         ? retrieverShortlist({ query: creatureQuery, role: 'creature', k: SHORTLIST_K.creature, biomeAffinity: direct.biome })
         : Promise.resolve([]),
     ]);
+
+    // Landmarks go dynamic too (Phase 15b): the landmark pool is heavy on
+    // graveyard pillars and ruins, which filled 4 of 6 sampled planets
+    // regardless of premise. The concept's first secondary keyword whose
+    // noun the landmark shortlist can't carry gets a Poly Pizza search.
+    const landmarkKw = objectKw.slice(1, 3).find((kw) => missingFrom(landmark, kw));
+    if (this.workerURL && landmarkKw) await addDynamic(landmark, landmarkKw, 'landmark', true);
 
     // Threshold guard: if every shortlist is empty OR top scores are too
     // weak, skip the pick call. Saves an LLM call on garbage shortlists
