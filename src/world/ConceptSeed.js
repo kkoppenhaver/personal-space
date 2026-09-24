@@ -29,14 +29,53 @@ const TIER_TOTAL = TIERS.reduce((s, t) => s + t.weight, 0);
 // NOT world-types. Editing these lists tunes flavor, not taxonomy.
 const SPARK_AXES = [
   // material / substance
-  ['salt', 'rust', 'wax', 'chalk', 'amber', 'ash', 'glass', 'moss', 'tin', 'tar', 'bone', 'silk'],
+  ['salt', 'rust', 'wax', 'chalk', 'amber', 'ash', 'glass', 'moss', 'tin', 'tar', 'bone', 'silk',
+   'honey', 'brass', 'paper', 'clay', 'velvet', 'copper', 'wool', 'pearl'],
   // mood / charge
-  ['grief', 'patience', 'spite', 'devotion', 'stubbornness', 'mercy', 'appetite', 'homesickness', 'triumph', 'apology', 'curiosity', 'dread'],
+  ['grief', 'patience', 'spite', 'devotion', 'stubbornness', 'mercy', 'appetite', 'homesickness', 'triumph', 'apology', 'curiosity', 'dread',
+   'delight', 'mischief', 'pride', 'giddiness', 'tenderness', 'showing off', 'hospitality', 'awe'],
   // process / verb-feeling
-  ['drowned', 'abandoned mid-task', 'over-tended', 'counted', 'rehearsed', 'buried', 'sorted', 'repeated', 'guarded', 'forgotten on purpose', 'measured', 'waiting'],
+  ['drowned', 'abandoned mid-task', 'over-tended', 'counted', 'rehearsed', 'buried', 'sorted', 'repeated', 'guarded', 'forgotten on purpose', 'measured', 'waiting',
+   'celebrated', 'decorated', 'raced', 'traded', 'built for a party', 'grown too well', 'herded', 'invited', 'stacked', 'polished'],
   // scale / quantity feeling
-  ['colossal', 'one of everything', 'thousands of one thing', 'half-finished', 'miniature', 'exactly two', 'too many', 'the last one'],
+  ['colossal', 'one of everything', 'thousands of one thing', 'half-finished', 'miniature', 'exactly two', 'too many', 'the last one',
+   'a matched pair', 'a crowd', 'mismatched sizes', 'one enormous and one tiny'],
 ];
+
+// REGISTER — the emotional key a planet is written in. Unlike sparks
+// (per-planet, independent), registers are dealt WITHOUT replacement
+// across the planets of one system, so neighbours never share a tone.
+// This is the fix for systems where every teaser drifted toward the
+// same elegiac bone-field: the model's default register is "eerie
+// ruin", and independent calls all fall into it.
+const REGISTERS = [
+  'eerie', 'playful', 'tender', 'absurd', 'grand', 'cozy',
+  'industrious', 'celebratory', 'serene', 'melancholy', 'mischievous', 'proud',
+];
+
+// Name initials, likewise dealt without replacement per system, so
+// siblings don't come back as Kethral / Kethraw / Ossendim / Ossmath.
+const NAME_INITIALS = ['B', 'D', 'F', 'G', 'H', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Z', 'A', 'E', 'I', 'O', 'U', 'Y'];
+
+function dealt(list, systemSeed, salt, index) {
+  const rand = mulberry32((systemSeed ^ salt) >>> 0);
+  const deck = list.slice();
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck[index % deck.length];
+}
+
+/** Tone for the index-th planet of a system — distinct across siblings. */
+export function rollRegister(systemSeed, index) {
+  return dealt(REGISTERS, systemSeed, 0x3c11, index);
+}
+
+/** Required first letter for the index-th planet's name — distinct across siblings. */
+export function rollNameInitial(systemSeed, index) {
+  return dealt(NAME_INITIALS, systemSeed, 0x91d3, index);
+}
 
 /** Deterministic tier for a planet seed: 'quiet' | 'notable' | 'singular'. */
 export function rollTier(seed) {

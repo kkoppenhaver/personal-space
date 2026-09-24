@@ -15,10 +15,14 @@ const DEFAULT_PALETTE = {
   sky:    '#9ac4e8',
 };
 
-export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, subdivisions = 5, seaLevelQuantile = 0.42, ampScale = 1.0 }) {
+export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, subdivisions = 16, seaLevelQuantile = 0.42, ampScale = 1.0 }) {
   const noise = makeNoise3(seed);
   const noise2 = makeNoise3(seed ^ 0x9e3779b9);
 
+  // three's IcosahedronGeometry(detail) is non-indexed with 20·(detail+1)²
+  // faces — detail 5 was only 720 triangles (~13m facets on a 100m world,
+  // which is what made ground-snapped assets float/stab). 16 → 5780 tris,
+  // ~5ms to build, facets ~4m: still low-poly, no longer spiky.
   const geom = new THREE.IcosahedronGeometry(radius, subdivisions);
   const pos = geom.attributes.position;
   const vCount = pos.count;

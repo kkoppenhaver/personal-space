@@ -24,7 +24,6 @@ export class FlightStats {
    * floating-origin rebases (which would nuke a position-delta approach).
    */
   tick(dt, planeVelocityMagnitude) {
-    if (this._frozen) return;
     if (planeVelocityMagnitude > this.topSpeed) this.topSpeed = planeVelocityMagnitude;
     this.distanceM += planeVelocityMagnitude * dt;
   }
@@ -37,20 +36,21 @@ export class FlightStats {
     this.startedAtMs = performance.now();
   }
 
-  /** Lock in the stats at the moment of claim and return a serializable snapshot. */
+  /**
+   * Snapshot the stats at the moment of claim, then start a fresh attempt
+   * so the NEXT claim describes the flight from here to there. (This used
+   * to freeze until an unfreeze() nobody called — every claim after the
+   * first saved the stale numbers from the first.)
+   */
   capture() {
-    this._frozen = true;
-    return {
+    const snap = {
       time_to_land_ms: Math.round(performance.now() - this.startedAtMs),
       top_speed: round1(this.topSpeed),
       crashes: this.crashes,
       distance_m: Math.round(this.distanceM),
     };
-  }
-
-  /** After capture(), the next spawn will reset; allow the loop to tick again. */
-  unfreeze() {
-    this._frozen = false;
+    this._reset();
+    return snap;
   }
 
   _reset() {
@@ -58,7 +58,6 @@ export class FlightStats {
     this.distanceM = 0;
     this.crashes = 0;
     this.startedAtMs = performance.now();
-    this._frozen = false;
   }
 }
 

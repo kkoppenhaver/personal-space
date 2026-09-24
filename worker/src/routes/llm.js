@@ -80,16 +80,19 @@ TIER (given in the request — obey it)
 SPARKS (given in the request)
 A few words of inspiration grit. Keep what sparks, discard freely. NEVER use the spark words themselves in the teaser or premise.
 
+REGISTER (given in the request as "register" — obey it)
+The emotional key the planet is written in: eerie, playful, tender, absurd, grand, cozy, industrious, celebratory, serene, melancholy, mischievous, proud. The player sees this planet's teaser side by side with its neighbours', and each neighbour was dealt a DIFFERENT register — so the sky reads as a spread of moods, not five elegies. A playful planet is genuinely funny or charming (a hundred pugs in a hedge maze that all lead to one fountain); a cozy one is somewhere you'd want to land; a grand one is awe, not dread. Death, graves, bones, ribs, and ruins are ONE flavor among many — only reach for them when the register is eerie or melancholy. The tier still sets the volume; the register sets the key.
+
 THE NAME
-A coined proper noun for the world — 1-2 words, not English, pronounceable. It appears on the player's instruments next to the teaser, long before arrival, so it must sound like it belongs to the premise (a burial world should not sound like a beach resort).
+A coined proper noun for the world — 1-2 words, not English, pronounceable. It appears on the player's instruments next to the teaser, long before arrival, so it must sound like it belongs to the premise and register (a cozy world should not sound like a tomb). When "name_initial" is given, the name MUST start with that letter — its neighbours start with other letters, so they never read as a set. Avoid the stems "oss-", "keth-", "vel-", "mal-", "thr-".
 
 THE TEASER
 ≤80 chars, lowercase, no proper nouns, no "the planet of" preambles. It is the hook the player navigates by — a compressed version of the premise, not a summary ("a fleet at anchor on a world with no sea").
 
-EXAMPLES (one per tier)
-quiet → {"name":"Veleth","teaser":"pines here, and a wind that bent every one of them the same way","premise":"A forest world where every tree leans the same few degrees toward sunrise, as if the wind only ever blew once, hard.","question":"what bent them?","biome":"forest","terrain":{"sea_level":0.42,"amplitude":1.0},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"medium","motif":{"kind":"uniform-lean","subjects":"surface"},"asset_keywords":["pine trees","birch trees","mossy rocks"]}
-notable → {"name":"Carnmor","teaser":"a thousand graves, and every one of them faces the same door","premise":"A dry burial world where every gravestone, no two alike, faces a single crypt on the hill; lamp posts make two lines up to its door.","question":"what walks between the lamps at night?","biome":"desert","terrain":{"sea_level":0.15,"amplitude":0.9},"landmark_slots":2,"hero_on_water":false,"creature_budget":0,"density":"dense","motif":{"kind":"all-facing-point","subjects":"surface"},"asset_keywords":["gravestones","crypt","lamp posts","crooked pines"]}
-singular → {"name":"Sarqand","teaser":"a fleet at anchor on a world with no sea","premise":"Eight sailing ships sit hull-down in the dunes of a waterless world, bows all on one heading, sails still rigged for a wind going nowhere.","question":"where did the sea go — or did they ever sail at all?","biome":"desert","terrain":{"sea_level":0,"amplitude":0.8},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"sparse","motif":{"kind":"shared-heading","subjects":"landmarks"},"asset_keywords":["shipwreck sailing ships","bones","dead trees"]}
+EXAMPLES (one per tier; note the registers differ — spread your planets across the whole range)
+quiet, register serene → {"name":"Veleth","teaser":"pines here, and a wind that bent every one of them the same way","premise":"A forest world where every tree leans the same few degrees toward sunrise, as if the wind only ever blew once, hard.","question":"what bent them?","biome":"forest","terrain":{"sea_level":0.42,"amplitude":1.0},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"medium","motif":{"kind":"uniform-lean","subjects":"surface"},"asset_keywords":["pine trees","birch trees","mossy rocks"]}
+notable, register playful → {"name":"Pumbleno","teaser":"forty llamas in a ring around one fountain, all politely waiting their turn","premise":"A grassy little world where a herd of llamas stands in a perfect circle facing a single stone fountain, as if someone told them it opens at noon.","question":"who taught them to queue?","biome":"forest","terrain":{"sea_level":0.3,"amplitude":0.6},"landmark_slots":1,"hero_on_water":false,"creature_budget":1.0,"density":"sparse","motif":{"kind":"all-facing-point","subjects":"creatures"},"asset_keywords":["stone fountain","llamas","flower meadow"]}
+singular, register grand → {"name":"Sarqand","teaser":"a fleet at anchor on a world with no sea","premise":"Eight sailing ships sit hull-down in the dunes of a waterless world, bows all on one heading, sails still rigged for a wind going nowhere.","question":"where did the sea go — or did they ever sail at all?","biome":"desert","terrain":{"sea_level":0,"amplitude":0.8},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"sparse","motif":{"kind":"shared-heading","subjects":"landmarks"},"asset_keywords":["sailing ships","sand dunes","palm trees"]}
 
 Do not reuse the examples. Use the "world_concept" tool.`;
 
@@ -365,7 +368,7 @@ llm.post('/tier2/pick', async (c) => {
 // schema changes shape enough that old cached responses are wrong (concept
 // v2: the concept owns the planet name — pre-v2 entries have no name).
 // Tiers absent from the map stay on their historical un-versioned keys.
-const PROMPT_VERSION = { concept: 2 };
+const PROMPT_VERSION = { concept: 3 };
 
 async function handleTier(c, tier) {
   const body = await c.req.json().catch(() => null);
