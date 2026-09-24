@@ -78,7 +78,7 @@ export function buildInstancedFeaturesFromAssets({ geometry, elevations, radius,
 
   // ── Gather land candidates once (shared across assets) ────────────
   // Everything above the waterline, outside landmark footprints, with
-  // direction/normal/slope precomputed. ~10k verts at subdivisions=5 —
+  // direction/normal/slope precomputed. ~17k verts at subdivisions=16 —
   // cheap to materialize.
   const rand = mulberry32(seed ^ 0xfeed);
   const tmp = new THREE.Vector3();

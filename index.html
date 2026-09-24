@@ -22,9 +22,13 @@
 
     #toast { position: absolute; top: 26%; left: 0; right: 0; text-align: center; font-size: 22px; letter-spacing: 0.18em; opacity: 0; transition: opacity 0.4s; text-shadow: 0 0 16px rgba(0,0,0,0.6); }
     #toast.show { opacity: 1; }
+    #toast .arrive-name { font-size: 40px; letter-spacing: 0.32em; font-weight: bold; }
+    #toast .arrive-teaser { margin: 10px auto 0; max-width: 640px; font-size: 16px; letter-spacing: 0.04em; opacity: 0.85; font-style: italic; }
+    body.in-atmosphere #pings { opacity: 0; pointer-events: none; }
+    #pings { transition: opacity 0.6s; }
 
     #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
-    #flash.show { opacity: 0.55; transition: opacity 0.05s; }
+    #flash.show { opacity: 0.22; transition: opacity 0.05s; }
 
     #pings { position: absolute; bottom: 14px; left: 14px; right: 14px; display: flex; gap: 10px; font-size: 12px; opacity: 0.85; }
     #pings .ping { background: rgba(20,16,12,0.55); border: 1px solid rgba(244,237,224,0.18); border-radius: 6px; padding: 7px 10px; max-width: 260px; }
@@ -197,7 +201,7 @@
         <h1>PERSONAL SPACE</h1>
         <div class="subtitle">welcome, traveler</div>
         <div class="beat"><div class="num">01</div><div class="body">This galaxy is <em>yours alone</em>. Every star, every planet, every name you discover was generated for you and no one else.</div></div>
-        <div class="beat"><div class="num">02</div><div class="body">To claim a planet, drop into its atmosphere and <em>fly low over the surface</em> until it's surveyed. The logbook will remember its name, lore, and how you landed.</div></div>
+        <div class="beat"><div class="num">02</div><div class="body">To claim a planet, drop into its atmosphere and <em>fly low over the surface</em> until it's surveyed. The logbook will remember its name, lore, and how you flew there.</div></div>
         <div class="beat"><div class="num">03</div><div class="body">Planets you fly past without claiming are gone for good. The universe is large — you will almost certainly never see that planet again.</div></div>
         <div class="controls">
           ↑↓ pitch &middot; ←→ bank &middot; SPACE throttle &middot; SHIFT brake<br>

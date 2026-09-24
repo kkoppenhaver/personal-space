@@ -16,6 +16,28 @@ export class Toast {
     this._hideAt = performance.now() + durationMs;
   }
 
+  /**
+   * Arrival title card: the planet's name large, its teaser underneath —
+   * the sentence the player navigated by, confirmed on arrival.
+   */
+  arrive(name, teaser, durationMs = 3600) {
+    if (!this.el) return;
+    this.el.textContent = '';
+    this.el.style.color = '';
+    const n = document.createElement('div');
+    n.className = 'arrive-name';
+    n.textContent = name;
+    this.el.appendChild(n);
+    if (teaser) {
+      const t = document.createElement('div');
+      t.className = 'arrive-teaser';
+      t.textContent = teaser;
+      this.el.appendChild(t);
+    }
+    this.el.classList.add('show');
+    this._hideAt = performance.now() + durationMs;
+  }
+
   flash() {
     if (!this.flashEl) return;
     this.flashEl.classList.add('show');

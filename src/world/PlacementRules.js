@@ -13,7 +13,7 @@
 //     Structures demand flats; rocks go anywhere.
 //
 //   EMBED_FRACTION — fraction of the instance's scaled bbox height sunk
-//     below the surface point. The terrain is faceted (icosa subdivisions=5,
+//     below the surface point. The terrain is faceted (icosa subdivisions=16,
 //     flatShading); an exactly-grounded base hovers over neighboring faces.
 //     Sinking a little reads as "settled into the ground" instead of
 //     "balanced on it". Phase 8's subdivision bump will let these shrink.

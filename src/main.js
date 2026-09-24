@@ -9,7 +9,7 @@ import { FlightController } from './game/FlightController.js';
 import { CameraRig } from './game/CameraRig.js';
 
 import { Galaxy, CELL_SIZE } from './world/Galaxy.js';
-import { rollTier, rollSparks, tierStats } from './world/ConceptSeed.js';
+import { rollTier, rollSparks, rollRegister, rollNameInitial, tierStats } from './world/ConceptSeed.js';
 import { Origin } from './world/Origin.js';
 import { hashString } from './world/Seed.js';
 import { API_BASE, apiPost } from './net/api.js';
@@ -246,6 +246,8 @@ async function main() {
           radius: Math.round(p.radius),
           tier: rollTier(p.seed),
           sparks: rollSparks(p.seed),
+          register: rollRegister(sys.seed, i),
+          name_initial: rollNameInitial(sys.seed, i),
         }).then(c => {
           if (!c?.teaser) return;
           p.applyConcept(c);
@@ -620,25 +622,20 @@ async function main() {
       //   - active planet changed (exit prev's atmosphere, enter new one).
       const insideNow = activeAtmosphere.contains(plane.position());
       const planetChanged = activePlanet !== prevActivePlanet;
-      if (planetChanged) {
-        if (prevInside) {
-          toast.flash();
-          toast.show('↑ ENTERING SPACE ↑', 1500);
-        }
-        if (insideNow) {
-          toast.flash();
-          toast.show('↓ ENTERING ATMOSPHERE ↓', 1500);
-          llm.land(activePlanet.seed, _tier3ContextOf(activePlanet)).catch(() => {});
-        }
-      } else if (insideNow !== prevInside) {
+      const entered = insideNow && (planetChanged || !prevInside);
+      const exited = prevInside && (planetChanged || !insideNow);
+      if (exited && !entered) {
         toast.flash();
-        if (insideNow) {
-          toast.show('↓ ENTERING ATMOSPHERE ↓', 1500);
-          llm.land(activePlanet.seed, _tier3ContextOf(activePlanet)).catch(() => {});
-        } else {
-          toast.show('↑ ENTERING SPACE ↑', 1500);
-        }
+        toast.show('↑ SPACE ↑', 1200);
       }
+      if (entered) {
+        toast.flash();
+        const name = activePlanet.meta?.name || activePlanet.concept?.name;
+        if (name) toast.arrive(name.toUpperCase(), activePlanet.concept?.teaser);
+        else toast.show('↓ ENTERING ATMOSPHERE ↓', 1500);
+        llm.land(activePlanet.seed, _tier3ContextOf(activePlanet)).catch(() => {});
+      }
+      if (insideNow !== prevInside || planetChanged) document.body.classList.toggle('in-atmosphere', insideNow);
       if (planetChanged) hud.setPlanetName(activePlanet.meta?.name || activePlanet.concept?.name || null);
       prevInside = insideNow;
       prevActivePlanet = activePlanet;
@@ -896,6 +893,20 @@ async function main() {
     get planet() { return activePlanet; },
     get atmosphere() { return activeAtmosphere; },
     get system() { return activeSystem; },
+    // Dev: drop the plane `alt` meters above planet `idx` of the active
+    // system, flying tangentially. Skips the approach flight when testing
+    // surface visuals: __GAME.warpTo(0, 40)
+    warpTo(idx = 0, alt = 40) {
+      const p = activeSystem?.planets[idx];
+      if (!p) return 'no such planet';
+      const toPlane = plane.position().sub(p.center).normalize();
+      const pos = p.center.clone().add(toPlane.clone().multiplyScalar(p.radius + alt));
+      const fwd = new THREE.Vector3(0, 1, 0).cross(toPlane);
+      if (fwd.lengthSq() < 1e-3) fwd.set(1, 0, 0).cross(toPlane);
+      plane.spawn(pos, fwd.normalize(), TUNING.CRUISE_SPEED);
+      flight.reset();
+      return p.concept?.name || p.meta?.name || `planet ${idx}`;
+    },
     inspect() {
       const v = plane.velocity();
       const f = plane.forward();

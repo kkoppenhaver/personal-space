@@ -13,11 +13,13 @@
 import { placeholderTier1, placeholderTier2, placeholderTier3, placeholderConcept } from './Placeholder.js';
 import { shortlist as retrieverShortlist } from '../world/AssetRetriever.js';
 
+// v6 bump: concept v3 (per-system registers + name initials) — without it
+// returning players keep their old, bone-heavy concepts forever.
 // v5 bump invalidates cached responses that predate name-first concepts
 // (v4 concept entries have no name; v4 Tier 2 entries coined names the
 // player never navigated by). v4 was the concept-spine bump, v3 the
 // archetype-context bump, v2 the Phase 3 hint arrays.
-const LS_CACHE_KEY = 'paper-airplane:llmcache:v5';
+const LS_CACHE_KEY = 'paper-airplane:llmcache:v6';
 
 // Per the plan: no more than 2 concurrent Tier 2 chains so a mid-flight
 // swerve doesn't stack billable calls. Older speculative calls aren't
