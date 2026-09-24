@@ -58,6 +58,11 @@ export const TUNING = {
   FOV_BASE: 60,
   FOV_PER_SPEED: 0.6,
   FOV_MAX_EXTRA: 18,
+  // Terrain assist (FlightController): meters of clearance kept over the
+  // ground ahead when not pitching; climb m/s per meter of deficit; cap.
+  TERRAIN_CLEARANCE: 6,
+  TERRAIN_CLIMB_GAIN: 2.2,
+  TERRAIN_CLIMB_MAX: 16,
   CAM_SPRING_HALFLIFE: 0.12,
   CAM_LOOKAHEAD: 0.5,
   CAM_ROLL_PASSTHROUGH: 0.15,

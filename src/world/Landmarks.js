@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mulberry32 } from './Seed.js';
-import { axisUpQuaternionFor, groundOffsetFor, bboxHeightFor, lateralCenterFor } from './AxisUp.js';
+import { axisUpQuaternionFor, groundOffsetFor, bboxHeightFor, bboxFootprintFor, lateralCenterFor } from './AxisUp.js';
 import { blendedUp, embedFractionFor, resolveScale } from './PlacementRules.js';
 import { twistToFace } from './Motifs.js';
 
@@ -46,7 +46,7 @@ const MIN_ANGULAR_DOT = 0.35;
 // hero GLBs — a knife-edge facet under a windmill reads as a glitch.
 const SLOPE_BUCKET = 0.04;
 
-export function pickLandmarkSlots({ geometry, elevations, radius, seed, count = 5, seaLevel = 0.42 }) {
+export function pickLandmarkSlots({ geometry, elevations, radius, seed, count = 5, seaLevel = 0.42, focus = null }) {
   const pos = geometry.attributes.position;
   const nor = geometry.attributes.normal;
   const vCount = pos.count;
@@ -122,6 +122,20 @@ export function pickLandmarkSlots({ geometry, elevations, radius, seed, count = 
     });
     return true;
   };
+
+  // Focus (Phase 15a) — shapes with a focal point (one-mountain summit,
+  // crater bowl) claim slot 0 at the nearest dry vertex, so the hero sits
+  // where the landform points. Skipped if the focal point is underwater.
+  if (focus) {
+    let best = -1, bestDot = Math.cos(0.12);
+    for (let i = 0; i < vCount; i++) {
+      if (elevations[i] < seaLevel + 0.01) continue;
+      tmpD.fromBufferAttribute(pos, i).normalize();
+      const d = tmpD.dot(focus);
+      if (d > bestDot) { bestDot = d; best = i; }
+    }
+    if (best >= 0) tryAdd(best, 'focus');
+  }
 
   // Spire — at most one.
   if (spireCandidates[0]) tryAdd(spireCandidates[0].idx, 'spire');
@@ -269,7 +283,7 @@ function buildProceduralLandmarkMesh(lm, palette) {
     mesh.quaternion.copy(yToUp);
     return mesh;
   }
-  if (lm.kind === 'spire') {
+  if (lm.kind === 'spire' || lm.kind === 'focus') {
     // Taller + thinner than a peak so the "rarest, tallest" reads from a distance.
     const g = new THREE.ConeGeometry(1.5, 22.0, 5);
     const m = new THREE.MeshLambertMaterial({ color: new THREE.Color(palette.snow), flatShading: true });
@@ -337,6 +351,7 @@ export function buildLandmarkInstance({ slot, gltfClone, scaleRange = [4, 8], pa
     scaleRange: assetMeta?.scale_range ?? scaleRange,
     scaleOverride: assetMeta?.scale_override ?? null,
     bboxHeight: bboxHeightFor(gltfClone.userData?.bbox, pack, assetMeta),
+    bboxFootprint: bboxFootprintFor(gltfClone.userData?.bbox, pack, assetMeta),
     rand,
     boost: scaleBoost,
   });

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { buildPlanetGeometry, makeTerrainSampler } from './TerrainGen.js';
+import { buildPlanetGeometry, colorizeTerrain } from './TerrainGen.js';
+import { rollShape, rollPattern, normalizeShape, normalizePattern } from './TerrainShapes.js';
 import {
   pickLandmarkSlots,
   pickOpenWaterSlot,
@@ -60,7 +61,7 @@ function makeDeferred() {
 // `visualGen` counter.
 
 export class Planet {
-  constructor({ rapier, world, seed, radius, center = new THREE.Vector3(0, 0, 0) }) {
+  constructor({ rapier, world, seed, radius, center = new THREE.Vector3(0, 0, 0), shape = null, pattern = null }) {
     this.seed = seed;
     this.radius = radius;
     this.center = center.clone();
@@ -92,7 +93,11 @@ export class Planet {
     // the seed; singular unlocks the coordination-budget exceptions
     // (embed-as-expression, cross-role slots).
     this.tier = rollTier(seed);
-    this.terrainParams = { seaLevelQuantile: 0.42, ampScale: 1.0 };
+    // Shape/pattern (Phase 15a) are dealt per system by SolarSystem (so
+    // siblings differ) and handed to the concept call, which writes the
+    // premise around the landform. The planet builds with them at spawn —
+    // it has its landform before (or without) a concept.
+    this.terrainParams = { seaLevelQuantile: 0.42, ampScale: 1.0, shape: shape || rollShape(seed), pattern: pattern || rollPattern(seed) };
     this.composition = {
       landmarkSlots: 4,
       surfaceKinds: 2,
@@ -164,20 +169,19 @@ export class Planet {
       radius: this.radius,
       seaLevelQuantile: this.terrainParams.seaLevelQuantile,
       ampScale: this.terrainParams.ampScale,
+      shape: this.terrainParams.shape,
+      pattern: this.terrainParams.pattern,
     });
     this.geometry = built.geometry;
     this.elevations = built.elevations;
+    this.surface = built.surface;
+    this.focus = built.focus;
     // Don't clobber an LLM-supplied palette on rebuild (applyConcept runs
-    // before Tier 2, but belt-and-braces).
+    // before Tier 2, but belt-and-braces). Repaint with it if we have one.
     if (!this.palette) this.palette = built.palette;
+    else colorizeTerrain(this.geometry, this.surface, this.palette);
     this.seaLevel = built.seaLevel;
-
-    this.sample = makeTerrainSampler({
-      seed: this.seed,
-      radius: this.radius,
-      seaLevel: built.seaLevel,
-      ampScale: this.terrainParams.ampScale,
-    });
+    this.sample = built.sample;
 
     this.landmarks = pickLandmarkSlots({
       geometry: this.geometry,
@@ -186,6 +190,7 @@ export class Planet {
       seed: this.seed,
       count: Math.max(1, 1 + this.composition.landmarkSlots),
       seaLevel: this.seaLevel,
+      focus: this.focus,
     });
     if (this.composition.openWaterHero) {
       const waterSlot = pickOpenWaterSlot({
@@ -243,14 +248,18 @@ export class Planet {
 
     const sea = clamp(concept.terrain?.sea_level, 0, 0.95, this.terrainParams.seaLevelQuantile);
     const amp = clamp(concept.terrain?.amplitude, 0.4, 1.4, this.terrainParams.ampScale);
+    const shape = normalizeShape(concept.terrain?.shape) || this.terrainParams.shape;
+    const pattern = normalizePattern(concept.terrain?.pattern) || this.terrainParams.pattern;
     const landSlots = this.landmarks.filter((s) => s.kind !== 'open-water').length;
     const changed = Math.abs(sea - this.terrainParams.seaLevelQuantile) > 0.02
       || Math.abs(amp - this.terrainParams.ampScale) > 0.05
+      || shape !== this.terrainParams.shape
+      || pattern !== this.terrainParams.pattern
       || Math.max(1, 1 + comp.landmarkSlots) !== landSlots
       || comp.openWaterHero !== this.landmarks.some((s) => s.kind === 'open-water');
     if (!changed) return;
 
-    this.terrainParams = { seaLevelQuantile: sea, ampScale: amp };
+    this.terrainParams = { seaLevelQuantile: sea, ampScale: amp, shape, pattern };
 
     const oldGeometry = this.geometry;
     this._buildTerrainState();
@@ -764,6 +773,10 @@ export class Planet {
     // the hero is the thing floating on it (a ship, not a peak ornament).
     const water = this.landmarks.find((s) => s.kind === 'open-water');
     if (water) return water;
+    // Shapes with a focal point (summit, crater bowl) put the premise's
+    // subject on the planet's most legible spot.
+    const focus = this.landmarks.find((s) => s.kind === 'focus');
+    if (focus) return focus;
     const spire = this.landmarks.find((s) => s.kind === 'spire');
     return spire || this.landmarks[0] || null;
   }
@@ -799,28 +812,7 @@ export class Planet {
   }
 
   _reTintVertexColors() {
-    const colors = this.geometry.attributes.color.array;
-    const pos = this.geometry.attributes.position;
-    const tmp = new THREE.Vector3();
-    const colWater = new THREE.Color(this.palette.water);
-    const colLow   = new THREE.Color(this.palette.low);
-    const colMid   = new THREE.Color(this.palette.mid);
-    const colHigh  = new THREE.Color(this.palette.high);
-    const colSnow  = new THREE.Color(this.palette.snow);
-    const tmpColor = new THREE.Color();
-    for (let i = 0; i < pos.count; i++) {
-      tmp.fromBufferAttribute(pos, i);
-      const r = tmp.length();
-      const above = (r - this.radius * 0.995) / (this.radius * 0.10 || 1);
-      if (above < 0.001) tmpColor.copy(colWater);
-      else if (above < 0.25) tmpColor.copy(colLow).lerp(colMid, ss(0, 0.25, above));
-      else if (above < 0.65) tmpColor.copy(colMid).lerp(colHigh, ss(0.25, 0.65, above));
-      else                   tmpColor.copy(colHigh).lerp(colSnow, ss(0.65, 1.0, above));
-      colors[i * 3 + 0] = tmpColor.r;
-      colors[i * 3 + 1] = tmpColor.g;
-      colors[i * 3 + 2] = tmpColor.b;
-    }
-    this.geometry.attributes.color.needsUpdate = true;
+    colorizeTerrain(this.geometry, this.surface, this.palette);
   }
 }
 

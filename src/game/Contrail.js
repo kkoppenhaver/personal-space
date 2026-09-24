@@ -10,7 +10,7 @@ import * as THREE from 'three';
 // translate(). A jump larger than MAX_GAP between samples (respawn,
 // warp) clears the trail instead of drawing a streak across the sky.
 
-const SAMPLES = 36;          // ~0.6s of history at 60Hz
+const SAMPLES = 16;          // ~0.27s of history — a wisp, not a rail
 const HALF_WIDTH = 0.09;
 const MAX_GAP = 12;          // meters between consecutive samples
 const TIP_LOCAL = [

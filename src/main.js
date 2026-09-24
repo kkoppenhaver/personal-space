@@ -63,6 +63,11 @@ async function main() {
     await runContactSheet();
     return;
   }
+  if (new URLSearchParams(location.search).has('terrainLab')) {
+    const { runTerrainLab } = await import('./dev/TerrainLab.js');
+    await runTerrainLab();
+    return;
+  }
   if (new URLSearchParams(location.search).has('placementLab')) {
     const { runPlacementLab } = await import('./dev/PlacementLab.js');
     await runPlacementLab();
@@ -259,6 +264,8 @@ async function main() {
           sparks: rollSparks(p.seed),
           register: rollRegister(sys.seed, i),
           name_initial: rollNameInitial(sys.seed, i),
+          terrain_shape: p.terrainParams.shape,
+          ground_pattern: p.terrainParams.pattern,
         }).then(c => {
           if (!c?.teaser) return;
           p.applyConcept(c);

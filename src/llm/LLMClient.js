@@ -39,6 +39,41 @@ const RETRIEVAL_MIN_TOP_SCORE = 0.01;
 // Per-slot shortlist size handed to the pick call.
 const SHORTLIST_K = { hero: 8, landmark: 10, surface: 15, creature: 10 };
 
+/**
+ * Run one shortlist per query and fuse by best rank (ties → best score).
+ * Keeps each noun's top hits in the pool instead of letting one long
+ * blended query drift toward whatever it mentions most.
+ */
+async function multiShortlist(queries, { role, k, biomeAffinity, preferPack = null }) {
+  if (queries.length <= 1) {
+    return retrieverShortlist({ query: queries[0] || '', role, k, biomeAffinity, preferPack });
+  }
+  const per = Math.max(3, Math.ceil((k * 1.5) / queries.length));
+  const lists = await Promise.all(queries.map((query) =>
+    retrieverShortlist({ query, role, k: per, biomeAffinity, preferPack })));
+  const best = new Map();
+  lists.forEach((list) => list.forEach((c, rank) => {
+    const prev = best.get(c.id);
+    if (!prev || rank < prev.rank || (rank === prev.rank && c.score > prev.c.score)) best.set(c.id, { c, rank });
+  }));
+  return [...best.values()]
+    .sort((a, b) => (a.rank - b.rank) || (b.c.score - a.c.score))
+    .slice(0, k)
+    .map((e) => e.c);
+}
+
+/** "shipwreck sailing ships" → "ship"; "lighthouses" → "lighthouse". */
+function headNounOf(phrase) {
+  if (!phrase) return null;
+  const words = String(phrase).toLowerCase().match(/[a-z]+/g);
+  if (!words?.length) return null;
+  let w = words[words.length - 1];
+  if (w.length > 4 && w.endsWith('ies')) w = `${w.slice(0, -3)}y`;
+  else if (w.length > 3 && w.endsWith('es') && /(ch|sh|x|s)es$/.test(w)) w = w.slice(0, -2);
+  else if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) w = w.slice(0, -1);
+  return w.length >= 3 ? w : null;
+}
+
 export class LLMClient {
   constructor({ workerURL = '' } = {}) {
     this.workerURL = workerURL.replace(/\/$/, '');
@@ -193,8 +228,20 @@ export class LLMClient {
     // This is a probabilistic anchor (the LLM still picks freely from the
     // shortlist); it does NOT add a second LLM round-trip — only one extra
     // ~10-30ms shortlist hop before the parallel pair.
-    const hero = await retrieverShortlist({
-      query: heroQuery, role: 'hero', k: SHORTLIST_K.hero, biomeAffinity: direct.biome,
+    // Hero pool (Phase 15b): ANY non-creature asset can be the colossal
+    // subject. The hero-role pool is 59 assets — mostly rocket parts,
+    // spacecraft, ships and crypts — so every premise outside sci-fi /
+    // pirate / graveyard got a column or a watermill (the orchard world's
+    // hero was a bridge support). Heroes scale to 18-30m regardless of
+    // role, so a giant tree or cabbage is a legitimate Petit-Prince hero.
+    // Multi-query: each concept keyword and each hero hint gets its own
+    // retrieval, fused by best rank — one long prose query let incidental
+    // nouns win ("…orchard canopies… smooth GRASS ridge" → six grasses).
+    const conceptKw = (context?.concept?.asset_keywords || []).filter(Boolean);
+    const heroQueries = [conceptKw[0], ...(direct.hero_landmark_hints || []), heroQuery]
+      .filter(Boolean).slice(0, 4);
+    const hero = await multiShortlist(heroQueries, {
+      role: ['hero', 'landmark', 'surface'], k: SHORTLIST_K.hero, biomeAffinity: direct.biome,
     });
     const anchorPack = topPackOf(hero.slice(0, 3));
 
@@ -207,10 +254,15 @@ export class LLMClient {
     // "catalog only", never an error (their API guarantees no uptime).
     const dynamicRecords = new Map();
     const DYNAMIC_HERO_THRESHOLD = 0.02;   // RRF fused; ~ "one retriever, low rank"
-    if (this.workerURL && context?.concept?.asset_keywords?.length
-        && (hero[0]?.score ?? 0) < DYNAMIC_HERO_THRESHOLD) {
+    // Also go dynamic when the premise's head noun ("lighthouses") appears
+    // in NO hero candidate — a decent RRF score on "tower-roof" still
+    // isn't a lighthouse, and the catalog has none.
+    const headNoun = headNounOf(conceptKw[0]);
+    const nounMissing = headNoun && !hero.some((h) => h.id.toLowerCase().includes(headNoun));
+    if (this.workerURL && conceptKw.length
+        && ((hero[0]?.score ?? 0) < DYNAMIC_HERO_THRESHOLD || nounMissing)) {
       try {
-        const kw = context.concept.asset_keywords[0];
+        const kw = conceptKw[0];
         const ctl = new AbortController();
         const tid = setTimeout(() => ctl.abort(), 6000);
         const resp = await fetch(`${this.workerURL}/assets/search?q=${encodeURIComponent(kw)}&limit=4`, { signal: ctl.signal });
@@ -229,12 +281,26 @@ export class LLMClient {
               role: 'hero',
               preserve_materials: true,       // keep authored look (and skip cohesion recolor)
             });
-            hero.push({ id: r.id, score: 0, pack: 'polypizza', family: 'default' });
+            // When the catalog has nothing carrying the premise's noun,
+            // the dynamic hits are the only true matches — lead with them
+            // (appended at score 0, the picker never chose them).
+            // name + note ride in shortlist_meta so the picker can tell an
+            // opaque "polypizza:UyH95…" is literally the premise's noun.
+            const cand = {
+              id: r.id, score: 0, pack: 'polypizza', family: 'default', name: r.name,
+              note: nounMissing
+                ? `searched for "${kw}" — the catalog has nothing matching the premise's key noun; this is a direct match`
+                : `searched for "${kw}"`,
+            };
+            if (nounMissing) hero.unshift(cand); else hero.push(cand);
           }
         }
       } catch (err) {
         console.info('[LLM] dynamic asset search skipped:', err.message);
       }
+    }
+    if (globalThis.__debugPicks) {
+      console.info('[LLM] hero queries', heroQueries, '→', hero.map((h) => h.id));
     }
     // Attach resolved records for any dynamic id that won a slot.
     const withDynamic = (picks) => {
@@ -257,7 +323,10 @@ export class LLMClient {
     const landmarkRole = context?.tier === 'singular' ? ['landmark', 'hero'] : 'landmark';
     const [landmark, surface, creature] = await Promise.all([
       retrieverShortlist({ query: landmarkQuery, role: landmarkRole, k: SHORTLIST_K.landmark, biomeAffinity: direct.biome, preferPack: anchorPack }),
-      retrieverShortlist({ query: surfaceQuery, role: 'surface', k: SHORTLIST_K.surface, biomeAffinity: direct.biome, preferPack: anchorPack }),
+      multiShortlist(
+        [...(direct.surface_feature_hints || []), ...conceptKw.slice(1), surfaceQuery].filter(Boolean).slice(0, 6),
+        { role: 'surface', k: SHORTLIST_K.surface, biomeAffinity: direct.biome, preferPack: anchorPack },
+      ),
       creatureQuery
         ? retrieverShortlist({ query: creatureQuery, role: 'creature', k: SHORTLIST_K.creature, biomeAffinity: direct.biome })
         : Promise.resolve([]),
@@ -438,7 +507,10 @@ function topPackOf(entries) {
 
 // Project a shortlist entry to the {id, pack, family} the worker prompt uses.
 function metaOf(e) {
-  return { id: e.id, pack: e.pack ?? null, family: e.family ?? null };
+  const m = { id: e.id, pack: e.pack ?? null, family: e.family ?? null };
+  if (e.name) m.name = e.name;
+  if (e.note) m.note = e.note;
+  return m;
 }
 
 // Deterministic top-1 fallback for when /tier2/pick can't run (no worker,

@@ -67,10 +67,12 @@ A good concept is a thing a player would retell: "there's a planet where eight s
 THE RULE OF VISIBILITY
 The player must SEE the premise from a paper airplane. You express it ONLY through these levers:
 - terrain: sea_level 0 (waterless) to 0.95 (almost all ocean); amplitude 0.4 (worn flat) to 1.4 (jagged)
+- LANDFORM (given in the request as "terrain_shape" — build the premise ON it; it is the biggest thing the player sees): rolling (ordinary hills), one-mountain (a single colossal peak; the hero sits on the summit), ridge (one spine circling the world, splitting it into two facing halves), rift (one great canyon cutting the world in two), crater (one enormous bowl; the hero sits in its centre), cratered (pocked with many craters), terraced (stepped like paddies or an amphitheatre), mesas (flat-topped plateaus with cliff sides), spires (needle peaks from a low plain), dunes (long parallel ridges on one heading), archipelago (many small islands in one sea), plates (the ground split into raised tiles, like basalt columns), flat (a plain with almost no relief)
+- GROUND PATTERN (given as "ground_pattern" — paint that the land wears): none, patchwork (a quilt of fields), rows (furrows on one heading), rings (concentric bands around the hero), spots (dappled marks), veins (bright cracks), stripes (banded latitudes)
 - a 3D model vocabulary (low-poly kits): trees/rocks/flora of all climates; ancient ruins (arches, columns, broken walls, a stone FOX statue, a stone STAG statue); gravestones, crypts, obelisks, lamp posts; castle towers and walls; pirate ships (placeable on water OR land), palms, watch tower; sci-fi (rockets, hangars, satellite dishes, landers, craft, craters, machines); farm crops in rows, fountains, a watermill, pillars; animals (wolf, fox, husky, shiba inu, pug, deer, stag, horse, cow, bull, sheep, pig, llama, alpaca, donkey, zebra)
 - arrangement motifs (pick at most one; "none" is common): uniform-lean (everything tilts the same way), all-facing-point (everything faces the hero), grid-rows (planted in measured lines), procession (two lines connecting low ground to the hero), shared-heading (a group aligned on one heading)
 - counts and placement: landmark_slots 0-4 (0 = one colossal thing and nothing else), creature_budget 0 / 0.35 / 1.0 (none / incidental wildlife / they own the place), density
-If the premise can't be witnessed through these levers, pick a different premise.
+If the premise can't be witnessed through these levers, pick a different premise. The landform and pattern are dealt so that neighbouring worlds differ — a premise that ignores them wastes the most visible thing on the planet (a ridge world is where two things face each other across a spine; a crater world is about what sits in the bowl; a terraced world was built or grown in steps).
 
 TIER (given in the request — obey it)
 - quiet: one subtle observable note. No spectacle. Most planets are quiet; that's what makes the rare ones land.
@@ -90,9 +92,9 @@ THE TEASER
 ≤80 chars, lowercase, no proper nouns, no "the planet of" preambles. It is the hook the player navigates by — a compressed version of the premise, not a summary ("a fleet at anchor on a world with no sea").
 
 EXAMPLES (one per tier; note the registers differ — spread your planets across the whole range)
-quiet, register serene → {"name":"Veleth","teaser":"pines here, and a wind that bent every one of them the same way","premise":"A forest world where every tree leans the same few degrees toward sunrise, as if the wind only ever blew once, hard.","question":"what bent them?","biome":"forest","terrain":{"sea_level":0.42,"amplitude":1.0},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"medium","motif":{"kind":"uniform-lean","subjects":"surface"},"asset_keywords":["pine trees","birch trees","mossy rocks"]}
-notable, register playful → {"name":"Pumbleno","teaser":"forty llamas in a ring around one fountain, all politely waiting their turn","premise":"A grassy little world where a herd of llamas stands in a perfect circle facing a single stone fountain, as if someone told them it opens at noon.","question":"who taught them to queue?","biome":"forest","terrain":{"sea_level":0.3,"amplitude":0.6},"landmark_slots":1,"hero_on_water":false,"creature_budget":1.0,"density":"sparse","motif":{"kind":"all-facing-point","subjects":"creatures"},"asset_keywords":["stone fountain","llamas","flower meadow"]}
-singular, register grand → {"name":"Sarqand","teaser":"a fleet at anchor on a world with no sea","premise":"Eight sailing ships sit hull-down in the dunes of a waterless world, bows all on one heading, sails still rigged for a wind going nowhere.","question":"where did the sea go — or did they ever sail at all?","biome":"desert","terrain":{"sea_level":0,"amplitude":0.8},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"sparse","motif":{"kind":"shared-heading","subjects":"landmarks"},"asset_keywords":["sailing ships","sand dunes","palm trees"]}
+quiet, register serene, terrain_shape ridge → {"name":"Veleth","teaser":"pines here, and a wind that bent every one of them the same way","premise":"A forest world where every tree leans the same few degrees toward sunrise, as if the wind only ever blew once, hard.","question":"what bent them?","biome":"forest","terrain":{"sea_level":0.42,"amplitude":1.0,"shape":"ridge","pattern":"none"},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"medium","motif":{"kind":"uniform-lean","subjects":"surface"},"asset_keywords":["pine trees","birch trees","mossy rocks"]}
+notable, register playful, terrain_shape crater, ground_pattern rings → {"name":"Pumbleno","teaser":"forty llamas in a ring around one fountain, all politely waiting their turn","premise":"A grassy little world where a herd of llamas stands in a perfect circle facing a single stone fountain, as if someone told them it opens at noon.","question":"who taught them to queue?","biome":"forest","terrain":{"sea_level":0.3,"amplitude":0.6,"shape":"crater","pattern":"rings"},"landmark_slots":1,"hero_on_water":false,"creature_budget":1.0,"density":"sparse","motif":{"kind":"all-facing-point","subjects":"creatures"},"asset_keywords":["stone fountain","llamas","flower meadow"]}
+singular, register grand, terrain_shape dunes → {"name":"Sarqand","teaser":"a fleet at anchor on a world with no sea","premise":"Eight sailing ships sit hull-down in the dunes of a waterless world, bows all on one heading, sails still rigged for a wind going nowhere.","question":"where did the sea go — or did they ever sail at all?","biome":"desert","terrain":{"sea_level":0,"amplitude":0.8,"shape":"dunes","pattern":"none"},"landmark_slots":3,"hero_on_water":false,"creature_budget":0,"density":"sparse","motif":{"kind":"shared-heading","subjects":"landmarks"},"asset_keywords":["sailing ships","sand dunes","palm trees"]}
 
 Do not reuse the examples. Use the "world_concept" tool.`;
 
@@ -112,6 +114,11 @@ const CONCEPT_TOOL = [{
         properties: {
           sea_level: { type: 'number', minimum: 0, maximum: 0.95 },
           amplitude: { type: 'number', minimum: 0.4, maximum: 1.4 },
+          // Echo of the dealt landform/pattern (Phase 15a). Optional so
+          // older cached shapes stay valid; the client falls back to the
+          // dealt values.
+          shape: { type: 'string', enum: ['rolling','one-mountain','ridge','rift','crater','cratered','terraced','mesas','spires','dunes','archipelago','plates','flat'] },
+          pattern: { type: 'string', enum: ['none','patchwork','rows','rings','spots','veins','stripes'] },
         },
         required: ['sea_level', 'amplitude'],
       },
@@ -368,7 +375,7 @@ llm.post('/tier2/pick', async (c) => {
 // schema changes shape enough that old cached responses are wrong (concept
 // v2: the concept owns the planet name — pre-v2 entries have no name).
 // Tiers absent from the map stay on their historical un-versioned keys.
-const PROMPT_VERSION = { concept: 3 };
+const PROMPT_VERSION = { concept: 4 };
 
 async function handleTier(c, tier) {
   const body = await c.req.json().catch(() => null);
