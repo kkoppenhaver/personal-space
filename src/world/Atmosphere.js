@@ -7,7 +7,23 @@ export class Atmosphere {
     this.planet = planet;
     this.radius = radius;
 
-    const geom = new THREE.SphereGeometry(radius, 48, 32);
+    // 24x16 (720 tris) rather than 48x32 (2976). The shell only ever draws a
+    // smooth view-dependent alpha gradient, so the extra tessellation bought
+    // nothing — and at one shell per planet across every resident system this
+    // was ~80% of the static triangle budget (45 shells resident is typical).
+    //
+    // Segment count is bounded by the *silhouette*, not the gradient: the
+    // fresnel alpha peaks exactly at the limb, so any polygonal flattening
+    // shows up on the brightest pixels. Max deviation from a true circle is
+    // R*(1-cos(pi/widthSegments)); at 24 that is ~0.85% of radius, which works
+    // out under ~3.5px even on a close approach where the shell fills much of
+    // the frame. 16 segments measured ~7.7px in the same framing — visible.
+    //
+    // Phase 15 turns this mesh into a pure bounding volume for a screen-space
+    // pass whose shader does analytic ray-sphere and ignores the interpolated
+    // surface entirely. At that point the silhouette stops mattering and this
+    // can drop further.
+    const geom = new THREE.SphereGeometry(radius, 24, 16);
     const mat = new THREE.ShaderMaterial({
       uniforms: {
         uPlanetCenter: { value: planet.center.clone() },

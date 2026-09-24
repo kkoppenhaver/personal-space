@@ -21,6 +21,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Planet } from '../world/Planet.js';
+import { createRenderer, applyRenderSettings, LightRig } from '../render/Rig.js';
 import { getAssetById } from '../world/assets/Catalog.js';
 
 const DEFAULTS = {
@@ -45,21 +46,20 @@ export async function runPlacementLab() {
   globalThis.__GAME.debugPlacement = params.has('debug');
 
   const canvas = document.getElementById('canvas');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.setClearColor(0x0a0c12);
+  // No preserveDrawingBuffer here — the lab never captures.
+  const renderer = createRenderer(canvas, { clearColor: 0x0a0c12, preserveDrawingBuffer: false });
+  applyRenderSettings(renderer);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000);
 
-  // Match the game's lighting posture (main.js) so colors read the same.
-  const sun = new THREE.DirectionalLight(0xfff2d6, 0.75);
-  sun.position.set(220, 180, 120);
-  scene.add(sun);
-  const fill = new THREE.DirectionalLight(0xcbd9ff, 0.45);
-  fill.position.set(-160, -120, -80);
-  scene.add(fill);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+  // The game's exact rig. This previously hand-rolled a near-match that had
+  // drifted: it omitted the HemisphereLight (the game's largest light, 0.95),
+  // ran ambient at 0.35 instead of 0.25, and aimed fill at a different vector —
+  // about 65% of the game's total light with no sky/ground colour at all.
+  // Placement and palette calls made here were being judged against an image
+  // the player never sees.
+  const lightRig = new LightRig(scene, { preset: 'game' });
 
   await RAPIER.init();
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 });

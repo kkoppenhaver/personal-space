@@ -19,6 +19,7 @@
 // three.js multiple-elements pattern) — 24 live WebGL views per page.
 
 import * as THREE from 'three';
+import { createRenderer, applyRenderSettings, LightRig } from '../render/Rig.js';
 import { load as loadGLB } from '../world/AssetCache.js';
 import { allAssets } from '../world/assets/Catalog.js';
 import { axisUpQuaternionFor, groundOffsetFor, lateralCenterFor } from '../world/AxisUp.js';
@@ -36,10 +37,9 @@ export async function runContactSheet() {
   }
 
   const canvas = document.getElementById('canvas');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const renderer = createRenderer(canvas, { clearColor: 0x101218, preserveDrawingBuffer: false });
+  applyRenderSettings(renderer);
   renderer.setScissorTest(true);
-  renderer.setClearColor(0x101218);
 
   const ui = buildDOM();
   const assets = allAssets();
@@ -127,10 +127,10 @@ export async function runContactSheet() {
     el.appendChild(badge);
 
     const scene = new THREE.Scene();
-    scene.add(new THREE.HemisphereLight(0xeef2ff, 0x3a3326, 1.1));
-    const dir = new THREE.DirectionalLight(0xfff2d6, 1.6);
-    dir.position.set(3, 5, 2);
-    scene.add(dir);
+    // 'studio', not 'game': the sheet exists to judge an asset's own colour and
+    // silhouette, so it deliberately runs brighter and flatter than in-world.
+    // Sharing the module still means tone mapping and colour space stay in sync.
+    new LightRig(scene, { preset: 'studio' });
     scene.add(new THREE.GridHelper(2, 8, 0x5a657a, 0x39404f));
 
     const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 100);

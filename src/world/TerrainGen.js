@@ -95,7 +95,11 @@ export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, s
   geom.computeVertexNormals();
   pos.needsUpdate = true;
 
-  return { geometry: geom, elevations, palette, seaLevel: seaLevelQuantile };
+  // minE/maxE are returned so `makeTerrainSampler` can normalize identically.
+  // The analytic sampler evaluates the same noise field but has no vertex set
+  // to derive the range from, and guessing it puts every sampled height in the
+  // wrong band (see the sampler's note).
+  return { geometry: geom, elevations, palette, seaLevel: seaLevelQuantile, minE, maxE };
 }
 
 function smoothstep(a, b, t) {
@@ -105,19 +109,35 @@ function smoothstep(a, b, t) {
 
 // Sample terrain radius along a normalized direction. Used for altitude-above-terrain.
 // Walks the mesh by re-running the noise — cheaper than mesh raycast for a frequent query.
-export function makeTerrainSampler({ seed, radius, seaLevel = 0.42, ampScale = 1.0 }) {
+// `minE`/`maxE` must come from the matching `buildPlanetGeometry` call so this
+// normalizes elevation the same way the mesh did. They used to be approximated
+// as a fixed [-0.6, 0.7]; that guess shifted every band, which is why motif
+// layouts (the only placement path that samples analytically rather than
+// snapping to a vertex) floated above or sank into the terrain.
+//
+// Note the sampler works in *normalized* space: the builder's sea level is
+// `minE + range * quantile`, so comparing a normalized elevation against the
+// raw quantile is equivalent — and `above` matches the builder's
+// `(e - seaLevel) / (maxE - seaLevel)` for the same reason.
+export function makeTerrainSampler({ seed, radius, seaLevel = 0.42, ampScale = 1.0, minE, maxE }) {
   const noise = makeNoise3(seed);
   const noise2 = makeNoise3(seed ^ 0x9e3779b9);
   const amp = radius * 0.10 * ampScale;
 
-  // We have to re-derive minE/maxE to be consistent with builder. Use a cheap fixed sample.
-  // (For Phase 1 we approximate — actual mesh is what matters for collisions.)
+  if (minE == null || maxE == null) {
+    console.warn('[TerrainGen] makeTerrainSampler called without minE/maxE — ' +
+                 'falling back to the legacy approximate range; sampled heights will drift.');
+  }
+  const lo = minE ?? -0.6;
+  const range = ((maxE ?? 0.7) - lo) || 1;
+
   return function sampleHeight(dirX, dirY, dirZ) {
     const c = fbm(noise, dirX * 1.2, dirY * 1.2, dirZ * 1.2, 5, 2.0, 0.5);
     const r = 1.0 - Math.abs(fbm(noise2, dirX * 3.0, dirY * 3.0, dirZ * 3.0, 4, 2.0, 0.55));
     const e = c * 0.7 + (r - 0.5) * 0.6;
-    // approx range [-0.6 .. 0.7]
-    const norm = (e + 0.6) / 1.3;
+    // Clamped because the continuous field can exceed the discrete vertex
+    // min/max sampled by the builder.
+    const norm = Math.max(0, Math.min(1, (e - lo) / range));
     if (norm < seaLevel) return radius * 0.995;
     const above = (norm - seaLevel) / (1 - seaLevel);
     return radius + amp * Math.pow(Math.max(0, above), 1.05);

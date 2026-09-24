@@ -177,6 +177,10 @@ export class Planet {
       radius: this.radius,
       seaLevel: built.seaLevel,
       ampScale: this.terrainParams.ampScale,
+      // Normalize against the same elevation range the mesh used, so
+      // analytically-sampled heights land on the terrain rather than near it.
+      minE: built.minE,
+      maxE: built.maxE,
     });
 
     this.landmarks = pickLandmarkSlots({

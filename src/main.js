@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 
 import { TUNING } from './game/Tuning.js';
+import { createRenderer, applyRenderSettings, LightRig } from './render/Rig.js';
 import { GameLoop } from './game/GameLoop.js';
 import { Input } from './game/Input.js';
 import { Plane } from './game/Plane.js';
@@ -73,14 +74,12 @@ async function main() {
 
   // 2. Three.js scene
   const canvas = document.getElementById('canvas');
-  // preserveDrawingBuffer enables the thumbnail-capture fallback path:
-  // ThumbnailCapture renders to an offscreen target normally, but if that
-  // ever fails we can read pixels out of the live canvas instead. The
-  // documented perf cost is small at our scene complexity.
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  // Renderer + lights come from src/render/Rig.js so the dev benches render
+  // the same image the game does. preserveDrawingBuffer is required by
+  // __GAME.testThumbnail()'s ground-truth pane — see the note in that module.
+  const renderer = createRenderer(canvas, { clearColor: 0x05060a });
+  applyRenderSettings(renderer);
   renderer.setSize(innerWidth, innerHeight, false);
-  renderer.setClearColor(0x05060a);
 
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x05060a, 0.00025);
@@ -89,14 +88,7 @@ async function main() {
 
   // Lights. Tuned for "no truly dark side" — even when the planet is between
   // the player and the sun, surface remains readable.
-  const sunLight = new THREE.DirectionalLight(0xfff2d6, 0.75);
-  sunLight.position.set(220, 180, 120);
-  scene.add(sunLight);
-  const fill = new THREE.DirectionalLight(0xcbd9ff, 0.45);
-  fill.position.set(-220, -120, -150);
-  scene.add(fill);
-  scene.add(new THREE.HemisphereLight(0xc4dcff, 0x6b573d, 0.95));
-  scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+  const lightRig = new LightRig(scene, { preset: 'game' });
 
   // 3. Rapier world (no global gravity — we apply our own per-frame radial pull)
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
@@ -814,6 +806,10 @@ async function main() {
     },
 
     onRender: (dt) => {
+      // Frame cost must be sampled here, not on the fixed step: the accumulator
+      // runs onFixedStep 0..8 times per rAF to catch up, so a delta measured
+      // there is pinned to the 60Hz step cadence and can't report a slow frame.
+      debugHUD.tickFrame(dt, renderer);
       // Atmosphere shader breathes with player altitude
       activeAtmosphere.tick(plane.position(), camera);
       // Reveal-as-you-fly: advance the asset fade for EVERY loaded planet
