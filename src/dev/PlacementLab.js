@@ -14,6 +14,12 @@
 //   surface=<id,id>               surface scatter GLBs
 //   density=sparse|medium|dense
 //   debug=1                       attach bbox/axes/normal helpers
+//   shape=<landform> pattern=<p>  force terrain shape / ground pattern
+//                                 (shared/planet-dice TERRAIN_SHAPES / GROUND_PATTERNS)
+//   shot=1                        screenshot mode (seed gallery, tests/e2e):
+//                                 no auto-orbit, camera held on the hero
+//                                 slot, `window.__LAB_READY = true` once the
+//                                 assets are mounted and a frame has rendered
 //
 // Console: `__LAB.planet`, `__LAB.camera`, `__LAB.THREE` for poking.
 // Drag to orbit, scroll to zoom.
@@ -22,6 +28,8 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Planet } from '../world/Planet.js';
 import { getAssetById } from '../world/assets/Catalog.js';
+import { load as loadGLB } from '../world/AssetCache.js';
+import { normalizeShape, normalizePattern } from '../../shared/planet-dice.js';
 
 const DEFAULTS = {
   hero: 'kenney:space:hangar_largeA',           // the prod float case
@@ -65,7 +73,12 @@ export async function runPlacementLab() {
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
 
   const radius = 60;
-  const planet = new Planet({ rapier: RAPIER, world, seed, radius, center: new THREE.Vector3() });
+  const shot = params.has('shot');
+  const planet = new Planet({
+    rapier: RAPIER, world, seed, radius, center: new THREE.Vector3(),
+    shape: normalizeShape(params.get('shape')),
+    pattern: normalizePattern(params.get('pattern')),
+  });
   scene.add(planet.group);
 
   // Forced concept (Phase 14b): sea/amp/slots/motif/subjects/embed/tier
@@ -103,6 +116,16 @@ export async function runPlacementLab() {
     if (missing) console.warn(`[placementLab] ${missing} unknown ${k} id(s) — check the catalog`);
   }
 
+  if (shot) {
+    // Parse every GLB serially in a fixed order first. applyVisuals loads in
+    // parallel, so geometry/material ids otherwise follow network completion
+    // order — and three's render sort uses material.id, which flips depth
+    // ties at intersections (a few dozen pixels differ run to run).
+    for (const a of [heroAsset, ...landmarkAssets, ...surfaceAssets, ...creatureAssets]) {
+      if (a?.url) await loadGLB(a.url, renderer).catch(() => {});
+    }
+  }
+
   await planet.applyVisuals({
     palette: planet.palette,
     biome,
@@ -125,7 +148,19 @@ export async function runPlacementLab() {
 
   // ── Minimal orbit controls (drag + scroll) ──────────────────────────
   let theta = 0.6, phi = 1.05, dist = radius * 2.6;
-  let dragging = false, px = 0, py = 0, auto = true;
+  let dragging = false, px = 0, py = 0, auto = !shot;
+  if (shot) {
+    // Fixed framing for the seed gallery: whole planet in frame, viewed
+    // from over the hero slot (falling back to the first slot), nudged
+    // toward the sun so the hero side is lit. No time dependence anywhere.
+    const d = (planet.heroSlot || planet.landmarks[0])?.direction;
+    if (d) {
+      const v = d.clone().normalize().add(sun.position.clone().normalize().multiplyScalar(0.45)).normalize();
+      phi = Math.max(0.05, Math.min(Math.PI - 0.05, Math.acos(Math.max(-1, Math.min(1, v.y)))));
+      theta = Math.atan2(v.z, v.x);
+    }
+    dist = radius * 3.1;
+  }
   canvas.addEventListener('pointerdown', (e) => { dragging = true; auto = false; px = e.clientX; py = e.clientY; });
   addEventListener('pointerup', () => { dragging = false; });
   addEventListener('pointermove', (e) => {
@@ -156,6 +191,14 @@ export async function runPlacementLab() {
     camera.lookAt(0, 0, 0);
     renderer.render(scene, camera);
   });
+
+  if (shot) {
+    // Ready = shaders compiled, assets mounted (applyVisuals resolved
+    // above, reveal forced solid) and at least two frames presented.
+    await renderer.compileAsync?.(scene, camera);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    globalThis.__LAB_READY = true;
+  }
 
   globalThis.__LAB = { planet, camera, scene, renderer, THREE,
     lookAtSlot(slotId, zoom = 2.2) {

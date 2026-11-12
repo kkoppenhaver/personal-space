@@ -8,3 +8,10 @@ dist/
 worker/.dev.vars
 *.log
 .claude/worktrees/
+
+# Test outputs (vitest / Playwright)
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+coverage/
