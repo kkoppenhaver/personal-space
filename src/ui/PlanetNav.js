@@ -56,13 +56,21 @@ export class PlanetNav {
     this.targets.delete(id);
   }
 
-  setLabel(id, label) {
+  // `color` (optional) recolors the marker text + ring — e.g. a dim
+  // UNCHARTED marker brightening once the planet's concept names it.
+  setLabel(id, label, color = null) {
     const el = this.markers.get(id);
     const t = this.targets.get(id);
     if (!el || !t) return;
     t.label = label;
     const lbl = el.querySelector('.label');
     if (lbl) lbl.textContent = label;
+    if (color && color !== t.color) {
+      t.color = color;
+      el.style.color = color;
+      const ring = el.querySelector('.ring');
+      if (ring) ring.style.borderColor = color;
+    }
   }
 
   update(camera, plane) {

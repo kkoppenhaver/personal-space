@@ -12,7 +12,7 @@ import { FlightController } from './game/FlightController.js';
 import { CameraRig } from './game/CameraRig.js';
 
 import { Galaxy, CELL_SIZE } from './world/Galaxy.js';
-import { rollTier, rollSparks, rollRegister, rollNameInitial, tierStats } from './world/ConceptSeed.js';
+import { rollTier, tierStats } from './world/ConceptSeed.js';
 import { Origin } from './world/Origin.js';
 import { hashString } from './world/Seed.js';
 import { API_BASE, apiPost } from './net/api.js';
@@ -29,6 +29,7 @@ import { PlanetNav } from './ui/PlanetNav.js';
 import { DebugHUD } from './ui/DebugHUD.js';
 
 import { LLMClient } from './llm/LLMClient.js';
+import { ConceptScheduler } from './llm/ConceptScheduler.js';
 
 import { AuthClient } from './auth/AuthClient.js';
 import { Upsell } from './auth/Upsell.js';
@@ -239,6 +240,29 @@ async function main() {
     hud.setPings(sorted);
   };
 
+  // Nav marker colours: planets read UNCHARTED (dim) until their concept
+  // names them.
+  const NAV_COLOR = '#9ec8ff';
+  const NAV_COLOR_UNCHARTED = '#5d6f86';
+
+  // Lazy concepts (Phase 0c): the scheduler requests a planet's concept
+  // (its spine: name, teaser, premise) only once the player is in, near,
+  // or aimed at its system. Created before the Galaxy because the home
+  // system spawns inside the Galaxy constructor.
+  const conceptScheduler = new ConceptScheduler({
+    llm,
+    onConcept: (p, c) => {
+      // The teaser the player navigates by IS the premise compressed; the
+      // same cached object reshapes terrain (while the planet is still a
+      // distant dot) and constrains Tier 2/3.
+      p.applyConcept(c);
+      const label = (c.name || p.meta?.name)?.toUpperCase() || null;
+      if (label) planetNav.setLabel(`planet:${p.seed}`, label, NAV_COLOR);
+      pings.set(p.seed, { name: label, teaser: c.teaser, planet: p });
+      refreshPings();
+    },
+  });
+
   // 8. Galaxy — streaming solar systems based on player galaxy position.
   // The home cell (0,0,0) is always populated so we have a stable spawn point.
   const galaxy = new Galaxy({
@@ -248,48 +272,25 @@ async function main() {
     origin,
     seed: galaxySeed,
     onSystemSpawned: (sys) => {
-      // Per-planet HUD ping + nav track. Keyed by planet seed so they survive
-      // pings-list iteration order and any future despawn/respawn churn.
-      const sunCss = `#${sys.sunColor.getHexString()}`;
+      // Per-planet nav track, keyed by planet seed so it survives
+      // despawn/respawn churn. Unnamed planets read UNCHARTED until the
+      // scheduler delivers their concept.
       for (let i = 0; i < sys.planets.length; i++) {
         const p = sys.planets[i];
-        const atm = sys.atmospheres[i];
-
+        const name = planetNameOf(p);
         planetNav.track(`planet:${p.seed}`, {
           object: p.group,
-          label: (planetNameOf(p) || `P${i + 1}`).toUpperCase(),
-          color: '#9ec8ff',
+          label: name ? name.toUpperCase() : 'UNCHARTED',
+          color: name ? NAV_COLOR : NAV_COLOR_UNCHARTED,
           getDistance: () => Math.max(0, plane.position().distanceTo(p.center) - p.radius),
         });
-
-        // Concept call (Phase 14a) — the planet's spine, replacing the old
-        // Tier 1 teaser at the same call site (same cadence, same Haiku
-        // cost). The teaser the player navigates by IS the premise
-        // compressed; the same cached object reshapes terrain (while the
-        // planet is still a distant dot) and constrains Tier 2/3.
-        // Name-first: the concept also coins the planet name, so the HUD
-        // chip and nav label fill in seconds after spawn instead of
-        // waiting out the Tier 2 Sonnet call. "DISCOVERING…" remains only
-        // for the gap before the concept resolves (or if it failed).
-        llm.concept(p.seed, {
-          radius: Math.round(p.radius),
-          tier: rollTier(p.seed),
-          sparks: rollSparks(p.seed),
-          register: rollRegister(sys.seed, i),
-          name_initial: rollNameInitial(sys.seed, i),
-          terrain_shape: p.terrainParams.shape,
-          ground_pattern: p.terrainParams.pattern,
-        }).then(c => {
-          if (!c?.teaser) return;
-          p.applyConcept(c);
-          const label = (c.name || p.meta?.name)?.toUpperCase() || null;
-          if (label) planetNav.setLabel(`planet:${p.seed}`, label);
-          pings.set(p.seed, { name: label, teaser: c.teaser, planet: p });
-          refreshPings();
-        }).catch(() => {});
       }
+      // Delivers already-known concepts now (free); the rest wait for
+      // the player to come near (see conceptScheduler.update below).
+      conceptScheduler.track(sys);
     },
     onSystemDespawned: (sys) => {
+      conceptScheduler.untrack(sys);
       for (const p of sys.planets) {
         planetNav.untrack(`planet:${p.seed}`);
         pings.delete(p.seed);
@@ -302,9 +303,29 @@ async function main() {
 
   // Tier 2 (approach). Idempotent per-seed thanks to the Set guard; failures
   // delete the seed so a real retry can re-arm later.
+  //
+  // The concept must ride along to /tier2/direct (otherwise Tier 2 coins
+  // its own name and the planet gets renamed on arrival), so wait for it —
+  // charting the system on demand — but never longer than CONCEPT_WAIT_MS.
+  const CONCEPT_WAIT_MS = 4000;
   const tryApproach = (planet) => {
     if (approachSent.has(planet.seed)) return;
     approachSent.add(planet.seed);
+    const conceptReady = planet.concept
+      ? Promise.resolve()
+      : Promise.race([
+        conceptScheduler.ensure(planet).catch(() => null),
+        new Promise((res) => setTimeout(res, CONCEPT_WAIT_MS)),
+      ]);
+    conceptReady.then(() => {
+      // Despawned while we waited (onSystemDespawned already cleared
+      // approachSent, so a respawn can re-arm).
+      if (!conceptScheduler.isTracked(planet)) return;
+      fireApproach(planet);
+    });
+  };
+
+  const fireApproach = (planet) => {
     // Concept context (Phase 14a): the planet's premise rides along to
     // /tier2/direct as a hard constraint — Tier 2 elaborates the sentence
     // the player navigated by. hashContext folds it into the worker KV
@@ -319,7 +340,7 @@ async function main() {
       planet.applyLLM(meta);
       const name = planetNameOf(planet);
       const label = (name || `P?`).toUpperCase();
-      planetNav.setLabel(`planet:${planet.seed}`, label);
+      planetNav.setLabel(`planet:${planet.seed}`, label, NAV_COLOR);
       const existing = pings.get(planet.seed);
       if (existing) {
         existing.name = label;
@@ -455,6 +476,10 @@ async function main() {
   // Resolve initial active planet/atmosphere/system from spawn position.
   let { planet: activePlanet, atmosphere: activeAtmosphere, system: activeSystem } = galaxy.activePlanetFor(plane.position());
 
+  // Chart the starting system now, before the loop runs: the welcome modal
+  // (if shown) doubles as cover for the concept calls' latency.
+  conceptScheduler.chart(activeSystem);
+
   // Crossings
   let prevInside = activeAtmosphere.contains(plane.position());
   let prevActivePlanet = activePlanet;
@@ -583,6 +608,15 @@ async function main() {
         activeAtmosphere = a.atmosphere;
         activeSystem = a.system;
       }
+
+      // Lazy concepts: chart systems the player is in, near, or aimed at
+      // (throttled to ~4 scans/s inside the scheduler).
+      conceptScheduler.update({
+        planePos: plane.position(),
+        planeFwd: plane.forward(),
+        activeSystem,
+        nowMs: performance.now(),
+      });
 
       // Commitment-gated Tier 2 (approach). Fires once per planet across every
       // loaded system. The seed-keyed `approachSent` Set survives despawn so
@@ -980,6 +1014,9 @@ async function main() {
   window.__GAME = {
     plane, galaxy, flight, cameraRig, origin,
     auth, logbookStore, logbookSync, flightStats, thumbnailCapture,
+    conceptScheduler,
+    // Network LLM requests this session, per route (cost check).
+    llmCalls() { return { ...llm.netCalls }; },
     get planet() { return activePlanet; },
     get atmosphere() { return activeAtmosphere; },
     get system() { return activeSystem; },
