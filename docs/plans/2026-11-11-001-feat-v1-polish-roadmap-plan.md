@@ -12,7 +12,7 @@ scope: whole project (supersedes plan.md "Phase 3+ vision roadmap" and master-pl
 
 | Phase | Status | PR | Notes |
 |---|---|---|---|
-| 0. Foundations | 🔄 In review | — | 0a done 2026-11-12: #32 squash-merged (stack landed), #30/#31 closed, worker deployed. 0b-0d in the PR: spend guard (session + rate limits + daily budget breaker + `llm_usage` ledger), server-derived concept context via `/shared`, lazy concepts (3 requests at start instead of 45), concept + pick on Haiku 5.5, unit tests, browser smoke test, seed gallery, CI, logbook lost-update fix. Needs: D1 migration 0003 + worker deploy; a Console spend limit. |
+| 0. Foundations | 🔄 In review | [#33](https://github.com/kkoppenhaver/personal-space/pull/33) | 0a done 2026-11-12: #32 squash-merged (stack landed), #30/#31 closed, worker deployed. 0b-0d in the PR: spend guard (session + rate limits + daily budget breaker + `llm_usage` ledger), server-derived concept context via `/shared`, lazy concepts (3 requests at start instead of 45), concept + pick on Haiku 5.5, unit tests, browser smoke test, seed gallery, CI, logbook lost-update fix. Needs: D1 migration 0003 + worker deploy; a Console spend limit. |
 | 1. Look | ⌛ Pending | — | |
 | 2. Loop | ⌛ Pending | — | |
 | 3. Sound | ⌛ Pending | — | |
