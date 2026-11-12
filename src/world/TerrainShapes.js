@@ -16,54 +16,14 @@ import { mulberry32, makeNoise3, fbm } from './Seed.js';
 // so the hero lands on the summit / in the bowl — the premise's subject
 // sits on the planet's most legible point.
 
-export const TERRAIN_SHAPES = [
-  'rolling', 'one-mountain', 'ridge', 'rift', 'crater', 'cratered',
-  'terraced', 'mesas', 'spires', 'dunes', 'archipelago', 'plates', 'flat',
-];
-export const GROUND_PATTERNS = ['none', 'patchwork', 'rows', 'rings', 'spots', 'veins', 'stripes'];
-
-// Fallback roll when the concept doesn't pick (legacy worker / placeholder).
-// Weighted toward NOT-rolling: the whole point is that worlds read
-// differently from orbit.
-const SHAPE_WEIGHTS = {
-  rolling: 14, 'one-mountain': 10, ridge: 8, rift: 8, crater: 8, cratered: 7,
-  terraced: 8, mesas: 8, spires: 6, dunes: 7, archipelago: 6, plates: 6, flat: 4,
-};
-const PATTERN_WEIGHTS = { none: 30, patchwork: 16, rows: 12, rings: 10, spots: 12, veins: 8, stripes: 12 };
-
-function weighted(table, rand) {
-  const entries = Object.entries(table);
-  let roll = rand() * entries.reduce((s, [, w]) => s + w, 0);
-  for (const [k, w] of entries) { roll -= w; if (roll <= 0) return k; }
-  return entries[0][0];
-}
-
-// Weighted sampling WITHOUT replacement, seeded per system: the i-th
-// planet of a system gets the i-th draw, so siblings never share a
-// landform (independent per-planet rolls clumped — three terraced worlds
-// in a row). Same idea as the per-system registers in ConceptSeed.
-function dealt(table, systemSeed, salt, index) {
-  const rand = mulberry32((systemSeed ^ salt) >>> 0);
-  const pool = Object.entries(table);
-  const order = [];
-  while (pool.length) {
-    let roll = rand() * pool.reduce((s, [, w]) => s + w, 0);
-    let k = 0;
-    for (; k < pool.length - 1; k++) { roll -= pool[k][1]; if (roll <= 0) break; }
-    order.push(pool.splice(k, 1)[0][0]);
-  }
-  return order[index % order.length];
-}
-
-export function dealShape(systemSeed, index) { return dealt(SHAPE_WEIGHTS, systemSeed, 0x51a9e, index); }
-export function dealPattern(systemSeed, index) { return dealt(PATTERN_WEIGHTS, systemSeed, 0x9a77e, index); }
-
-// Single-planet fallback (no system context — dev benches).
-export function rollShape(seed) { return weighted(SHAPE_WEIGHTS, mulberry32((seed ^ 0x51a9e) >>> 0)); }
-export function rollPattern(seed) { return weighted(PATTERN_WEIGHTS, mulberry32((seed ^ 0x9a77e) >>> 0)); }
-
-export function normalizeShape(s) { return TERRAIN_SHAPES.includes(s) ? s : null; }
-export function normalizePattern(p) { return GROUND_PATTERNS.includes(p) ? p : null; }
+// The shape/pattern vocab and the per-system dealing live in
+// /shared/planet-dice.js (the worker deals the same hand to build the
+// concept prompt). Re-exported so game code imports from one place.
+export {
+  TERRAIN_SHAPES, GROUND_PATTERNS,
+  dealShape, dealPattern, rollShape, rollPattern,
+  normalizeShape, normalizePattern,
+} from '../../shared/planet-dice.js';
 
 function randomUnit(rand) {
   const u = rand() * 2 - 1;

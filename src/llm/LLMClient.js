@@ -10,16 +10,26 @@
 // asset IDs. With an empty catalog (Phase 3 baseline) the pick stage is
 // skipped and approach() returns just the direct-call output.
 
-import { placeholderTier1, placeholderTier2, placeholderTier3, placeholderConcept } from './Placeholder.js';
+import { placeholderTier2, placeholderTier3, placeholderConcept } from './Placeholder.js';
 import { shortlist as retrieverShortlist } from '../world/AssetRetriever.js';
 
+// v7 bump: earlier builds persisted placeholder fallbacks (one transient
+// failure = placeholder text forever). Fallbacks are session-only now;
+// starting a fresh cache drops the ones already stored. Real results are
+// still in the worker's KV, so refetching them costs no LLM calls.
 // v6 bump: concept v3 (per-system registers + name initials) — without it
 // returning players keep their old, bone-heavy concepts forever.
 // v5 bump invalidates cached responses that predate name-first concepts
 // (v4 concept entries have no name; v4 Tier 2 entries coined names the
 // player never navigated by). v4 was the concept-spine bump, v3 the
 // archetype-context bump, v2 the Phase 3 hint arrays.
-const LS_CACHE_KEY = 'paper-airplane:llmcache:v6';
+const LS_CACHE_KEY = 'paper-airplane:llmcache:v7';
+// Superseded cache blobs — removed on load so they stop eating quota.
+const LS_OLD_CACHE_KEYS = [1, 2, 3, 4, 5, 6].map((v) => `paper-airplane:llmcache:v${v}`);
+// Developer bypass for running local dev against the production worker
+// (the worker requires a session cookie on LLM routes; this header skips
+// that check when it matches the worker's secret).
+const LS_DEVKEY = 'paper-airplane:devkey';
 
 // Per the plan: no more than 2 concurrent Tier 2 chains so a mid-flight
 // swerve doesn't stack billable calls. Older speculative calls aren't
@@ -93,23 +103,51 @@ export class LLMClient {
   constructor({ workerURL = '' } = {}) {
     this.workerURL = workerURL.replace(/\/$/, '');
     this.inflight = new Map();      // `${tier}:${seed}` -> Promise
+    // Real (worker-produced) results only. Persisted to localStorage.
     this.cache = loadCache();
+    // Fallback results (offline mode, or any failed call: 401/429/502/503,
+    // timeout, network). Session-only: the same session won't refetch in a
+    // loop, and the next page load retries the real call. A failure must
+    // never turn a planet into placeholder text permanently.
+    this.sessionFallbacks = new Map();
+    // One increment per actual network request — the cost-relevant number.
+    // Read from the console via __GAME.llmCalls().
+    this.netCalls = { concept: 0, tier2: 0, pick: 0, tier3: 0, assets: 0 };
     this._tier2Slots = 0;           // running count of in-flight Tier 2 chains
     this._tier2Waiters = [];        // queue of `() => void` to release slots
   }
 
-  async ping(seed, context = {}) {
-    return this._call(1, seed, context, placeholderTier1);
+  /**
+   * Concept call (Phase 14a) — the planet's spine. Requested lazily by
+   * ConceptScheduler (only for systems the player is in / near / aimed at).
+   *
+   * `context` is conceptContextFor(identity) — still sent for the
+   * not-yet-upgraded worker and used by the offline placeholder. `identity`
+   * ({ system_seed, planet_index, radius }) is what the upgraded worker
+   * derives the prompt context from; it ignores the client's context.
+   */
+  async concept(seed, context = {}, identity = null) {
+    const extraBody = identity
+      ? { system_seed: identity.system_seed >>> 0, planet_index: identity.planet_index | 0, radius: Math.round(identity.radius) }
+      : null;
+    return this._call('concept', seed, context, placeholderConcept, { extraBody });
   }
 
   /**
-   * Concept call (Phase 14a) — the planet's spine, fired at system spawn.
-   * Context carries { radius, tier, sparks } (all deterministic from the
-   * seed) so the worker KV key is stable. Returns the concept object;
-   * deterministic placeholder when no worker is configured.
+   * A previously persisted REAL concept for this seed, or null. Synchronous,
+   * no network. Fallback concepts are never returned (they aren't persisted).
    */
-  async concept(seed, context = {}) {
-    return this._call('concept', seed, context, placeholderConcept);
+  peekConcept(seed) {
+    return this.cache[`concept:${seed >>> 0}`] || null;
+  }
+
+  /** Request headers for every worker call: JSON + optional dev bypass key. */
+  _headers(json = true) {
+    const h = json ? { 'content-type': 'application/json' } : {};
+    let devKey = null;
+    try { devKey = globalThis.localStorage?.getItem(LS_DEVKEY) || null; } catch (e) { /* storage blocked */ }
+    if (devKey) h['x-dev-key'] = devKey;
+    return h;
   }
 
   /**
@@ -129,6 +167,7 @@ export class LLMClient {
   async approach(seed, context = {}, { onDirect, onPicks } = {}) {
     const key = `2:${seed >>> 0}`;
     if (this.cache[key]) return this.cache[key];
+    if (this.sessionFallbacks.has(key)) return this.sessionFallbacks.get(key);
     if (this.inflight.has(key)) return this.inflight.get(key);
 
     const p = (async () => {
@@ -181,7 +220,14 @@ export class LLMClient {
         }
 
         const merged = picks ? { ...direct, selected_assets: picks } : direct;
-        this._memo(key, merged);
+        if (direct._fallback) {
+          // The words came from the placeholder — keep the merged result for
+          // this session only so a later page load retries the real call.
+          markFallback(merged);
+          this.sessionFallbacks.set(key, merged);
+        } else {
+          this._memo(key, merged);
+        }
         return merged;
       } finally {
         this._releaseTier2Slot();
@@ -280,7 +326,12 @@ export class LLMClient {
       try {
         const ctl = new AbortController();
         const tid = setTimeout(() => ctl.abort(), 6000);
-        const resp = await fetch(`${this.workerURL}/assets/search?q=${encodeURIComponent(kw)}&limit=4`, { signal: ctl.signal });
+        this.netCalls.assets++;
+        const resp = await fetch(`${this.workerURL}/assets/search?q=${encodeURIComponent(kw)}&limit=4`, {
+          signal: ctl.signal,
+          credentials: 'include',
+          headers: this._headers(false),
+        });
         clearTimeout(tid);
         if (!resp.ok) return;
         const { results } = await resp.json();
@@ -394,9 +445,11 @@ export class LLMClient {
       // posture as Tier 2/direct. degradedPick is a clean fallback if it
       // still times out, but we want the real LLM choice when possible.
       const timeoutId = setTimeout(() => ctl.abort(), 20000);
+      this.netCalls.pick++;
       const resp = await fetch(`${this.workerURL}/tier2/pick`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: this._headers(),
+        credentials: 'include',
         signal: ctl.signal,
         body: JSON.stringify({
           seed: seed >>> 0,
@@ -437,42 +490,51 @@ export class LLMClient {
 
   // ── Generic single-tier call ──────────────────────────────────────
 
-  async _call(tier, seed, context, fallback, { suffix = '', skipMemo = false } = {}) {
+  async _call(tier, seed, context, fallback, { suffix = '', skipMemo = false, extraBody = null } = {}) {
     const key = `${tier}:${seed >>> 0}`;
     if (!skipMemo && this.cache[key]) return this.cache[key];
+    if (!skipMemo && this.sessionFallbacks.has(key)) return this.sessionFallbacks.get(key);
     if (!skipMemo && this.inflight.has(key)) return this.inflight.get(key);
 
+    // Fallback path (offline mode or a failed call): never persisted.
+    const useFallback = () => {
+      const out = markFallback(fallback(seed, context));
+      if (!skipMemo) this.sessionFallbacks.set(key, out);
+      return out;
+    };
+
     const p = (async () => {
-      if (!this.workerURL) {
-        const out = fallback(seed, context);
-        if (!skipMemo) this._memo(key, out);
-        return out;
-      }
+      if (!this.workerURL) return useFallback();
       try {
         const ctl = new AbortController();
-        // Tier 1 / concept = Haiku (fast), Tier 2/direct = Sonnet 4.6 rich
-        // biome prose (consistently 12-16s p50 in prod), Tier 3 = Sonnet
+        // Concept = Haiku (fast), Tier 2/direct = Sonnet 4.6 rich biome
+        // prose (consistently 12-16s p50 in prod), Tier 3 = Sonnet
         // landmark lore (similar profile). 12s was too tight and caused
         // every Tier 2/3 to abort + fall back to placeholder.
-        const timeoutMs = tier === 1 ? 8000 : (tier === 'concept' ? 15000 : 25000);
+        const timeoutMs = tier === 'concept' ? 15000 : 25000;
         const path = typeof tier === 'number' ? `/tier${tier}${suffix}` : `/${tier}`;
         const timeoutId = setTimeout(() => ctl.abort(), timeoutMs);
+        const bucket = NET_COUNTER[tier] || String(tier);
+        this.netCalls[bucket] = (this.netCalls[bucket] || 0) + 1;
         const resp = await fetch(`${this.workerURL}${path}`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ seed: seed >>> 0, context }),
+          headers: this._headers(),
+          credentials: 'include',
+          body: JSON.stringify({ seed: seed >>> 0, context, ...(extraBody || {}) }),
           signal: ctl.signal,
         });
         clearTimeout(timeoutId);
+        // 401 unauthenticated / 429 rate limited / 503 budget exhausted /
+        // 502 upstream: all mean "offline fallback for now, retry another
+        // session".
         if (!resp.ok) throw new Error(`worker ${resp.status}`);
         const json = await resp.json();
+        if (!json || typeof json !== 'object' || json.degraded) throw new Error('worker degraded');
         if (!skipMemo) this._memo(key, json);
         return json;
       } catch (err) {
         console.warn(`[LLM] tier ${tier}${suffix} fallback:`, err.message);
-        const out = fallback(seed, context);
-        if (!skipMemo) this._memo(key, out);
-        return out;
+        return useFallback();
       } finally {
         if (!skipMemo) this.inflight.delete(key);
       }
@@ -558,8 +620,22 @@ function degradedPick(hero, landmark, surface, creature = []) {
   };
 }
 
+// Network counter bucket per _call tier.
+const NET_COUNTER = { concept: 'concept', 2: 'tier2', 3: 'tier3' };
+
+// Tag an offline/failed-call result so callers can tell it apart from a
+// real one. Non-enumerable: it never survives JSON.stringify or a spread,
+// so it can't leak into a request body, the logbook, or localStorage.
+function markFallback(obj) {
+  if (obj && typeof obj === 'object') {
+    Object.defineProperty(obj, '_fallback', { value: true, enumerable: false, configurable: true });
+  }
+  return obj;
+}
+
 function loadCache() {
   try {
+    for (const k of LS_OLD_CACHE_KEYS) localStorage.removeItem(k);
     const raw = localStorage.getItem(LS_CACHE_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch (e) { return {}; }

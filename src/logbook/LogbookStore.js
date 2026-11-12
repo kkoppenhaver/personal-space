@@ -12,6 +12,12 @@
 //
 // Thumbnail bytes (Blob) live on the entry too, separate from sync state, so
 // we can upload independently of the main row.
+//
+// Concurrency: the lore patch, the thumbnail attach and LogbookSync.flush()
+// all mutate the same row around a claim. Every mutator goes through
+// idb.atomic / idb.mutate (read + write in ONE readwrite transaction), so a
+// stale whole-object write can never clobber a field another path just set.
+// tests/unit/logbook-store.test.js pins this.
 
 import { idb } from './idb.js';
 
@@ -25,130 +31,98 @@ export class LogbookStore extends EventTarget {
    */
   async add(input) {
     const identityKey = makeIdentityKey(input);
-    const existing = await idb.getByIdentity(identityKey);
-    if (existing) {
-      // Dedupe: merge any newly available fields (e.g. lore filled in by a
-      // later attempt) but keep the canonical id + sync state.
-      const merged = mergeForDedupe(existing, input);
-      if (changed(existing, merged)) {
+    // Lookup + insert-or-merge in ONE transaction, so two concurrent claims
+    // of the same planet converge instead of tripping the unique index.
+    const { entry, wrote } = await idb.atomic([{ identity: identityKey }], ([existing]) => {
+      if (existing) {
+        // Dedupe: merge any newly available fields (e.g. lore filled in by a
+        // later attempt) but keep the canonical id + sync state.
+        const merged = mergeForDedupe(existing, input);
+        if (!changed(existing, merged)) return { result: { entry: merged, wrote: false } };
         merged.updated_at = Date.now();
         if (existing.sync_state === 'synced') merged.sync_state = 'new';
-        await idb.put(merged);
-        this._emit();
+        return { put: [merged], result: { entry: merged, wrote: true } };
       }
-      return merged;
-    }
-    const now = Date.now();
-    const entry = {
-      id: input.id,
-      identityKey,
-      galaxy_seed: input.galaxy_seed,
-      cell_x: input.cell_x, cell_y: input.cell_y, cell_z: input.cell_z,
-      planet_index: input.planet_index,
-      planet_seed: input.planet_seed,
-      planet_name: input.planet_name,
-      biome: input.biome ?? null,
-      palette: input.palette ?? null,
-      landmarks: input.landmarks ?? null,
-      lore: input.lore ?? null,
-      lore_status: input.lore_status ?? (input.lore ? 'ready' : 'pending'),
-      thumbnail_url: null,
-      thumbnailBlob: input.thumbnailBlob ?? null,
-      thumbnail_sync_state: input.thumbnailBlob ? 'new' : null,
-      stats: input.stats ?? null,
-      credits: input.credits ?? null,
-      legacy: input.legacy === true,
-      claimed_at: input.claimed_at,
-      updated_at: now,
-      sync_state: 'new',
-      retry_count: 0,
-      next_retry_at: 0,
-      remote_id: null,
-    };
-    await idb.put(entry);
-    this._emit();
+      const fresh = newEntry(input, identityKey);
+      return { put: [fresh], result: { entry: fresh, wrote: true } };
+    });
+    if (wrote) this._emit();
     return entry;
   }
 
   async update(id, patch) {
-    const e = await idb.get(id);
-    if (!e) return null;
-    const updated = { ...e, ...patch, updated_at: Date.now() };
-    if (patch.lore !== undefined || patch.stats !== undefined || patch.landmarks !== undefined) {
-      if (updated.sync_state === 'synced') updated.sync_state = 'new';
-    }
-    await idb.put(updated);
+    const updated = await idb.mutate(id, (e) => {
+      const next = { ...e, ...patch, updated_at: Date.now() };
+      if (patch.lore !== undefined || patch.stats !== undefined || patch.landmarks !== undefined) {
+        if (next.sync_state === 'synced') next.sync_state = 'new';
+      }
+      return next;
+    });
+    if (!updated) return null;
     this._emit();
     return updated;
   }
 
   async attachThumbnail(id, blob) {
-    const e = await idb.get(id);
+    const e = await idb.mutate(id, (cur) => ({
+      ...cur,
+      thumbnailBlob: blob,
+      thumbnail_sync_state: 'new',
+      updated_at: Date.now(),
+    }));
     if (!e) return null;
-    e.thumbnailBlob = blob;
-    e.thumbnail_sync_state = 'new';
-    e.updated_at = Date.now();
-    await idb.put(e);
     this._emit();
     return e;
   }
 
   async markSyncing(id) {
-    const e = await idb.get(id); if (!e) return;
-    e.sync_state = 'syncing';
-    await idb.put(e);
+    await idb.mutate(id, (e) => ({ ...e, sync_state: 'syncing' }));
   }
 
   async markSynced(id, remoteId, canonical) {
-    const e = await idb.get(id); if (!e) return;
-    e.sync_state = 'synced';
-    e.remote_id = remoteId;
-    e.retry_count = 0;
-    e.next_retry_at = 0;
-    if (canonical && remoteId !== id) {
-      // Server returned the canonical id from a prior insert; rewrite locally.
-      const collision = await idb.get(remoteId);
+    const reads = [{ id }];
+    const rewrite = canonical && remoteId !== id;
+    if (rewrite) reads.push({ id: remoteId });
+    const wrote = await idb.atomic(reads, ([cur, collision]) => {
+      if (!cur) return null;
+      const e = { ...cur, sync_state: 'synced', remote_id: remoteId, retry_count: 0, next_retry_at: 0 };
+      if (!rewrite) return { put: [e], result: true };
       if (!collision) {
-        await idb.delete(id);
-        e.id = remoteId;
-        await idb.put(e);
-      } else {
-        // The canonical row exists locally too — drop the loser and keep the
-        // canonical with our merged data.
-        const merged = mergeForDedupe(collision, e);
-        merged.sync_state = 'synced';
-        merged.remote_id = remoteId;
-        await idb.put(merged);
-        await idb.delete(id);
+        // Server returned the canonical id from a prior insert; rewrite locally.
+        return { del: [id], put: [{ ...e, id: remoteId }], result: true };
       }
-    } else {
-      await idb.put(e);
-    }
-    this._emit();
+      // The canonical row exists locally too — drop the loser and keep the
+      // canonical with our merged data.
+      const merged = mergeForDedupe(collision, e);
+      merged.sync_state = 'synced';
+      merged.remote_id = remoteId;
+      return { del: [id], put: [merged], result: true };
+    });
+    if (wrote) this._emit();
   }
 
   async markFailed(id, error) {
-    const e = await idb.get(id); if (!e) return;
-    e.sync_state = 'failed';
-    e.retry_count = (e.retry_count || 0) + 1;
-    e.next_retry_at = Date.now() + backoffMs(e.retry_count);
-    e.last_error = String(error?.message || error);
-    await idb.put(e);
-    this._emit();
+    const e = await idb.mutate(id, (cur) => {
+      const retry_count = (cur.retry_count || 0) + 1;
+      return {
+        ...cur,
+        sync_state: 'failed',
+        retry_count,
+        next_retry_at: Date.now() + backoffMs(retry_count),
+        last_error: String(error?.message || error),
+      };
+    });
+    if (e) this._emit();
   }
 
   async markThumbnailSynced(id) {
-    const e = await idb.get(id); if (!e) return;
-    e.thumbnail_sync_state = 'synced';
     // We could drop the blob to save space; keep it for now (offline detail view).
-    await idb.put(e);
-    this._emit();
+    const e = await idb.mutate(id, (cur) => ({ ...cur, thumbnail_sync_state: 'synced' }));
+    if (e) this._emit();
   }
 
   async markThumbnailFailed(id) {
-    const e = await idb.get(id); if (!e) return;
-    e.thumbnail_sync_state = 'failed';
-    await idb.put(e);
+    await idb.mutate(id, (cur) => ({ ...cur, thumbnail_sync_state: 'failed' }));
   }
 
   async delete(id) {
@@ -175,18 +149,41 @@ export class LogbookStore extends EventTarget {
 
   async resetTransientSyncing() {
     // Recovery after a crashed tab: any 'syncing' rows should retry.
-    const all = await idb.getAll();
-    for (const e of all) {
-      if (e.sync_state === 'syncing') {
-        e.sync_state = 'new';
-        await idb.put(e);
-      }
-    }
+    await idb.updateEach((e) => (e.sync_state === 'syncing' ? { ...e, sync_state: 'new' } : null));
   }
 
   _emit() {
     this.dispatchEvent(new Event('change'));
   }
+}
+
+function newEntry(input, identityKey) {
+  return {
+    id: input.id,
+    identityKey,
+    galaxy_seed: input.galaxy_seed,
+    cell_x: input.cell_x, cell_y: input.cell_y, cell_z: input.cell_z,
+    planet_index: input.planet_index,
+    planet_seed: input.planet_seed,
+    planet_name: input.planet_name,
+    biome: input.biome ?? null,
+    palette: input.palette ?? null,
+    landmarks: input.landmarks ?? null,
+    lore: input.lore ?? null,
+    lore_status: input.lore_status ?? (input.lore ? 'ready' : 'pending'),
+    thumbnail_url: null,
+    thumbnailBlob: input.thumbnailBlob ?? null,
+    thumbnail_sync_state: input.thumbnailBlob ? 'new' : null,
+    stats: input.stats ?? null,
+    credits: input.credits ?? null,
+    legacy: input.legacy === true,
+    claimed_at: input.claimed_at,
+    updated_at: Date.now(),
+    sync_state: 'new',
+    retry_count: 0,
+    next_retry_at: 0,
+    remote_id: null,
+  };
 }
 
 function makeIdentityKey(e) {

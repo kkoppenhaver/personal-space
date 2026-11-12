@@ -103,6 +103,15 @@ export const TUNING = {
   INTENT_GATE_DISTANCE_MULT: 1.5,  // intent radius = APPROACH_DISTANCE * mult
   INTENT_GATE_MS: 1500,            // ms of sustained heading required to fire
 
+  // Lazy concepts (ConceptScheduler). A system's planets get their /concept
+  // call ("charted") only when the player is in it, near it, or has held
+  // the nose on it — not for every streamed system (each call is paid).
+  CONCEPT_NEAR_RADIUS: 8000,  // metres from the plane to the system's sun
+  // Aim is deliberately narrow and slow: with ~10 neighbour systems
+  // loaded, a wide cone charts most of the sky just by cruising.
+  CONCEPT_AIM_DOT: 0.99,      // dot(fwd, toSunOrPlanetUnit) ≥ this counts as aimed (~8°)
+  CONCEPT_AIM_MS: 1200,       // ms of continuous aim before a distant system is charted
+
   // World
   PLANET_RADIUS: 100,
   PLANET_SEED: 1337,

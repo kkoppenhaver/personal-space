@@ -4,7 +4,7 @@ Cloudflare Worker that powers the LLM proxy *and* the cloud-backed logbook. Sing
 
 ## What it does
 
-- **LLM proxy** — `POST /tier1`, `/tier2`, `/tier3`. Holds the Anthropic API key, enforces JSON output via tool-use, caches responses in KV by `(tier, seed, normalizedContext)` so revisits return identical content.
+- **LLM proxy** — `POST /concept`, `/tier2/direct` (alias `/tier2`), `/tier2/pick`, `/tier3`. Holds the Anthropic API key, enforces JSON output via tool-use, caches responses in KV by `(tier, seed, normalizedContext)` so revisits return identical content. Session-gated, rate-limited, and behind a daily spend breaker (see [Spend guard](#spend-guard)).
 - **Auth** — passkey (WebAuthn) primary, email magic-link recovery. Anonymous-user creation on first contact so the game has a session before the player decides to sign up. Cookie-based sessions (HMAC-signed id, `Domain=.personalspace.fun`, `SameSite=Lax`).
 - **Logbook** — entry CRUD + thumbnail upload/download. Idempotent inserts on the planet identity tuple.
 - **Account** — JSON export (GDPR-style) and cascading delete.
@@ -74,15 +74,51 @@ Local D1 + R2 + KV are file-backed in `.wrangler/state/` — you can `rm -rf` it
 
 ## Endpoints
 
-### LLM proxy (unchanged from the original)
+### LLM proxy
 
-| Route | Model | Returns |
-| --- | --- | --- |
-| `POST /tier1` | `claude-haiku-4-5` | `{ teaser }` |
-| `POST /tier2` | `claude-sonnet-4-6` | full planet meta |
-| `POST /tier3` | `claude-sonnet-4-6` | surface lore + landmark blurbs |
+| Route | Model | Body | Returns |
+| --- | --- | --- | --- |
+| `POST /concept` | `claude-haiku-5-5` | `{ system_seed, planet_index, radius }` | the planet concept |
+| `POST /tier2/direct` (alias `/tier2`) | `claude-sonnet-4-6` | `{ seed, context: { radius, tier, concept } }` | full planet meta + creative direction |
+| `POST /tier2/pick` | `claude-haiku-5-5` | `{ seed, direction, shortlist, shortlist_meta }` | asset ids per slot |
+| `POST /tier3` | `claude-sonnet-4-6` | `{ seed, context: { name, biome, landmarks, concept, tier, mounted } }` | surface lore + landmark blurbs |
+| `GET /assets/search?q=` | (Poly Pizza) | | CC0 search results |
 
-All take `{ seed, context }`. Cache key includes a hash of `context`.
+`/concept` ignores any client `seed`/`context` and derives both from `(system_seed, planet_index)` with `shared/planet-dice.js`. The other contexts are reduced to an allowlist with length caps (`src/lib/llm-context.js`) before they reach the prompt or the cache key. Responses carry `x-cache: hit|miss`. `/tier1` was removed (the concept call replaced it).
+
+### Spend guard
+
+Every route above runs behind `llmGuard` (`src/lib/llm-guard.js`):
+
+1. **Auth.** A valid session cookie (every visitor gets an anonymous one from `POST /api/auth/anonymous`), or an `x-dev-key` header equal to the `DEV_LLM_KEY` secret (honoured only when that secret is set and at least 16 characters). Otherwise `401 {error:'unauthenticated'}`.
+2. **Rate limits.** `LLM_LIMITER` (60/min per user or dev key) and `LLM_IP_LIMITER` (120/min per IP). Over either: `429 {error:'rate_limited'}`, `retry-after: 60`.
+3. **Body cap.** Over 16 KB: `413`.
+
+Then, per request: a KV cache hit is always served (it costs nothing). Only on a miss does the worker check the **daily budget**: once the UTC day's spend in `llm_usage` reaches `DAILY_BUDGET_USD` (`wrangler.toml`, default `3.70`), uncached calls answer `503 {error:'budget_exhausted', degraded:true}` with `retry-after` set to the seconds until UTC midnight. The client treats any non-2xx as "use the offline generator", so the player gets a quieter planet, never an error. Unset or `<= 0` disables the breaker.
+
+Every Anthropic response's `usage` is priced (`src/lib/budget.js`, `PRICES`) and upserted into D1 `llm_usage` (one row per day × route × model: calls, cache hits, errors, token counts, `cost_usd`). Each isolate re-reads the day's total every 30 s and adds its own spend immediately, so a burst can overshoot by up to ~30 s of traffic per isolate. If D1 is unreachable the breaker fails **open**; the hard backstop is the monthly spend limit on the API key's workspace in the Anthropic Console.
+
+**Deploying it (owner):**
+
+```bash
+cd worker
+npx wrangler d1 migrations apply personal-space --remote   # creates llm_usage (0003)
+npx wrangler deploy
+npx wrangler secret put DEV_LLM_KEY                        # optional; >= 16 chars, for scripts/benches
+```
+
+The client must send the session cookie (`credentials: 'include'`) and the new `/concept` body, or every LLM call falls back offline.
+
+**Reading usage:**
+
+```bash
+npm run usage          # per day / route / model, newest first (60 rows)
+npm run usage:today    # today's total (UTC)
+```
+
+or directly: `SELECT SUM(cost_usd) FROM llm_usage WHERE day = 'YYYY-MM-DD'`.
+
+**Local testing without spend:** `node test/mock-anthropic.mjs` serves canned Messages responses on port 8799; point the worker at it with `npx wrangler dev --port 8797 --var ANTHROPIC_API_URL:http://127.0.0.1:8799/v1/messages --var ANTHROPIC_API_KEY:test`.
 
 ### Auth
 
@@ -117,6 +153,15 @@ All take `{ seed, context }`. Cache key includes a hash of `context`.
 | `GET  /api/account/export` | JSON dump (downloadable). |
 | `POST /api/account/delete` | CASCADE deletes the user; cleans up R2 thumbnails. |
 
+### Output checks
+
+A tool call is validated before it is cached or returned
+(`src/lib/llm-output.js`). A malformed one (seen from Haiku 5.5: tool markup
+leaked into `premise`, `question` missing) is retried once, then answered
+`502 {error:'invalid_output'}`; it is never cached. The concept tool is also
+`strict: true`, so required fields always arrive. Malformed calls count as
+`errors` in `llm_usage` and are still billed.
+
 ## Bindings
 
 | Binding | Resource | Used for |
@@ -128,15 +173,20 @@ All take `{ seed, context }`. Cache key includes a hash of `context`.
 | `AUTH_LIMITER` | Rate Limit | per-IP cap on `/api/auth/*` |
 | `EMAIL_LIMITER` | Rate Limit | per-email cap on magic-link requests |
 | `THUMB_LIMITER` | Rate Limit | per-user cap on thumbnail uploads |
+| `LLM_LIMITER` | Rate Limit | per-user (or dev key) cap on LLM routes + `/assets/search` |
+| `LLM_IP_LIMITER` | Rate Limit | per-IP cap on the same routes |
 | `ANTHROPIC_API_KEY` | Secret | LLM proxy |
 | `SESSION_SECRET` | Secret | HMAC over session ids |
 | `RESEND_API_KEY` | Secret | magic-link sender |
+| `DEV_LLM_KEY` | Secret (optional) | `x-dev-key` access to the LLM routes |
+| `DAILY_BUDGET_USD` | Var | daily LLM spend breaker |
+| `ANTHROPIC_API_URL` | Var (optional) | Messages endpoint override, for local mocks |
 
 The Rate Limit binding's `period` is restricted to 10 or 60 seconds; longer windows would need a Durable Object token bucket. The current per-minute limits comfortably catch abuse; revisit if hot-path abuse shows up.
 
 ## Schema
 
-Five tables, all in `worker/migrations/0001_init.sql`:
+Accounts and logbook live in `worker/migrations/0001_init.sql` (plus `0002_user_position.sql`); the LLM spend ledger `llm_usage` is `0003_llm_usage.sql`:
 
 - `users (id, email, anonymous, created_at, last_seen_at, claim_count)`
 - `sessions (id, user_id, created_at, expires_at, last_seen_at, user_agent)`

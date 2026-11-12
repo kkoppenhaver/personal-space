@@ -24,11 +24,6 @@ function coinName(r) {
   return `${NAME_SYL_A[Math.floor(r() * NAME_SYL_A.length)]}${NAME_SYL_B[Math.floor(r() * NAME_SYL_B.length)]}`;
 }
 
-export function placeholderTier1(seed) {
-  const r = mulberry32(seed >>> 0);
-  return { teaser: TEASERS[Math.floor(r() * TEASERS.length)] };
-}
-
 // Deterministic offline concepts (Phase 14a). A small rotation of premade
 // premises — including the five reference planets from the Phase 14 plan —
 // so dev mode (no worker) exercises the full spine: teaser on the ping,

@@ -18,6 +18,7 @@ import {
   b64url, b64urlDecode, randomBytes, sha256Hex, uuidv7,
 } from '../lib/crypto.js';
 import { rateLimit } from '../lib/ratelimit.js';
+import { clientIp } from '../lib/client-ip.js';
 
 export const auth = new Hono();
 
@@ -381,10 +382,6 @@ async function mergeUsers(c, fromId, toId) {
       .bind(fromId, toId),
     c.env.DB.prepare(`DELETE FROM users WHERE id = ?1`).bind(fromId),
   ]);
-}
-
-function clientIp(c) {
-  return c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for')?.split(',')[0] ?? '0.0.0.0';
 }
 
 function webauthnOrigins(c) {

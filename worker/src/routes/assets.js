@@ -17,8 +17,11 @@
 //     "catalog only", never an error.
 //
 // Gated on the POLY_PIZZA_API_KEY secret: absent → 503, client skips.
+// Also behind llmGuard (session or dev key + rate limits) like the LLM
+// routes; no budget check, since it doesn't call Anthropic.
 
 import { Hono } from 'hono';
+import { llmGuard } from '../lib/llm-guard.js';
 
 const PP_API = 'https://api.poly.pizza/v1.1';
 const SEARCH_TTL = 60 * 60 * 24 * 7;   // 7d — their library churns slowly
@@ -28,7 +31,7 @@ export const assets = new Hono();
 
 // GET /assets/search?q=<keywords>&limit=6
 // → { query, results: [{ id, name, url, creator, license, tris, thumbnail }] }
-assets.get('/assets/search', async (c) => {
+assets.get('/assets/search', llmGuard, async (c) => {
   const q = (c.req.query('q') || '').trim().toLowerCase().slice(0, 80);
   if (!q) return c.json({ error: 'q required' }, 400);
   if (!c.env.POLY_PIZZA_API_KEY) return c.json({ error: 'dynamic assets not configured' }, 503);
