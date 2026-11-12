@@ -12,12 +12,25 @@ scope: whole project (supersedes plan.md "Phase 3+ vision roadmap" and master-pl
 
 | Phase | Status | PR | Notes |
 |---|---|---|---|
-| 0. Foundations | 🔄 In review | [#33](https://github.com/kkoppenhaver/personal-space/pull/33) | 0a done 2026-11-12: #32 squash-merged (stack landed), #30/#31 closed, worker deployed. 0b-0d in the PR: spend guard (session + rate limits + daily budget breaker + `llm_usage` ledger), server-derived concept context via `/shared`, lazy concepts (3 requests at start instead of 45), concept + pick on Haiku 5.5, unit tests, browser smoke test, seed gallery, CI, logbook lost-update fix. Needs: D1 migration 0003 + worker deploy; a Console spend limit. |
+| 0. Foundations | ✅ Shipped | [#33](https://github.com/kkoppenhaver/personal-space/pull/33) | **Live 2026-11-12** (client via Pages; worker version `5a78740c` at 100%; D1 migration 0003 applied). 0a: #32 squash-merged, #30/#31 closed. 0b: session-gated, rate-limited LLM routes; $3.70/day breaker; `llm_usage` ledger; `/concept` derives its own context via `/shared`; tool output validated before caching, one retry, strict concept schema (the real-model check caught 1 malformed concept in 15). 0c: lazy concepts (3 requests at start, was 45); concept + pick on Haiku 5.5. 0d: 95 unit tests, browser smoke test, seed gallery, CI; logbook lost-update fix. Measured about $0.10 per four-planet session (was about $0.29). **Still open: set the $200/month spend limit in the Anthropic Console.** |
 | 1. Look | ⌛ Pending | — | |
 | 2. Loop | ⌛ Pending | — | |
 | 3. Sound | ⌛ Pending | — | |
 | 4. Brain | ⌛ Pending | — | |
 | 5. Reach | ⌛ Pending | — | |
+
+### Carried forward from Phase 0
+
+Found while building and verifying Phase 0; not fixed there.
+
+- **Two Tier 2 calls can fire within 8 seconds of START.** The intent gate's cone is wide (`APPROACH_DOT` 0.85, about 32°), so the default spawn heading often commits a second planet. At $0.0144 a call that is the largest remaining waste per session. Tighten the gate, or let Phase 4c's cheaper approach call absorb it.
+- **The journal never hears about Poly Pizza models.** `_tier3ContextOf` resolves mounted names from the bundled catalog only.
+- **Offline or with the model host blocked, some planets mount no assets.** BM25-only retrieval returns an empty list for one slot and the pick is skipped. Retrieval is replaced in Phase 4c.
+- **A logbook row uploaded while its lore is still arriving can miss the lore on the server.** The local copy is fine.
+- **Concept tics on Haiku 5.5** (30 samples): lamps or lanterns left on in about a third, stone fox or stag statues in about a quarter. For Phase 4a's evals.
+- **Teasers overrun 80 characters** in about a fifth of concepts. Not rejected.
+- **The seed gallery already shows Phase 1 work:** single-colour assets, a dim lab light rig, scatter floating off the surface on the dunes planet, oversized heroes.
+- **Local dev against the prod LLM needs a dev key:** `npx wrangler secret put DEV_LLM_KEY` (16+ characters), then `localStorage.setItem('paper-airplane:devkey', …)`. Not set yet.
 
 ## TL;DR
 

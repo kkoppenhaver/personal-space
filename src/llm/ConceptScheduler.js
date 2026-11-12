@@ -8,8 +8,10 @@
 //
 //   - it is the active system (holds the planet the player is nearest to);
 //   - its sun is within TUNING.CONCEPT_NEAR_RADIUS of the plane;
-//   - the plane has been aimed at it (its sun or one of its planets) at
-//     dot ≥ TUNING.CONCEPT_AIM_DOT continuously for TUNING.CONCEPT_AIM_MS.
+//   - the plane, in open space, has been aimed at it (its sun or one of
+//     its planets) at dot ≥ TUNING.CONCEPT_AIM_DOT continuously for
+//     TUNING.CONCEPT_AIM_MS. (Not inside an atmosphere: the plane orbits on
+//     its own there and its nose sweeps the whole sky.)
 //     The player navigates BY teasers, so pointing at a distant system
 //     must reveal its names.
 //
@@ -84,9 +86,9 @@ export class ConceptScheduler {
 
   /**
    * Per fixed step. Throttled internally to SCAN_INTERVAL_MS.
-   * @param {{ planePos: Vector3, planeFwd: Vector3, activeSystem?: object, nowMs: number }} s
+   * @param {{ planePos: Vector3, planeFwd: Vector3, activeSystem?: object, nowMs: number, inAtmosphere?: boolean }} s
    */
-  update({ planePos, planeFwd, activeSystem = null, nowMs }) {
+  update({ planePos, planeFwd, activeSystem = null, nowMs, inAtmosphere = false }) {
     if (nowMs - this._lastScanMs < SCAN_INTERVAL_MS) return;
     this._lastScanMs = nowMs;
     const { CONCEPT_NEAR_RADIUS, CONCEPT_AIM_DOT, CONCEPT_AIM_MS } = this.tuning;
@@ -99,7 +101,11 @@ export class ConceptScheduler {
       const sunPos = sys.sun?.position;
       if (sunPos && planePos.distanceToSquared(sunPos) <= nearSq) { this.chart(sys); continue; }
 
-      if (planeFwd && this._aimedAt(sys, planePos, planeFwd, CONCEPT_AIM_DOT)) {
+      // Aim only counts in open space, where the nose goes where the player
+      // points it. Inside an atmosphere the plane orbits on its own and its
+      // nose sweeps the whole sky at about 10 degrees a second: on the live
+      // site an idle plane charted 4 extra systems (20 calls) that way.
+      if (!inAtmosphere && planeFwd && this._aimedAt(sys, planePos, planeFwd, CONCEPT_AIM_DOT)) {
         if (entry.aimSince == null) entry.aimSince = nowMs;
         else if (nowMs - entry.aimSince >= CONCEPT_AIM_MS) this.chart(sys);
       } else {

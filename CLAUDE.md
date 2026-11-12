@@ -27,7 +27,8 @@ KV-cached by seed). The teaser is what the player navigates by. Everything
 downstream obeys it:
 
 - `src/llm/ConceptScheduler.js` — concepts are requested **lazily**: only for
-  the system the player is in, near, or has aimed at (`CONCEPT_*` tunables).
+  the system the player is in, near, or has aimed at from open space
+  (`CONCEPT_*` tunables; aim is ignored inside an atmosphere).
   Other planets read UNCHARTED. Never request concepts per spawned system.
 - `shared/planet-dice.js` (+ `shared/prng.js`) — every deterministic roll
   behind the concept prompt: tier (quiet/notable/singular 60/33/7), sparks,
