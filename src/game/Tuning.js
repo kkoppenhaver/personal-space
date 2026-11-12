@@ -58,9 +58,20 @@ export const TUNING = {
   FOV_BASE: 60,
   FOV_PER_SPEED: 0.6,
   FOV_MAX_EXTRA: 18,
+  // Terrain assist (FlightController): meters of clearance kept over the
+  // ground ahead when not pitching; climb m/s per meter of deficit; cap.
+  TERRAIN_CLEARANCE: 6,
+  TERRAIN_CLIMB_GAIN: 2.2,
+  TERRAIN_CLIMB_MAX: 16,
   CAM_SPRING_HALFLIFE: 0.12,
   CAM_LOOKAHEAD: 0.5,
   CAM_ROLL_PASSTHROUGH: 0.15,
+  // Atmosphere cam framing (see CameraRig): higher + aimed below the
+  // flight path so the planet fills the lower frame instead of sky.
+  CAM_ATM_BACK: 8.5,
+  CAM_ATM_UP: 3.2,
+  CAM_ATM_DIP: 2.2,        // meters below the plane the cam aims at, near the ground
+  CAM_ATM_DIP_HIGH: 5.0,   // extra dip at the top of the atmosphere
 
   // Input smoothing (halflife in seconds — how fast pitch/bank ramp toward target).
   // Slightly slower for less abrupt transitions; auto-corrections fade in

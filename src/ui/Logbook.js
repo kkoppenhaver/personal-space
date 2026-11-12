@@ -128,7 +128,7 @@ export class Logbook {
     const statsHtml = `
       <div class="section-divider">FLIGHT</div>
       <div class="stats">
-        ${statRow('time to land', formatMs(s.time_to_land_ms))}
+        ${statRow('flight time', formatMs(s.time_to_land_ms))}
         ${statRow('top speed', s.top_speed != null ? `${s.top_speed.toFixed(1)} m/s` : '—')}
         ${statRow('crashes', s.crashes ?? '—')}
         ${statRow('distance', s.distance_m != null ? `${(s.distance_m / 1000).toFixed(2)} km` : '—')}

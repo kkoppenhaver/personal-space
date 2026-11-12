@@ -44,12 +44,30 @@ export class CameraRig {
     const offsetBack = 6.5;
     const offsetUp   = 1.8;
 
+    // On a ~100m world the horizon falls away fast: a camera level with the
+    // flight path frames mostly sky and a sliver of the planet you came to
+    // see. So the atmosphere cam rides higher and aims at a point BELOW the
+    // flight path — the planet's curve fills the lower half of the frame,
+    // the plane sits a little above centre. Dip grows with altitude (at
+    // the top of the atmosphere you want to look down at the whole disc).
+    const alt = Math.max(0, planePos.distanceTo(planet.center) - planet.radius);
+    const altT = Math.min(1, alt / TUNING.ATM_TOP);
+    const atmUpOff = TUNING.CAM_ATM_UP + altT * 3;
+    const atmDip = TUNING.CAM_ATM_DIP + altT * TUNING.CAM_ATM_DIP_HIGH;
+    // Horizontal (tangent) forward, so pitching the nose doesn't swing the
+    // camera through the ground.
+    const tanFwd = planeFwd.clone().addScaledVector(radialUp, -planeFwd.dot(radialUp));
+    if (tanFwd.lengthSq() < 1e-4) tanFwd.copy(planeFwd); else tanFwd.normalize();
+    const camFwd = tanFwd.lerp(planeFwd, 0.35).normalize();
+
     const atmCamPos = planePos.clone()
-      .addScaledVector(planeFwd, -offsetBack)
-      .addScaledVector(radialUp, offsetUp);
+      .addScaledVector(camFwd, -TUNING.CAM_ATM_BACK)
+      .addScaledVector(radialUp, atmUpOff);
 
     const lookahead = TUNING.CAM_LOOKAHEAD * Math.min(speed, 30) * 0.05;
-    const atmTgt = planePos.clone().addScaledVector(planeFwd, lookahead);
+    const atmTgt = planePos.clone()
+      .addScaledVector(camFwd, lookahead + 4)
+      .addScaledVector(radialUp, -atmDip);
     const atmUp  = radialUp.clone();
 
     // Small roll passthrough so banks read visually without inducing nausea

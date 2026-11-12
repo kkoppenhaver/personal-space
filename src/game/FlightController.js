@@ -13,6 +13,8 @@ import { damp } from '../util/math.js';
 //   Attitude: ω ← computeKinematicAngvel(...). Player input + atmospheric
 //   corrections, all rho-weighted and player-weighted so handoffs are smooth.
 
+const TERRAIN_LOOKAHEAD = [0.5, 1.1];
+
 export class FlightController {
   constructor() { this.reset(); }
 
@@ -73,6 +75,27 @@ export class FlightController {
       // Project target onto tangent plane (proportional to lockWeight).
       const tRadial = target.dot(radialOut);
       target.sub(radialOut.clone().multiplyScalar(tRadial * lockWeight));
+    }
+
+    // Terrain assist (Phase 15a): landforms are now tall (a lone mountain
+    // is ~35% of the planet radius), and the altitude lock above flies a
+    // constant radius — straight into them. With no pitch input, look
+    // ahead ~0.5s and ~1.1s; if the ground there leaves less than
+    // TERRAIN_CLEARANCE, add climb like an updraft riding up the slope.
+    // Player pitch fades it out, so diving at the ground still works.
+    if (rho > 0.01 && planet.sample && pitchWeight > 0.01) {
+      const r = pos.distanceTo(planet.center);
+      let worst = Infinity;
+      for (const t of TERRAIN_LOOKAHEAD) {
+        const ahead = pos.clone().addScaledVector(fwd, targetSpeed * t).sub(planet.center).normalize();
+        const ground = planet.sample(ahead.x, ahead.y, ahead.z);
+        worst = Math.min(worst, r - ground);
+      }
+      const deficit = TUNING.TERRAIN_CLEARANCE - worst;
+      if (deficit > 0) {
+        const climb = Math.min(TUNING.TERRAIN_CLIMB_MAX, deficit * TUNING.TERRAIN_CLIMB_GAIN);
+        target.addScaledVector(radialOut, climb * pitchWeight);
+      }
     }
 
     const cruiseAlpha = 1 - Math.pow(0.5, dt / TUNING.CRUISE_HALFLIFE);

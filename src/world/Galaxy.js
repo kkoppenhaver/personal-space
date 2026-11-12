@@ -214,20 +214,31 @@ function buildStarfield() {
     positions[i * 3 + 0] = r * Math.sin(phi) * Math.cos(theta);
     positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
     positions[i * 3 + 2] = r * Math.cos(phi);
-    const k = 0.75 + 0.25 * rand();
-    colors[i * 3 + 0] = k;
-    colors[i * 3 + 1] = k;
-    colors[i * 3 + 2] = k * (0.92 + 0.08 * rand());
+    // Brightness follows a steep power curve (most stars faint, a few
+    // bright) with a warm/cool tint spread, instead of uniform grey dots.
+    const k = 0.35 + 0.65 * Math.pow(rand(), 3);
+    const tint = rand();
+    const warm = tint < 0.18, cool = tint > 0.78;
+    colors[i * 3 + 0] = k * (warm ? 1.0 : cool ? 0.78 : 0.95);
+    colors[i * 3 + 1] = k * (warm ? 0.86 : cool ? 0.88 : 0.95);
+    colors[i * 3 + 2] = k * (warm ? 0.7 : cool ? 1.0 : 0.95);
   }
   const geom = new THREE.BufferGeometry();
   geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   const mat = new THREE.PointsMaterial({
     vertexColors: true,
-    size: 1.6,
+    size: 1.8,
     sizeAttenuation: false,
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.95,
+    fog: false,
+    depthWrite: false,
   });
-  return new THREE.Points(geom, mat);
+  const pts = new THREE.Points(geom, mat);
+  // Draw before everything else so atmosphere shells composite OVER the
+  // stars (daytime sky hides them) instead of stars punching dark specks
+  // through the sky when the transparent sort puts them last.
+  pts.renderOrder = -10;
+  return pts;
 }

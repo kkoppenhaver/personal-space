@@ -90,6 +90,14 @@ export function bboxHeightFor(bbox, pack, assetMeta = null) {
   return (axis === 'Z') ? (bbox.max.z - bbox.min.z) : (bbox.max.y - bbox.min.y);
 }
 
+/** Largest horizontal extent of the bbox (in the asset's own up frame). */
+export function bboxFootprintFor(bbox, pack, assetMeta = null) {
+  if (!bbox) return 0;
+  const axis = axisFor(pack, assetMeta);
+  const dx = bbox.max.x - bbox.min.x;
+  return axis === 'Z' ? Math.max(dx, bbox.max.y - bbox.min.y) : Math.max(dx, bbox.max.z - bbox.min.z);
+}
+
 /**
  * Local-frame translation that re-centers the asset's footprint on its
  * origin, so placement anchors (and twist rotation) go through the bbox

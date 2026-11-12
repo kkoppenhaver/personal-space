@@ -74,7 +74,8 @@ export class HUD {
     if (!this.landmark) return;
     this.landmark.textContent = text;
     this.landmark.classList.add('show');
-    this._landmarkHideAt = performance.now() + 5500;
+    // Reading time scales with length (lore runs 3-7 sentences).
+    this._landmarkHideAt = performance.now() + Math.max(6000, String(text).length * 55);
   }
 
   _landmarkTimer() {

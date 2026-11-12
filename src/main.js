@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 
 import { TUNING } from './game/Tuning.js';
+import { Contrail } from './game/Contrail.js';
+import { Motes, moteKindFor } from './world/Motes.js';
+import { WATER_TIME } from './world/Water.js';
 import { GameLoop } from './game/GameLoop.js';
 import { Input } from './game/Input.js';
 import { Plane } from './game/Plane.js';
@@ -9,7 +12,7 @@ import { FlightController } from './game/FlightController.js';
 import { CameraRig } from './game/CameraRig.js';
 
 import { Galaxy, CELL_SIZE } from './world/Galaxy.js';
-import { rollTier, rollSparks, tierStats } from './world/ConceptSeed.js';
+import { rollTier, rollSparks, rollRegister, rollNameInitial, tierStats } from './world/ConceptSeed.js';
 import { Origin } from './world/Origin.js';
 import { hashString } from './world/Seed.js';
 import { API_BASE, apiPost } from './net/api.js';
@@ -53,6 +56,14 @@ function cellKeyOf(pos) {
   return `${Math.floor(pos[0] / CELL_SIZE)},${Math.floor(pos[1] / CELL_SIZE)},${Math.floor(pos[2] / CELL_SIZE)}`;
 }
 
+// The name the player navigated by. The concept coins it at spawn and
+// every surface should agree; a Tier 2 response cached by seed alone can
+// carry an older name (it showed up as a different name on the survey
+// bar than on the teaser strip), so the concept wins.
+function planetNameOf(p) {
+  return p?.concept?.name || p?.meta?.name || null;
+}
+
 async function main() {
   // Dev tools: `?contactSheet=1` boots the catalog audit grid,
   // `?placementLab=1` boots a single forced-asset planet bench — instead of
@@ -60,6 +71,11 @@ async function main() {
   if (new URLSearchParams(location.search).has('contactSheet')) {
     const { runContactSheet } = await import('./dev/ContactSheet.js');
     await runContactSheet();
+    return;
+  }
+  if (new URLSearchParams(location.search).has('terrainLab')) {
+    const { runTerrainLab } = await import('./dev/TerrainLab.js');
+    await runTerrainLab();
     return;
   }
   if (new URLSearchParams(location.search).has('placementLab')) {
@@ -87,16 +103,26 @@ async function main() {
 
   const camera = new THREE.PerspectiveCamera(TUNING.FOV_BASE, innerWidth / innerHeight, 0.1, 20000);
 
-  // Lights. Tuned for "no truly dark side" — even when the planet is between
-  // the player and the sun, surface remains readable.
-  const sunLight = new THREE.DirectionalLight(0xfff2d6, 0.75);
+  // Lights. The key light comes from the ACTIVE SYSTEM'S SUN (re-aimed
+  // every frame at the active planet) — it used to be a fixed world
+  // direction, so the terminator never matched the sun you could see.
+  // The night side stays readable via a cool, low fill + a hemisphere
+  // light whose "up" follows the plane's radial up (a world-Y hemisphere
+  // painted the bottom of every planet in ground color).
+  const sunLight = new THREE.DirectionalLight(0xfff2d6, 3.4);
   sunLight.position.set(220, 180, 120);
   scene.add(sunLight);
-  const fill = new THREE.DirectionalLight(0xcbd9ff, 0.45);
+  scene.add(sunLight.target);
+  const fill = new THREE.DirectionalLight(0x9fb4ff, 1.35);
   fill.position.set(-220, -120, -150);
   scene.add(fill);
-  scene.add(new THREE.HemisphereLight(0xc4dcff, 0x6b573d, 0.95));
-  scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+  scene.add(fill.target);
+  const hemi = new THREE.HemisphereLight(0xc4dcff, 0x4a3d2c, 0.9);
+  scene.add(hemi);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.12));
+  const _sunDir = new THREE.Vector3();
+  const _radialUp = new THREE.Vector3();
+  const _waterSun = new THREE.Vector3();
 
   // 3. Rapier world (no global gravity — we apply our own per-frame radial pull)
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
@@ -109,6 +135,9 @@ async function main() {
   // 4. Plane allocation (spawn deferred — needs galaxy.defaultSpawn() below)
   const plane = new Plane({ rapier: RAPIER, world });
   scene.add(plane.group);
+  const contrail = new Contrail(scene);
+  const motes = new Motes(scene);
+  let moteKindAt = 0;
 
   // 5. Flight + camera
   const input = new Input();
@@ -228,7 +257,7 @@ async function main() {
 
         planetNav.track(`planet:${p.seed}`, {
           object: p.group,
-          label: (p.meta?.name || `P${i + 1}`).toUpperCase(),
+          label: (planetNameOf(p) || `P${i + 1}`).toUpperCase(),
           color: '#9ec8ff',
           getDistance: () => Math.max(0, plane.position().distanceTo(p.center) - p.radius),
         });
@@ -246,6 +275,10 @@ async function main() {
           radius: Math.round(p.radius),
           tier: rollTier(p.seed),
           sparks: rollSparks(p.seed),
+          register: rollRegister(sys.seed, i),
+          name_initial: rollNameInitial(sys.seed, i),
+          terrain_shape: p.terrainParams.shape,
+          ground_pattern: p.terrainParams.pattern,
         }).then(c => {
           if (!c?.teaser) return;
           p.applyConcept(c);
@@ -284,14 +317,15 @@ async function main() {
     const applyWords = (meta) => {
       wordsApplied = true;
       planet.applyLLM(meta);
-      const label = (meta.name || `P?`).toUpperCase();
+      const name = planetNameOf(planet);
+      const label = (name || `P?`).toUpperCase();
       planetNav.setLabel(`planet:${planet.seed}`, label);
       const existing = pings.get(planet.seed);
       if (existing) {
         existing.name = label;
         refreshPings();
       }
-      if (planet === activePlanet) hud.setPlanetName(meta.name);
+      if (planet === activePlanet) hud.setPlanetName(name);
     };
     llm.approach(
       planet.seed,
@@ -334,9 +368,9 @@ async function main() {
         const resolveAsset = (id) => (id && dyn[id]) || getAssetById(id);
         const hero = resolveAsset(sel.hero);
         const landmarks = [sel.landmark_a, sel.landmark_b, sel.landmark_c]
-          .map(getAssetById);
+          .map(resolveAsset);
         const surfaces = [sel.surface_a, sel.surface_b]
-          .map(getAssetById)
+          .map(resolveAsset)
           .filter(Boolean);
         // Creature picks (Phase 12b) — deduped: the pick prompt favors one
         // species in both slots, which would double its scatter budget.
@@ -479,10 +513,25 @@ async function main() {
         const crashPoint = plane.position().clone();
         const radialOut = crashPoint.clone().sub(activePlanet.center).normalize();
         if (radialOut.lengthSq() < 1e-3) radialOut.set(1, 0, 0);
-        const safeAlt = TUNING.ATM_TOP + 30;
-        const respawnPos = activePlanet.center.clone().add(
-          radialOut.clone().multiplyScalar(activePlanet.radius + safeAlt)
-        );
+        // Respawn INSIDE the atmosphere, well above the local ground — it
+        // used to drop you above the atmosphere (ATM_TOP + 30), which also
+        // reset survey progress: a crash cost you the whole planet.
+        // Landforms are tall now (needles, one colossal peak), so clear the
+        // highest ground in a small cap around the crash site.
+        let groundMax = activePlanet.radius;
+        if (activePlanet.sample) {
+          const t1 = new THREE.Vector3().crossVectors(radialOut, new THREE.Vector3(0, 1, 0));
+          if (t1.lengthSq() < 1e-3) t1.set(1, 0, 0);
+          t1.normalize();
+          const t2 = new THREE.Vector3().crossVectors(radialOut, t1);
+          const probe = new THREE.Vector3();
+          for (const [a, b] of [[0, 0], [0.12, 0], [-0.12, 0], [0, 0.12], [0, -0.12]]) {
+            probe.copy(radialOut).addScaledVector(t1, a).addScaledVector(t2, b).normalize();
+            groundMax = Math.max(groundMax, activePlanet.sample(probe.x, probe.y, probe.z));
+          }
+        }
+        const respawnR = Math.min(groundMax + 40, activePlanet.radius + TUNING.ATM_TOP - 12);
+        const respawnPos = activePlanet.center.clone().add(radialOut.clone().multiplyScalar(respawnR));
         let respawnFwd = plane.lastSafeFwd.clone();
         respawnFwd.sub(radialOut.clone().multiplyScalar(respawnFwd.dot(radialOut)));
         if (respawnFwd.lengthSq() < 0.05) {
@@ -620,26 +669,21 @@ async function main() {
       //   - active planet changed (exit prev's atmosphere, enter new one).
       const insideNow = activeAtmosphere.contains(plane.position());
       const planetChanged = activePlanet !== prevActivePlanet;
-      if (planetChanged) {
-        if (prevInside) {
-          toast.flash();
-          toast.show('↑ ENTERING SPACE ↑', 1500);
-        }
-        if (insideNow) {
-          toast.flash();
-          toast.show('↓ ENTERING ATMOSPHERE ↓', 1500);
-          llm.land(activePlanet.seed, _tier3ContextOf(activePlanet)).catch(() => {});
-        }
-      } else if (insideNow !== prevInside) {
+      const entered = insideNow && (planetChanged || !prevInside);
+      const exited = prevInside && (planetChanged || !insideNow);
+      if (exited && !entered) {
         toast.flash();
-        if (insideNow) {
-          toast.show('↓ ENTERING ATMOSPHERE ↓', 1500);
-          llm.land(activePlanet.seed, _tier3ContextOf(activePlanet)).catch(() => {});
-        } else {
-          toast.show('↑ ENTERING SPACE ↑', 1500);
-        }
+        toast.show('↑ SPACE ↑', 1200);
       }
-      if (planetChanged) hud.setPlanetName(activePlanet.meta?.name || activePlanet.concept?.name || null);
+      if (entered) {
+        toast.flash();
+        const name = planetNameOf(activePlanet);
+        if (name) toast.arrive(name.toUpperCase(), activePlanet.concept?.teaser);
+        else toast.show('↓ ENTERING ATMOSPHERE ↓', 1500);
+        llm.land(activePlanet.seed, _tier3ContextOf(activePlanet)).catch(() => {});
+      }
+      if (insideNow !== prevInside || planetChanged) document.body.classList.toggle('in-atmosphere', insideNow);
+      if (planetChanged) hud.setPlanetName(planetNameOf(activePlanet));
       prevInside = insideNow;
       prevActivePlanet = activePlanet;
 
@@ -675,7 +719,7 @@ async function main() {
           const baseline = cov.baseline();
           const denom = Math.max(0.001, TUNING.CLAIM_COVERAGE - baseline);
           const progress = Math.min(1, Math.max(0, (cov.pct() - baseline) / denom));
-          hud.setClaimProgress(activePlanet.meta?.name || `P${activePlanet.seed}`, progress);
+          hud.setClaimProgress(planetNameOf(activePlanet) || 'UNCHARTED', progress);
         } else {
           hud.setClaimProgress(null, 0);
         }
@@ -683,7 +727,7 @@ async function main() {
         if (claimCandidate) {
           const p = claimCandidate;
           p.claimed = true;
-          const name = p.meta?.name || `Unnamed-${p.seed}`;
+          const name = planetNameOf(p) || `Unnamed-${p.seed}`;
           toast.show(`${name.toUpperCase()} · CLAIMED`, 2200, '#ffd66b');
 
           // Diversity: demote this planet's chosen assets so the next
@@ -769,10 +813,21 @@ async function main() {
       // Floating-origin rebase. Runs after physics + sync so every per-step
       // computation above sees consistent positions; the shift applies to the
       // plane and every loaded system together so the player never sees a pop.
+      // Wingtip contrails: sampled at the fixed rate so trail length is
+      // time-constant regardless of display refresh. Stronger with speed,
+      // hidden when grounded/crashed.
+      if (plane.state === 'flying') {
+        const spd = plane.velocity().length();
+        contrail.update(plane.group, plane.right(), THREE.MathUtils.clamp((spd - 12) / 20, 0.25, 1));
+      } else {
+        contrail.clear();
+      }
+
       const shift = origin.maybeRebase(plane.position());
       if (shift) {
         plane.translate(shift);
         galaxy.translate(shift);
+        contrail.translate(shift);
       }
 
       // Galaxy streaming pass. Spawns systems entering SPAWN_RADIUS (bounded
@@ -824,19 +879,51 @@ async function main() {
       for (const ref of galaxy.allPlanets()) {
         if (ref.planet.reveal) ref.planet.tickReveal(dt, planePos, camera, ref.atmosphere);
       }
-      // Sky color blend (sun tint near the surface)
-      const r = activeAtmosphere.density(plane.position());
+      // Key light from the active system's sun onto the active planet.
+      const sunPos = activeSystem?.sun?.position;
+      if (sunPos && activePlanet) {
+        _sunDir.copy(sunPos).sub(activePlanet.center).normalize();
+        sunLight.target.position.copy(activePlanet.center);
+        sunLight.position.copy(activePlanet.center).addScaledVector(_sunDir, 400);
+        fill.target.position.copy(activePlanet.center);
+        fill.position.copy(activePlanet.center).addScaledVector(_sunDir, -400);
+        sunLight.color.copy(activeSystem.sunColor).lerp(new THREE.Color(0xffffff), 0.55);
+        _radialUp.copy(planePos).sub(activePlanet.center).normalize();
+        hemi.position.copy(_radialUp);
+      }
+      WATER_TIME.value += dt;
+      for (const ref of galaxy.allPlanets()) {
+        if (!ref.system.sun) continue;
+        ref.atmosphere.setSun(ref.system.sun.position, ref.system.sunColor);
+        if (ref.planet.water?.mesh.visible) {
+          _waterSun.copy(ref.system.sun.position).sub(ref.planet.center).normalize();
+          ref.planet.water.setSun(_waterSun, ref.system.sunColor);
+        }
+      }
+
+      // Sky: the atmosphere shell now paints the sky itself (thin overhead,
+      // pale at the horizon, dark on the night side), so the clear color
+      // only needs to be a deep backdrop — slightly lifted inside so the
+      // zenith reads as deep blue rather than space-black.
+      const r = activeAtmosphere.density(planePos);
+      const dayAtPlane = sunPos ? THREE.MathUtils.smoothstep(_radialUp.dot(_sunDir), -0.2, 0.4) : 1;
       const skyA = new THREE.Color(0x04060c);
-      const tintSun = activeSystem?.sunColor || new THREE.Color(0xfff2d6);
-      const skyB = new THREE.Color(0x8bb8dc).lerp(tintSun, 0.25);
-      scene.background = null;
-      renderer.setClearColor(new THREE.Color().lerpColors(skyA, skyB, r), 1.0);
-      scene.fog.density = 0.00018 * r + 0.00004;
-      // Tint the haze toward the active planet's sky so the pre-entry veil
-      // reads as colored atmosphere rather than a dark void. Falls back to the
-      // original deep-space color when no palette is available.
       const skyHex = activePlanet?.palette?.sky;
-      scene.fog.color.set(skyHex || 0x05060a).lerp(new THREE.Color(0x05060a), 1 - r);
+      const skyB = new THREE.Color(skyHex || 0x8bb8dc).multiplyScalar(0.18 * dayAtPlane);
+      scene.background = null;
+      galaxy.starfield.material.opacity = 0.95 * (1 - 0.92 * r * dayAtPlane);
+      // Ambient motes (pollen / snow / embers / spray / fireflies at night).
+      if (performance.now() > moteKindAt) {
+        motes.setKind(moteKindFor(activePlanet));
+        moteKindAt = performance.now() + 1000;
+      }
+      motes.update(dt, camera, _radialUp, r, dayAtPlane < 0.2);
+      renderer.setClearColor(new THREE.Color().lerpColors(skyA, skyB, r), 1.0);
+      scene.fog.density = 0.0012 * r + 0.00004;
+      // Haze toward the planet's sky color (daylit) so distant terrain
+      // melts into the horizon; night side hazes toward dark blue.
+      scene.fog.color.set(skyHex || 0x8bb8dc).multiplyScalar(0.25 + 0.6 * dayAtPlane)
+        .lerp(new THREE.Color(0x05060a), 1 - r);
       renderer.render(scene, camera);
     },
   });
@@ -896,6 +983,20 @@ async function main() {
     get planet() { return activePlanet; },
     get atmosphere() { return activeAtmosphere; },
     get system() { return activeSystem; },
+    // Dev: drop the plane `alt` meters above planet `idx` of the active
+    // system, flying tangentially. Skips the approach flight when testing
+    // surface visuals: __GAME.warpTo(0, 40)
+    warpTo(idx = 0, alt = 40) {
+      const p = activeSystem?.planets[idx];
+      if (!p) return 'no such planet';
+      const toPlane = plane.position().sub(p.center).normalize();
+      const pos = p.center.clone().add(toPlane.clone().multiplyScalar(p.radius + alt));
+      const fwd = new THREE.Vector3(0, 1, 0).cross(toPlane);
+      if (fwd.lengthSq() < 1e-3) fwd.set(1, 0, 0).cross(toPlane);
+      plane.spawn(pos, fwd.normalize(), TUNING.CRUISE_SPEED);
+      flight.reset();
+      return p.concept?.name || p.meta?.name || `planet ${idx}`;
+    },
     inspect() {
       const v = plane.velocity();
       const f = plane.forward();
@@ -1097,7 +1198,7 @@ function _tier3ContextOf(planet) {
     .map((id) => getAssetById(id)?.name)
     .filter(Boolean);
   return {
-    name: planet.meta?.name || planet.concept?.name,
+    name: planetNameOf(planet),
     biome: planet.meta?.biome,
     landmarks: planet.meta?.landmarks,
     concept: planet.concept
