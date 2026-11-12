@@ -50,8 +50,8 @@ const FWD_X = new Vector3(1, 0, 0);
 const FWD_Y = new Vector3(0, 1, 0);
 
 // Drive update() every `stepMs` from t0 to t1 (inclusive of t0).
-function drive(sched, { from, to, stepMs = 16, planePos = ORIGIN, planeFwd, activeSystem = null }) {
-  for (let t = from; t <= to; t += stepMs) sched.update({ planePos, planeFwd, activeSystem, nowMs: t });
+function drive(sched, { from, to, stepMs = 16, planePos = ORIGIN, planeFwd, activeSystem = null, inAtmosphere = false }) {
+  for (let t = from; t <= to; t += stepMs) sched.update({ planePos, planeFwd, activeSystem, nowMs: t, inAtmosphere });
 }
 
 describe('ConceptScheduler', () => {
@@ -102,6 +102,20 @@ describe('ConceptScheduler', () => {
     drive(sched, { from: 3000, to: 3800, planeFwd: FWD_X });
     await flush();
     expect(llm.calls).toHaveLength(3);
+  });
+
+  it('ignores aim while inside an atmosphere (the orbiting nose sweeps the sky)', async () => {
+    const { llm, sched } = setup();
+    const far = makeSystem(31, new Vector3(15000, 0, 0), 3);
+    sched.track(far);
+    drive(sched, { from: 0, to: 5000, planeFwd: FWD_X, inAtmosphere: true });
+    await flush();
+    expect(sched.isCharted(far)).toBe(false);
+    expect(llm.calls.length).toBe(0);
+    // Back in open space the same heading charts it after the dwell time.
+    drive(sched, { from: 5016, to: 6500, planeFwd: FWD_X, inAtmosphere: false });
+    await flush();
+    expect(sched.isCharted(far)).toBe(true);
   });
 
   it('counts aim at one of the system planets, not just the sun', async () => {

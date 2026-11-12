@@ -609,13 +609,14 @@ async function main() {
         activeSystem = a.system;
       }
 
-      // Lazy concepts: chart systems the player is in, near, or aimed at
-      // (throttled to ~4 scans/s inside the scheduler).
+      // Lazy concepts: chart systems the player is in, near, or (from open
+      // space) aimed at. Throttled to ~4 scans/s inside the scheduler.
       conceptScheduler.update({
         planePos: plane.position(),
         planeFwd: plane.forward(),
         activeSystem,
         nowMs: performance.now(),
+        inAtmosphere: activeAtmosphere.contains(plane.position()),
       });
 
       // Commitment-gated Tier 2 (approach). Fires once per planet across every
