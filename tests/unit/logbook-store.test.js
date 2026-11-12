@@ -243,13 +243,16 @@ describe('pendingForSync', () => {
     const now = realNow();
     vi.spyOn(Date, 'now').mockReturnValue(now);
     const due = await store.get(failedDue.id);
+    const later = await store.get(failedLater.id);
     expect(due.next_retry_at).toBeGreaterThan(now);
-    vi.spyOn(Date, 'now').mockReturnValue(due.next_retry_at);
+    // The two rows were marked failed a few ms apart (more on a slow CI
+    // runner), so jump to the later of the two retry times: both are due.
+    vi.spyOn(Date, 'now').mockReturnValue(Math.max(due.next_retry_at, later.next_retry_at));
     const ids = (await store.pendingForSync()).map((e) => e.id).sort();
     vi.restoreAllMocks();
 
-    // failedLater has the same backoff, so it is due at the same moment —
-    // check the "not yet due" side separately.
+    // Back at the real clock neither failure is due yet — check the "not
+    // yet due" side separately.
     expect(ids).toEqual([fresh.id, failedDue.id, failedLater.id, thumbOnly.id].sort());
     const notYet = (await store.pendingForSync()).map((e) => e.id);
     expect(notYet).not.toContain(failedDue.id);
