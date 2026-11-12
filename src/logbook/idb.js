@@ -81,6 +81,87 @@ export const idb = {
       r.onerror = () => reject(r.error);
     });
   },
+  /**
+   * Atomic read-modify-write on the entries store: every read and write
+   * happens inside ONE readwrite transaction, so no other writer can land
+   * between them (separate get/put transactions let a stale whole-object
+   * put clobber fields another path just wrote — the "lore drifting in…
+   * forever" bug).
+   *
+   * `reads` is a list of `{ id }` or `{ identity }` lookups. `apply` runs
+   * synchronously inside the last read's success callback with the records
+   * in the same order (undefined when missing) and returns
+   * `{ put?: entry[], del?: id[], result? }` or null for "no change".
+   * Deletes are issued before puts so an id rewrite never trips the unique
+   * identity index. Resolves with `result` once the transaction commits.
+   * `apply` must not await: an idle transaction auto-commits.
+   */
+  async atomic(reads, apply) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const t = db.transaction(ENTRIES, 'readwrite');
+      const store = t.objectStore(ENTRIES);
+      const records = new Array(reads.length);
+      let remaining = reads.length;
+      let out = null;
+      let failed = null;
+      const write = () => {
+        try {
+          out = apply(records) || null;
+        } catch (err) {
+          failed = err;
+          t.abort();
+          return;
+        }
+        if (!out) return;
+        for (const id of out.del || []) store.delete(id);
+        for (const entry of out.put || []) store.put(entry);
+      };
+      t.oncomplete = () => resolve(out ? out.result : undefined);
+      t.onerror = () => reject(failed || t.error);
+      t.onabort = () => reject(failed || t.error || new Error('aborted'));
+      reads.forEach((r, i) => {
+        const q = r.identity !== undefined ? store.index('identity').get(r.identity) : store.get(r.id);
+        q.onsuccess = () => {
+          records[i] = q.result;
+          if (--remaining === 0) write();
+        };
+      });
+      if (remaining === 0) write();
+    });
+  },
+  /**
+   * Atomic patch of one entry. `fn(current)` returns the next whole entry
+   * (built from the record read in this same transaction) or null to skip
+   * the write. Resolves with the written entry, or null if `id` is missing
+   * or nothing was written.
+   */
+  async mutate(id, fn) {
+    return idb.atomic([{ id }], ([cur]) => {
+      if (!cur) return null;
+      const next = fn(cur);
+      return next ? { put: [next], result: next } : null;
+    }).then((r) => r ?? null);
+  },
+  /**
+   * Cursor over every entry in one readwrite transaction; `fn(entry)`
+   * returns the replacement or null to leave it. Resolves with the count
+   * of rows rewritten.
+   */
+  async updateEach(fn) {
+    const { store, done } = await tx(ENTRIES, 'readwrite');
+    let changed = 0;
+    const r = store.openCursor();
+    r.onsuccess = () => {
+      const cur = r.result;
+      if (!cur) return;
+      const next = fn(cur.value);
+      if (next) { cur.update(next); changed++; }
+      cur.continue();
+    };
+    await done;
+    return changed;
+  },
   async put(entry) {
     const { store, done } = await tx(ENTRIES, 'readwrite');
     store.put(entry);
