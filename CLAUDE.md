@@ -81,7 +81,8 @@ downstream obeys it:
 - `npm run test:e2e` — Playwright on the production bundle, offline (no worker,
   no LLM; port 5187; SwiftShader WebGL): `smoke.spec.js` boots the game,
   warps, fails on page errors / console errors. The console-error allowlist
-  lives in `tests/e2e/guard.js` — every entry needs a reason.
+  lives in `tests/e2e/guard.js` — every entry needs a reason. The guard also
+  answers every worker route with 503, so nothing reaches port 8787.
 - **Seed gallery** (`gallery.spec.js`): 8 fixed planets through
   `?placementLab=1&shot=1` → `test-results/seed-gallery/*.png` (CI artifact
   `seed-gallery`). Deterministic: compare before/after on any visual PR. Keep

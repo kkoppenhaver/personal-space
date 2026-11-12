@@ -19,15 +19,21 @@ const MODEL_HOSTS = [
   /^cdn\.jsdelivr\.net$/,
 ];
 
+// Worker routes. There is no worker in these tests, and vite preview would
+// PROXY them to 127.0.0.1:8787 — a 502 on CI, or whatever unrelated server
+// happens to be listening there on a dev machine. Answer them here instead,
+// so the result is the same everywhere and nothing leaves the test.
+const WORKER_PATHS = /^\/(api\/|concept$|tier2(\/|$)|tier3$|assets\/search)/;
+
 /**
  * Console errors that are known, understood noise. Matched against
  * "<message text> @ <source url>" so a resource error is only allowed for
  * the URLs it is expected on (a 404 for a GLB still fails the test).
  */
 export const CONSOLE_ERROR_ALLOWLIST = [
-  // No worker in offline mode: /api/* (auth, logbook sync) hits vite
-  // preview, which answers 404 (GET/POST) or 501 (PATCH after a claim).
-  /^Failed to load resource: the server responded with a status of (404|501) .* @ http:\/\/127\.0\.0\.1:\d+\/api\//,
+  // No worker in offline mode: every worker route is answered 503 by the
+  // guard below (WORKER_PATHS), which the game treats as "offline".
+  /^Failed to load resource: the server responded with a status of 503 .* @ http:\/\/127\.0\.0\.1:\d+\/(api\/|concept|tier2|tier3|assets\/search)/,
   // The blocked embedding-model hosts (MODEL_HOSTS above).
   /^Failed to load resource: net::ERR_FAILED @ https:\/\/([^/]*\.)?(huggingface\.co|hf\.co)\//,
   /^Failed to load resource: net::ERR_FAILED @ https:\/\/cdn\.jsdelivr\.net\//,
@@ -43,7 +49,7 @@ export const CONSOLE_ERROR_ALLOWLIST = [
  * allowlist, and `forbidden` lists any request the guard had to abort.
  */
 export async function armPage(page, { blockModel = true } = {}) {
-  const state = { pageErrors: [], consoleErrors: [], forbidden: [], modelBlocked: 0 };
+  const state = { pageErrors: [], consoleErrors: [], forbidden: [], modelBlocked: 0, workerCalls: [] };
 
   await page.route('**/*', (route) => {
     const url = new URL(route.request().url());
@@ -54,6 +60,10 @@ export async function armPage(page, { blockModel = true } = {}) {
     if (blockModel && MODEL_HOSTS.some((re) => re.test(url.hostname))) {
       state.modelBlocked++;
       return route.abort('failed');
+    }
+    if (WORKER_PATHS.test(url.pathname)) {
+      state.workerCalls.push(`${route.request().method()} ${url.pathname}`);
+      return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"offline_test"}' });
     }
     return route.continue();
   });
