@@ -240,6 +240,17 @@ Based on prompt sizes at the PR tip and prices fetched 2026-11-11. Expect ±50% 
 
 After Phase 4, about 80% of runtime spend is the journal entry, which is the thing the player keeps.
 
+**First measurements (2026-11-12, from the `llm_usage` ledger, small sample).** They land close to the "After Phase 0" row:
+
+| Route | Model | Tokens in / out per call | Cost per call | Estimate was |
+|---|---|---|---|---|
+| concept (n=30) | Haiku 5.5 | 4,198 / 507 | $0.00067 | $0.0006 |
+| tier 2 direct (n=2) | Sonnet 4.6 | 1,761 / 608 | $0.0144 | $0.012 |
+| pick (n=2) | Haiku 5.5 | 2,015 / 465 | $0.00044 | $0.0004 |
+| tier 3 lore (n=2) | Sonnet 4.6 | 1,214 / 350 | $0.0089 | $0.0098 |
+
+That is about $0.024 per planet entered and about $0.10 for a four-planet session. Latency: concept about 3 s (7 s on the first call after a deploy while the strict schema compiles), pick 3 to 4 s, tier 2 12 to 14 s, tier 3 about 10 s.
+
 ### Monthly envelope
 
 | Bucket | $/month | What it buys |
