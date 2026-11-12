@@ -16,6 +16,8 @@
 //   debug=1                       attach bbox/axes/normal helpers
 //   shape=<landform> pattern=<p>  force terrain shape / ground pattern
 //                                 (shared/planet-dice TERRAIN_SHAPES / GROUND_PATTERNS)
+//   flat=1                        ignore authored colours (flat family colour
+//                                 per asset, the pre-Phase-1a look) for A/B
 //   shot=1                        screenshot mode (seed gallery, tests/e2e):
 //                                 no auto-orbit, camera held on the hero
 //                                 slot, `window.__LAB_READY = true` once the
@@ -30,6 +32,7 @@ import { Planet } from '../world/Planet.js';
 import { getAssetById } from '../world/assets/Catalog.js';
 import { load as loadGLB } from '../world/AssetCache.js';
 import { normalizeShape, normalizePattern } from '../../shared/planet-dice.js';
+import { GRADE } from '../world/ColorSystem.js';
 
 const DEFAULTS = {
   hero: 'kenney:space:hangar_largeA',           // the prod float case
@@ -46,6 +49,7 @@ export async function runPlacementLab() {
   const params = new URLSearchParams(location.search);
   const seed = (parseInt(params.get('seed') || '42', 10) || 42) >>> 0;
   const biome = params.get('biome') || 'forest';
+  if (params.get('flat') === '1') GRADE.enabled = false;
   const density = params.get('density') || 'medium';
 
   // isDebugOn() reads this global; set it before applyVisuals mounts.
