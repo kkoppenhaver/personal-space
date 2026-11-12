@@ -55,6 +55,15 @@ downstream obeys it:
   build:catalog`; never hand-edit). Weak hero matches trigger a Poly Pizza CC0
   search via the worker (`/assets/search`, Phase 7) — GLBs load from their CDN
   (ToS: never re-host), credits render in the logbook + `/credits.html`.
+- Asset colour (roadmap 1a): every bundled GLB is **baked** at import
+  (`tools/bake-colors.mjs`) to one Draco primitive whose `COLOR_0` holds the
+  model's authored colours — no textures, no UVs. At mount,
+  `MaterialSet.applyMaterialSet` grades those colours toward the planet
+  palette: the asset's mean colour is re-centred on the biome
+  (`ColorSystem.gradeCentre`, `GRADE` tunables) and every part keeps its
+  offset from that mean (`ColorGrade.js`). Meshes with no authored colour
+  fall back to the flat family colour. Dynamic Poly Pizza assets keep their
+  own materials.
 - Tier 3 lore: pilot's journal, spoken-not-written, written against the
   actually-mounted assets, never answers the planet's question.
 
@@ -68,6 +77,7 @@ downstream obeys it:
   filter, RAW toggle). Gate for any new pack import.
 - `?placementLab=1&seed=…&sea=…&motif=…&tier=…&hero=<catalog-id>` — one
   forced-concept planet through the real applyVisuals path, no flying.
+  `&flat=1` shows the pre-1a flat family colours for A/B.
 - Console hooks: `__GAME.testTier2(seed)` (full chain, uses the planet's
   concept), `__GAME.rollStats()` (tier pacing), `__GAME.auditMaterials()`,
   `__GAME.testAsset(url)`, `__GAME.debugPlacement = true`,
@@ -105,6 +115,11 @@ downstream obeys it:
   `Placeholder.js` for the session and never persists a fallback.
 - LLM responses are KV-cached (worker) + localStorage-cached (client,
   `LS_CACHE_KEY` version bump invalidates; worker uses `PROMPT_VERSION` map).
+- Re-importing or adding a pack runs the colour bake. The four Kenney
+  colormap kits (castle, fantasy-town, graveyard, pirate) need their atlases
+  at `~/code/kenney-colormaps/<kit>/colormap.png` (or `$KENNEY_COLORMAP_DIR`);
+  see `src/world/assets/README.md`. `node tools/verify-bake.mjs <beforeDir>`
+  checks a re-bake against a snapshot. New packs: contact sheet first.
 - Catalog `scale_range` is a size *bias*; real scale is bbox-normalized per
   role (`resolveScale`). `scale_override` is the absolute escape hatch.
 - Prompt caching is not used. Tier 2/3 (Sonnet 4.6) prompts are below its

@@ -13,7 +13,7 @@ scope: whole project (supersedes plan.md "Phase 3+ vision roadmap" and master-pl
 | Phase | Status | PR | Notes |
 |---|---|---|---|
 | 0. Foundations | ✅ Done | [#33](https://github.com/kkoppenhaver/personal-space/pull/33), [#34](https://github.com/kkoppenhaver/personal-space/pull/34) | **Live 2026-11-12** (client via Pages; worker version `5a78740c` at 100%; D1 migration 0003 applied). 0a: #32 squash-merged, #30/#31 closed. 0b: session-gated, rate-limited LLM routes; $3.70/day breaker; `llm_usage` ledger; `/concept` derives its own context via `/shared`; tool output validated before caching, one retry, strict concept schema (the real-model check caught 1 malformed concept in 15). 0c: lazy concepts (3 requests at start, was 45); concept + pick on Haiku 5.5. 0d: 95 unit tests, browser smoke test, seed gallery, CI; logbook lost-update fix. Measured about $0.10 per four-planet session (was about $0.29). #34: aim-to-chart only counts in open space (an orbiting plane was charting systems nobody aimed at). |
-| 1. Look | 🔄 In progress | — | 1a (true colours) started 2026-11-12. |
+| 1. Look | 🔄 In progress | PR_1A | **1a (true colours) in review.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
 | 2. Loop | ⌛ Pending | — | |
 | 3. Sound | ⌛ Pending | — | |
 | 4. Brain | ⌛ Pending | — | |
@@ -29,7 +29,7 @@ Found while building and verifying Phase 0; not fixed there.
 - **A logbook row uploaded while its lore is still arriving can miss the lore on the server.** The local copy is fine.
 - **Concept tics on Haiku 5.5** (30 samples): lamps or lanterns left on in about a third, stone fox or stag statues in about a quarter. For Phase 4a's evals.
 - **Teasers overrun 80 characters** in about a fifth of concepts. Not rejected.
-- **The seed gallery already shows Phase 1 work:** single-colour assets, a dim lab light rig, scatter floating off the surface on the dunes planet, oversized heroes.
+- **The seed gallery already shows Phase 1 work:** a dim lab light rig (1b), scatter floating off the surface on the dunes planet, oversized heroes. (Single-colour assets: fixed in 1a.)
 - **Local dev against the prod LLM needs a dev key:** `npx wrangler secret put DEV_LLM_KEY` (16+ characters), then `localStorage.setItem('paper-airplane:devkey', …)`. Not set yet.
 
 ## TL;DR
@@ -137,10 +137,21 @@ Shipped in #32, #33 and #34; what was found and left is under "Carried forward f
 
 ## Phase 1 — Look
 
-**1a. True colours (1 PR). The biggest visual jump for the least work.**
-- In `tools/import-assets.js`, bake each asset's authored colour into vertex colours at import: sample the kit's `colormap.png` at each UV for the 100 textured Kenney GLBs (the atlases are in the raw mirror at `~/code/3d-modles/assets`), and write each material's base colour for the 243 multi-material ones. Merge to one primitive per asset. Result: no texture fetches, one shared material, instancing still works.
-- Replace the flat recolour with a **grade**. A per-planet uniform shifts vertex colours toward the palette in OKLCH (hue toward the biome accent by the existing per-family amount) while keeping each part's relative lightness. Trunks stay darker than leaves; roofs stay different from walls; the planet still reads as one place.
-- Gate: contact sheet before and after, `__GAME.auditMaterials()`, seed gallery.
+**1a. True colours (1 PR). The biggest visual jump for the least work.** 🔄 In review.
+
+What was built, and where it differs from the first draft of this plan:
+
+- **The colour was not all there to keep.** A survey of the 572 bundled models found 329 carrying colour, 100 (four Kenney kits) pointing at a `colormap.png` that was never shipped and was not in the raw mirror, and 143 (three Quaternius kits) with no colour at all, just the exporter's default grey.
+- **Import bake** (`tools/bake-colors.mjs`, run by `tools/import-assets.js`): every bundled GLB is rebuilt from its source as one Draco primitive whose `COLOR_0` holds the authored albedo. No textures, no UVs.
+  - Kenney colormap kits: the four atlases, taken from Kenney's own OpenGameArt uploads (kenney.nl's download link refused scripted requests). Every mirror GLB is byte-identical to the one in the same zip.
+  - Quaternius space: the kit's `Atlas.png`.
+  - Quaternius nature: averages of the pack's own textures, per UV island for the alpha-cut sheets.
+  - Quaternius stylized trees: no textures exist anywhere, so a small name palette (`tools/part-palette.json`): bark, leaves, needles, per species.
+  - Result: 572 of 572 carry colour; bundle 6.7 MB → 2.7 MB; 959 → 572 primitives; bounding boxes within 0.5%.
+- **Runtime grade** (`ColorGrade.js`, `AuthoredColor.js`, `ColorSystem.gradeCentre`, `MaterialSet.applyMaterialSet`): done on the CPU when an asset mounts, not in a shader. Each asset's mean colour is pulled toward the biome accent by its family's blend amount, and every part keeps its offset from that mean. `GRADE` holds the tunables.
+- **One draw call per scattered asset:** every mesh is vertex-coloured with the same neutral material, so multi-part models merge without material groups.
+- Gate used: `tools/verify-bake.mjs`, the contact sheet, the seed gallery before and after, `__GAME.auditMaterials()` (0 leaks in game), and `&flat=1` in the placement lab for A/B.
+- Known limits: Quaternius leaf and petal cards are alpha-cut quads, so they still render as solid polygons; stylized trees are two flat colours each.
 
 **1b. Light, shadow, tone (1 to 2 PRs).**
 - One shared `Rig` for the game and all benches.

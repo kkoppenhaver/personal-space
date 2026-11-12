@@ -140,7 +140,10 @@ export function applyMaterialSet(root, matSet, assetMeta = {}) {
     geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     o.geometry = geom;
 
-    const m = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true, vertexColors: true });
+    // Keep the model's sidedness: sails, flags and leaf cards are single
+    // sheets that vanish from behind when culled.
+    const side = (Array.isArray(o.material) ? o.material[0] : o.material)?.side ?? THREE.FrontSide;
+    const m = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true, vertexColors: true, side });
     m.userData.cloned = true;
     m.userData.vertexColored = true;
     o.material = m;
