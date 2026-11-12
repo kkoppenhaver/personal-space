@@ -24,6 +24,7 @@ import {
 import {
   deriveConceptRequest, sanitizeTier2Context, sanitizeTier3Context, sanitizePickBody,
 } from '../lib/llm-context.js';
+import { checkConcept, checkTier2, checkTier3 } from '../lib/llm-output.js';
 
 const DEFAULT_ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -118,45 +119,53 @@ Do not reuse the examples. Use the "world_concept" tool.`;
 const CONCEPT_TOOL = [{
   name: 'world_concept',
   description: 'Return the planet concept.',
+  // Strict: the API guarantees every required field arrives as valid JSON.
+  // A non-strict forced call on Haiku 5.5 came back with `question` missing
+  // and tool markup inside `premise` (1 in 15 in the Phase 0 spot check).
+  // Strict schemas allow no min/max/maxLength, need additionalProperties:
+  // false on every object, and here every property is required; ranges are
+  // enforced afterwards by checkConcept (lib/llm-output.js).
+  strict: true,
   input_schema: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       name: { type: 'string' },
-      teaser: { type: 'string', maxLength: 80 },
+      teaser: { type: 'string', description: 'At most 80 characters.' },
       premise: { type: 'string' },
       question: { type: 'string' },
       biome: { type: 'string', enum: ['desert','ocean','forest','ice','volcanic','crystalline','gas-stripped','alien'] },
       terrain: {
         type: 'object',
+        additionalProperties: false,
         properties: {
-          sea_level: { type: 'number', minimum: 0, maximum: 0.95 },
-          amplitude: { type: 'number', minimum: 0.4, maximum: 1.4 },
-          // Echo of the dealt landform/pattern (Phase 15a). Optional so
-          // older cached shapes stay valid; the client falls back to the
-          // dealt values.
+          sea_level: { type: 'number', description: '0 to 0.95' },
+          amplitude: { type: 'number', description: '0.4 to 1.4' },
+          // Echo of the dealt landform/pattern (Phase 15a).
           shape: { type: 'string', enum: ['rolling','one-mountain','ridge','rift','crater','cratered','terraced','mesas','spires','dunes','archipelago','plates','flat'] },
           pattern: { type: 'string', enum: ['none','patchwork','rows','rings','spots','veins','stripes'] },
         },
-        required: ['sea_level', 'amplitude'],
+        required: ['sea_level', 'amplitude', 'shape', 'pattern'],
       },
-      landmark_slots: { type: 'integer', minimum: 0, maximum: 4 },
+      landmark_slots: { type: 'integer', description: '0 to 4' },
       hero_on_water: { type: 'boolean' },
-      creature_budget: { type: 'number', enum: [0, 0.35, 1.0] },
+      creature_budget: { type: 'number', description: 'Exactly 0, 0.35 or 1.0' },
       density: { type: 'string', enum: ['sparse','medium','dense'] },
       motif: {
         type: 'object',
+        additionalProperties: false,
         properties: {
           kind: { type: 'string', enum: ['none','uniform-lean','all-facing-point','grid-rows','procession','shared-heading'] },
           subjects: { type: 'string', enum: ['surface','creatures','landmarks'] },
         },
         required: ['kind', 'subjects'],
       },
-      // Optional, singular tier only: settle things INTO the terrain
-      // (0.4 = hull-down ships, half-buried monuments).
-      embed_bias: { type: 'number', minimum: 0, maximum: 0.45 },
+      // Singular tier only: settle things INTO the terrain (0.4 = hull-down
+      // ships, half-buried monuments). 0 everywhere else.
+      embed_bias: { type: 'number', description: '0 unless the tier is singular; then 0 to 0.45' },
       asset_keywords: { type: 'array', items: { type: 'string' } },
     },
-    required: ['name','teaser','premise','question','biome','terrain','landmark_slots','hero_on_water','creature_budget','density','motif','asset_keywords'],
+    required: ['name','teaser','premise','question','biome','terrain','landmark_slots','hero_on_water','creature_budget','density','motif','embed_bias','asset_keywords'],
   },
 }];
 
@@ -393,6 +402,7 @@ async function handleTier(c, tier, seed, context) {
     route,
     model,
     cacheKey,
+    check: OUTPUT_CHECK[tier],
     request: {
       model,
       max_tokens: MAX_TOKENS[tier],
@@ -403,6 +413,12 @@ async function handleTier(c, tier, seed, context) {
     },
   });
 }
+
+// Output checkers per tier (lib/llm-output.js). Pick needs none: its strict
+// enum schema already guarantees every id comes from the shortlist.
+const OUTPUT_CHECK = { concept: checkConcept, 2: checkTier2, 3: checkTier3 };
+// A malformed tool call is retried once, then given up on (never cached).
+const MAX_ATTEMPTS = 2;
 
 // KV hit → response (always served: it's free). Miss → null.
 async function cacheGet(c, cacheKey, route, model) {
@@ -422,63 +438,76 @@ async function budgetGate(c) {
   return c.json({ error: 'budget_exhausted', degraded: true }, 503);
 }
 
-// One Anthropic call with ledger bookkeeping. Upstream error bodies are
-// logged, never echoed to the client.
-async function callUpstream(c, { route, model, cacheKey, request }) {
+// Anthropic call with ledger bookkeeping. Upstream error bodies are logged,
+// never echoed to the client. `check` (optional) validates + normalizes the
+// tool input; a malformed one is retried once and never cached.
+async function callUpstream(c, { route, model, cacheKey, request, check = null }) {
   if (!c.env.ANTHROPIC_API_KEY) return c.json({ error: 'no api key configured' }, 500);
 
-  let resp;
-  try {
-    resp = await fetch(c.env.ANTHROPIC_API_URL || DEFAULT_ANTHROPIC_URL, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'anthropic-version': '2023-06-01',
-        'x-api-key': c.env.ANTHROPIC_API_KEY,
-      },
-      body: JSON.stringify(request),
-    });
-  } catch (e) {
-    console.error(`llm ${route}: upstream fetch failed`, e);
-    recordError(c, route, model);
-    return c.json({ error: 'upstream_fetch_failed' }, 502);
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let resp;
+    try {
+      resp = await fetch(c.env.ANTHROPIC_API_URL || DEFAULT_ANTHROPIC_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          'x-api-key': c.env.ANTHROPIC_API_KEY,
+        },
+        body: JSON.stringify(request),
+      });
+    } catch (e) {
+      console.error(`llm ${route}: upstream fetch failed`, e);
+      recordError(c, route, model);
+      return c.json({ error: 'upstream_fetch_failed' }, 502);
+    }
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      console.error(`llm ${route}: upstream ${resp.status}`, text.slice(0, 500));
+      recordError(c, route, model);
+      return c.json({ error: 'upstream', status: resp.status }, 502);
+    }
+
+    const apiData = await resp.json().catch(() => null);
+    if (!apiData) {
+      recordError(c, route, model);
+      return c.json({ error: 'upstream_bad_json' }, 502);
+    }
+    // Billed regardless of what came back. Ledger rows use the model we
+    // asked for, so a day's rows group cleanly by route.
+    recordUsage(c, { route, model, usage: apiData.usage });
+
+    const toolUse = (apiData.content || []).find((p) => p.type === 'tool_use');
+    // A truncated (max_tokens) or refused turn can't be trusted even if a
+    // partial tool_use block is present: never cache it. Not retried — the
+    // same request would refuse or truncate again.
+    const stop = apiData.stop_reason ?? null;
+    if (!toolUse || stop === 'max_tokens' || stop === 'refusal') {
+      console.warn(`llm ${route}: no usable tool_use (stop_reason=${stop})`);
+      recordError(c, route, model);
+      return c.json({ error: 'no_tool_use', stop_reason: stop }, 502);
+    }
+
+    const checked = check ? check(toolUse.input) : { ok: true, value: toolUse.input };
+    if (!checked.ok) {
+      console.warn(`llm ${route}: malformed output (attempt ${attempt}/${MAX_ATTEMPTS}): ${checked.problem}`);
+      recordError(c, route, model);
+      continue;
+    }
+    const output = checked.value;
+
+    if (c.env.LLM_CACHE) {
+      c.executionCtx.waitUntil(c.env.LLM_CACHE.put(cacheKey, JSON.stringify(output), {
+        expirationTtl: CACHE_TTL_S,
+      }));
+    }
+
+    c.header('x-cache', 'miss');
+    return c.json(output);
   }
 
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    console.error(`llm ${route}: upstream ${resp.status}`, text.slice(0, 500));
-    recordError(c, route, model);
-    return c.json({ error: 'upstream', status: resp.status }, 502);
-  }
-
-  const apiData = await resp.json().catch(() => null);
-  if (!apiData) {
-    recordError(c, route, model);
-    return c.json({ error: 'upstream_bad_json' }, 502);
-  }
-  // Billed regardless of what came back. Ledger rows use the model we
-  // asked for, so a day's rows group cleanly by route.
-  recordUsage(c, { route, model, usage: apiData.usage });
-
-  const toolUse = (apiData.content || []).find((p) => p.type === 'tool_use');
-  // A truncated (max_tokens) or refused turn can't be trusted even if a
-  // partial tool_use block is present: never cache it.
-  const stop = apiData.stop_reason ?? null;
-  if (!toolUse || stop === 'max_tokens' || stop === 'refusal') {
-    console.warn(`llm ${route}: no usable tool_use (stop_reason=${stop})`);
-    recordError(c, route, model);
-    return c.json({ error: 'no_tool_use', stop_reason: stop }, 502);
-  }
-  const output = toolUse.input;
-
-  if (c.env.LLM_CACHE) {
-    c.executionCtx.waitUntil(c.env.LLM_CACHE.put(cacheKey, JSON.stringify(output), {
-      expirationTtl: CACHE_TTL_S,
-    }));
-  }
-
-  c.header('x-cache', 'miss');
-  return c.json(output);
+  return c.json({ error: 'invalid_output' }, 502);
 }
 
 function fnv1a(s) {

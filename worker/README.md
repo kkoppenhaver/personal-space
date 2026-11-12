@@ -153,6 +153,15 @@ or directly: `SELECT SUM(cost_usd) FROM llm_usage WHERE day = 'YYYY-MM-DD'`.
 | `GET  /api/account/export` | JSON dump (downloadable). |
 | `POST /api/account/delete` | CASCADE deletes the user; cleans up R2 thumbnails. |
 
+### Output checks
+
+A tool call is validated before it is cached or returned
+(`src/lib/llm-output.js`). A malformed one (seen from Haiku 5.5: tool markup
+leaked into `premise`, `question` missing) is retried once, then answered
+`502 {error:'invalid_output'}`; it is never cached. The concept tool is also
+`strict: true`, so required fields always arrive. Malformed calls count as
+`errors` in `llm_usage` and are still billed.
+
 ## Bindings
 
 | Binding | Resource | Used for |
