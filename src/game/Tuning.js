@@ -107,8 +107,10 @@ export const TUNING = {
   // call ("charted") only when the player is in it, near it, or has held
   // the nose on it — not for every streamed system (each call is paid).
   CONCEPT_NEAR_RADIUS: 8000,  // metres from the plane to the system's sun
-  CONCEPT_AIM_DOT: 0.97,      // dot(fwd, toSunOrPlanetUnit) ≥ this counts as aimed (~14°)
-  CONCEPT_AIM_MS: 700,        // ms of continuous aim before a distant system is charted
+  // Aim is deliberately narrow and slow: with ~10 neighbour systems
+  // loaded, a wide cone charts most of the sky just by cruising.
+  CONCEPT_AIM_DOT: 0.99,      // dot(fwd, toSunOrPlanetUnit) ≥ this counts as aimed (~8°)
+  CONCEPT_AIM_MS: 1200,       // ms of continuous aim before a distant system is charted
 
   // World
   PLANET_RADIUS: 100,

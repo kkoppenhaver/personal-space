@@ -24,22 +24,6 @@ function coinName(r) {
   return `${NAME_SYL_A[Math.floor(r() * NAME_SYL_A.length)]}${NAME_SYL_B[Math.floor(r() * NAME_SYL_B.length)]}`;
 }
 
-/**
- * True when a persisted LLM cache entry is one of this module's fallbacks.
- * Older builds wrote fallbacks to localStorage; LLMClient scrubs them on
- * load so the real call is retried. Signatures are exact strings no model
- * response would reproduce.
- */
-export function isLegacyPlaceholder(key, value) {
-  if (!value || typeof value !== 'object') return false;
-  const tier = String(key).split(':')[0];
-  if (tier === '1') return TEASERS.includes(value.teaser);   // dead /tier1 route
-  if (tier === 'concept') return PLACEHOLDER_TEASERS.has(value.teaser);
-  if (tier === '2') return value.atmosphere === PLACEHOLDER_ATMOSPHERE;
-  if (tier === '3') return value.surfaceLore === PLACEHOLDER_LORE;
-  return false;
-}
-
 // Deterministic offline concepts (Phase 14a). A small rotation of premade
 // premises — including the five reference planets from the Phase 14 plan —
 // so dev mode (no worker) exercises the full spine: teaser on the ping,
@@ -109,10 +93,6 @@ const CONCEPTS = {
   ],
 };
 
-const PLACEHOLDER_TEASERS = new Set(Object.values(CONCEPTS).flat().map((c) => c.teaser));
-const PLACEHOLDER_ATMOSPHERE = 'Thin air, a faint hum.';
-const PLACEHOLDER_LORE = 'The surface is quieter than expected. Strange how a place can feel deserted and watched at the same time.';
-
 export function placeholderConcept(seed, context = {}) {
   const r = mulberry32((seed ^ 0xC0CE) >>> 0);
   const tier = context?.tier && CONCEPTS[context.tier] ? context.tier : 'quiet';
@@ -147,7 +127,7 @@ export function placeholderTier2(seed, context = {}) {
     name,
     biome,
     palette,
-    atmosphere: PLACEHOLDER_ATMOSPHERE,
+    atmosphere: 'Thin air, a faint hum.',
     theme: concept?.teaser?.split(',')[0]?.slice(0, 40) || hints.theme,
     density,
     ...(concept?.creature_budget > 0 ? { inhabitant_hints: [concept.asset_keywords?.find((k) => /fox|deer|wolf|husky|animal|sheep|pig|cow|herd/i.test(k)) || 'wild animals'] } : {}),
@@ -167,7 +147,7 @@ export function placeholderTier2(seed, context = {}) {
 
 export function placeholderTier3(seed) {
   return {
-    surfaceLore: PLACEHOLDER_LORE,
+    surfaceLore: 'The surface is quieter than expected. Strange how a place can feel deserted and watched at the same time.',
     landmarkLore: [],
   };
 }

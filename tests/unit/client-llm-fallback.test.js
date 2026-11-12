@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { LLMClient } from '../../src/llm/LLMClient.js';
 
-const LS_KEY = 'paper-airplane:llmcache:v6';
+const LS_KEY = 'paper-airplane:llmcache:v7';
 
 function memoryStorage(initial = {}) {
   const m = new Map(Object.entries(initial));
@@ -152,14 +152,16 @@ describe('LLMClient fallbacks never persist', () => {
     expect(Object.values(llm.netCalls).every((n) => n === 0)).toBe(true);
   });
 
-  it('scrubs placeholder entries persisted by older builds, keeps real ones', async () => {
-    const { placeholderConcept } = await import('../../src/llm/Placeholder.js');
-    const legacy = placeholderConcept(3, { tier: 'quiet' });
-    const ls = memoryStorage({ [LS_KEY]: JSON.stringify({ 'concept:3': legacy, 'concept:4': REAL }) });
+  it('starts a fresh cache and removes superseded cache blobs (which may hold persisted placeholders)', async () => {
+    const OLD_KEY = 'paper-airplane:llmcache:v6';
+    const ls = memoryStorage({
+      [OLD_KEY]: JSON.stringify({ 'concept:3': { teaser: 'a persisted placeholder' } }),
+      [LS_KEY]: JSON.stringify({ 'concept:4': REAL }),
+    });
     globalThis.localStorage = ls;
     const llm = new LLMClient({ workerURL: 'https://w.example' });
     expect(llm.peekConcept(3)).toBeNull();
     expect(llm.peekConcept(4)).toEqual(REAL);
-    expect(Object.keys(JSON.parse(ls.getItem(LS_KEY)))).toEqual(['concept:4']);
+    expect(ls.getItem(OLD_KEY)).toBeNull();
   });
 });

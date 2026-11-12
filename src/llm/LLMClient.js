@@ -10,16 +10,22 @@
 // asset IDs. With an empty catalog (Phase 3 baseline) the pick stage is
 // skipped and approach() returns just the direct-call output.
 
-import { placeholderTier2, placeholderTier3, placeholderConcept, isLegacyPlaceholder } from './Placeholder.js';
+import { placeholderTier2, placeholderTier3, placeholderConcept } from './Placeholder.js';
 import { shortlist as retrieverShortlist } from '../world/AssetRetriever.js';
 
+// v7 bump: earlier builds persisted placeholder fallbacks (one transient
+// failure = placeholder text forever). Fallbacks are session-only now;
+// starting a fresh cache drops the ones already stored. Real results are
+// still in the worker's KV, so refetching them costs no LLM calls.
 // v6 bump: concept v3 (per-system registers + name initials) — without it
 // returning players keep their old, bone-heavy concepts forever.
 // v5 bump invalidates cached responses that predate name-first concepts
 // (v4 concept entries have no name; v4 Tier 2 entries coined names the
 // player never navigated by). v4 was the concept-spine bump, v3 the
 // archetype-context bump, v2 the Phase 3 hint arrays.
-const LS_CACHE_KEY = 'paper-airplane:llmcache:v6';
+const LS_CACHE_KEY = 'paper-airplane:llmcache:v7';
+// Superseded cache blobs — removed on load so they stop eating quota.
+const LS_OLD_CACHE_KEYS = [1, 2, 3, 4, 5, 6].map((v) => `paper-airplane:llmcache:v${v}`);
 // Developer bypass for running local dev against the production worker
 // (the worker requires a session cookie on LLM routes; this header skips
 // that check when it matches the worker's secret).
@@ -629,18 +635,9 @@ function markFallback(obj) {
 
 function loadCache() {
   try {
+    for (const k of LS_OLD_CACHE_KEYS) localStorage.removeItem(k);
     const raw = localStorage.getItem(LS_CACHE_KEY);
-    if (!raw) return {};
-    const cache = JSON.parse(raw);
-    // Earlier builds persisted placeholder fallbacks under this same key
-    // (one transient failure = placeholder text forever). Drop them so the
-    // real call is retried; real entries are untouched.
-    let dropped = 0;
-    for (const k of Object.keys(cache)) {
-      if (isLegacyPlaceholder(k, cache[k])) { delete cache[k]; dropped++; }
-    }
-    if (dropped) saveCache(cache);
-    return cache;
+    return raw ? JSON.parse(raw) : {};
   } catch (e) { return {}; }
 }
 
