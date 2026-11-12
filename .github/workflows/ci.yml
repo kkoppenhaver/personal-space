@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+      # Proves the worker (and anything it imports from /shared) still
+      # bundles. --dry-run needs no Cloudflare credentials and deploys nothing.
+      # wrangler is not a worker dependency, so pin the major here.
+      - name: Worker bundle check
+        working-directory: worker
+        run: |
+          npm ci
+          npx --yes wrangler@4 deploy --dry-run --outdir "$RUNNER_TEMP/worker-dry"
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Smoke test + seed gallery against the production bundle, offline
+      # (playwright.config.js blanks VITE_WORKER_URL; no LLM is ever called).
+      - name: Browser tests
+        run: npm run test:e2e
+
+      - name: Upload seed gallery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seed-gallery
+          path: test-results/seed-gallery
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload Playwright report and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 14

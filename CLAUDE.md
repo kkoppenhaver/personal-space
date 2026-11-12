@@ -56,6 +56,20 @@ downstream obeys it:
   `__GAME.testAsset(url)`, `__GAME.debugPlacement = true`.
 - `npm run build` — must pass before any PR.
 
+## Testing
+
+- `npm test` — vitest unit tests (`tests/unit/**/*.test.js`, node env;
+  `fake-indexeddb` for the logbook store).
+- `npm run test:e2e` — Playwright on the production bundle, offline (no worker,
+  no LLM; port 5187; SwiftShader WebGL): `smoke.spec.js` boots the game,
+  warps, fails on page errors / console errors. The console-error allowlist
+  lives in `tests/e2e/guard.js` — every entry needs a reason.
+- **Seed gallery** (`gallery.spec.js`): 8 fixed planets through
+  `?placementLab=1&shot=1` → `test-results/seed-gallery/*.png` (CI artifact
+  `seed-gallery`). Deterministic: compare before/after on any visual PR. Keep
+  the list stable; rename a file when you change its entry.
+- CI (`.github/workflows/ci.yml`): build, unit, worker `--dry-run` bundle, e2e.
+
 ## Conventions & gotchas
 
 - Worker prompt/schema changes require `npx wrangler deploy` from `worker/` —
