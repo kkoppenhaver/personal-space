@@ -1,5 +1,5 @@
 // Personal Space Worker — entry point.
-// Hosts the LLM proxy (/tier1/2/3) and the accounts + cloud-logbook API
+// Hosts the LLM proxy (/concept, /tier2, /tier3) and the accounts + cloud-logbook API
 // (/api/*). See docs/plans/2026-05-20-001-feat-logbook-cloud-memoir-plan.md.
 
 import { Hono } from 'hono';
@@ -19,12 +19,14 @@ app.use('*', async (c, next) => {
     origin: (origin) => (allowed.includes(origin) ? origin : null),
     credentials: true,
     allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['content-type'],
+    allowHeaders: ['content-type', 'x-dev-key'],
     maxAge: 600,
   })(c, next);
 });
 
-// LLM proxy mounted at root for backward compatibility (/tier1, /tier2, /tier3).
+// LLM proxy mounted at root for backward compatibility (/concept, /tier2, /tier3).
+// Each LLM route carries its own llmGuard; never add a wildcard middleware to
+// the llm sub-app (it would also gate /api/auth/*).
 app.route('/', llm);
 
 // Dynamic asset search (Poly Pizza proxy) under /assets/*.

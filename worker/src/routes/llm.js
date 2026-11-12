@@ -1,29 +1,45 @@
 // LLM proxy.
 //
-// Tier 1: short teaser (Haiku) on system spawn.
-// Tier 2 (creative-direction): extended world description (Sonnet) on
-//   approach. Now emits theme / density / style hints in addition to
-//   the original name / biome / palette / landmarks — those drive the
-//   downstream asset retrieval. Backward-compatible: the new fields are
-//   optional and clients that ignore them get exactly the old shape.
-// Tier 2 pick (NEW): given a retrieval-produced shortlist of asset IDs
-//   per slot, Haiku 4.5 picks final asset IDs via strict tool use. Zero
+// Concept (Haiku 5.5): one premise per planet, fired at system spawn. The
+//   worker derives the prompt context from (system_seed, planet_index);
+//   the client's context is ignored (see lib/llm-context.js).
+// Tier 2 (creative-direction, Sonnet 4.6): extended world description on
+//   approach — name / biome / palette / landmarks plus theme / density /
+//   style hints that drive the downstream asset retrieval.
+// Tier 2 pick (Haiku 5.5): given a retrieval-produced shortlist of asset
+//   IDs per slot, picks final asset IDs via strict tool use. Zero
 //   hallucination by construction (enum-per-slot).
-// Tier 3: surface lore + landmark blurbs (Sonnet) on claim.
+// Tier 3 (Sonnet 4.6): surface lore + landmark blurbs on claim.
+//
+// Every route: llmGuard (session or dev key, rate limits, 16 KB body cap)
+// → sanitize → KV cache (free, always served) → daily budget breaker →
+// Anthropic → usage ledger (lib/budget.js). Any failure is a non-2xx; the
+// client falls back to its offline generator on any non-2xx.
 
 import { Hono } from 'hono';
+import { llmGuard } from '../lib/llm-guard.js';
+import {
+  budgetStatus, recordUsage, recordCacheHit, recordError, secondsUntilUtcMidnight,
+} from '../lib/budget.js';
+import {
+  deriveConceptRequest, sanitizeTier2Context, sanitizeTier3Context, sanitizePickBody,
+} from '../lib/llm-context.js';
 
-const MODELS = {
-  1: 'claude-haiku-4-5',
+const DEFAULT_ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+
+export const MODELS = {
   2: 'claude-sonnet-4-6',
   3: 'claude-sonnet-4-6',
-  pick: 'claude-haiku-4-5',     // strict enum → hallucination impossible; Haiku is sufficient
-  concept: 'claude-haiku-4-5',  // one premise per planet, fired at system spawn
+  pick: 'claude-haiku-5-5',     // strict enum → hallucination impossible; Haiku is sufficient
+  concept: 'claude-haiku-5-5',  // one premise per planet, fired at system spawn
 };
-const MAX_TOKENS = { 1: 200, 2: 900, 3: 900, pick: 300, concept: 600 };
+// Haiku 5.5's tokenizer counts ~30% more tokens than Haiku 4.5's, so the
+// concept / pick caps grew with the model switch (600 → 1000, 300 → 600).
+const MAX_TOKENS = { 2: 900, 3: 900, pick: 600, concept: 1000 };
+// Labels in the llm_usage ledger.
+const ROUTE_LABEL = { 2: 'tier2', 3: 'tier3', concept: 'concept', pick: 'pick' };
 
 const SYSTEM = {
-  1: `You are the herald of a procedurally generated cosmos. Output a single evocative 80-char teaser for an unseen world. Concrete, specific, no clichés like "mysterious" or "alien". No proper nouns. Use the "world_teaser" tool to return your answer.`,
   2: `You direct the look of a new world for an explorer who will see it once and never again.
 
 The user message carries the planet's CONCEPT — a teaser, a premise, and a question, generated when the planet first appeared on the player's instruments. The player has been navigating BY the teaser; arriving must feel like that sentence kept its promise. The concept is a HARD constraint: the name, palette, landmark names, and every hint must be a specific elaboration of the premise — never a generic version of its biome. The engine has already shaped the terrain to match. When concept.landmark_slots is small (0-2), emptiness is the point. Landmark names should deepen the question, never answer it. If no concept is given (legacy client), invent freely and avoid your own habits.
@@ -144,8 +160,8 @@ const CONCEPT_TOOL = [{
   },
 }];
 
-// Static system prompt for the asset-pick stage. Cached via prompt-caching
-// (we mark this string with cache_control when constructing the request).
+// Static system prompt for the asset-pick stage. Sent uncached — see the
+// note at the /tier2/pick upstream call.
 const PICK_SYSTEM = `You are picking 3D assets from a retrieval-produced shortlist for a single planet.
 When direction.premise is given, it is the planet's reason to exist — your FIRST question for every candidate is "does this asset serve the premise?" Taste comes second. A weaker-looking asset that serves the premise beats a prettier one that dilutes it.
 The shortlist for each slot is ranked by surface similarity to creative direction prose — NOT by taste. Picking rank-1 every time means the retriever is doing your job.
@@ -157,15 +173,6 @@ Apply art direction:
 Use the "pick_assets" tool. Every asset_id you output MUST come from the corresponding slot's shortlist — the tool enforces this.`;
 
 const TOOLS = {
-  1: [{
-    name: 'world_teaser',
-    description: 'Return the world teaser.',
-    input_schema: {
-      type: 'object',
-      properties: { teaser: { type: 'string', maxLength: 80 } },
-      required: ['teaser'],
-    },
-  }],
   2: [{
     name: 'world_describe',
     description: 'Return the full world description + creative direction for asset selection.',
@@ -235,37 +242,61 @@ const TOOLS = {
   }],
 };
 
-export const llm = new Hono();
-
-for (const tier of [1, 2, 3]) {
-  llm.post(`/tier${tier}`, (c) => handleTier(c, tier));
-}
-// Canonical name for Tier 2 going forward; old /tier2 stays as an alias
-// for transition. Cache key is identical (`t2:...`) so old and new
-// callers share results.
-llm.post('/tier2/direct', (c) => handleTier(c, 2));
-
-// Concept call (Phase 14a) — fired per planet at system spawn; the cached
-// result is the spine every other tier elaborates. Same handler shape as
-// the numbered tiers (KV key `tconcept:{seed}:{ctxHash}`).
 SYSTEM.concept = CONCEPT_SYSTEM;
 TOOLS.concept = CONCEPT_TOOL;
-llm.post('/concept', (c) => handleTier(c, 'concept'));
+
+// Per-tier prompt versions. Bump a tier here when its system prompt, tool
+// schema, or model changes enough that old cached responses are wrong
+// (concept v2: the concept owns the planet name; v5: Haiku 4.5 → 5.5).
+// Tiers absent from the map stay on their historical un-versioned keys.
+const PROMPT_VERSION = { concept: 5 };
+
+const CACHE_TTL_S = 60 * 60 * 24 * 30;
+
+export const llm = new Hono();
+
+// Concept call (Phase 14a) — fired per planet at system spawn; the cached
+// result is the spine every other tier elaborates.
+// Body: { system_seed, planet_index, radius } (any seed/context is ignored).
+llm.post('/concept', llmGuard, async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body) return c.json({ error: 'bad_json' }, 400);
+  const req = deriveConceptRequest(body);
+  if (!req.ok) return c.json({ error: req.error }, 400);
+  return handleTier(c, 'concept', req.seed, req.context);
+});
+
+// Tier 2 creative direction. /tier2/direct is the canonical name; /tier2
+// stays as an alias (same `t2:` cache key, so both share results).
+// Body: { seed, context: { radius, tier, concept } }
+const tier2 = async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body) return c.json({ error: 'bad_json' }, 400);
+  return handleTier(c, 2, (body.seed | 0) >>> 0, sanitizeTier2Context(body.context));
+};
+llm.post('/tier2', llmGuard, tier2);
+llm.post('/tier2/direct', llmGuard, tier2);
+
+// Tier 3 lore. Body: { seed, context: { name, biome, landmarks, concept, tier, mounted } }
+llm.post('/tier3', llmGuard, async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body) return c.json({ error: 'bad_json' }, 400);
+  return handleTier(c, 3, (body.seed | 0) >>> 0, sanitizeTier3Context(body.context));
+});
 
 // ─── Tier 2 pick — strict-tool asset selection ─────────────────────────
 //
-// Body: { seed, shortlist: { hero: [id,…], landmark: [id,…], surface: [id,…] } }
-// Returns: { hero, landmark_a, landmark_b, landmark_c, surface_a, surface_b, rationale }
+// Body: { seed, direction, shortlist: { hero, landmark, surface, creature? }, shortlist_meta }
+// Returns: { hero, landmark_a, landmark_b, landmark_c, surface_a, surface_b, [creature_a, creature_b,] rationale }
 // All returned IDs are guaranteed to come from the corresponding slot's
 // shortlist (enforced by strict-tool enum).
-llm.post('/tier2/pick', async (c) => {
+llm.post('/tier2/pick', llmGuard, async (c) => {
   const body = await c.req.json().catch(() => null);
-  if (!body) return c.json({ error: 'bad json' }, 400);
-  const seed = (body.seed | 0) >>> 0;
-  const shortlist = body.shortlist;
-  if (!shortlist || !shortlist.hero?.length || !shortlist.landmark?.length || !shortlist.surface?.length) {
-    return c.json({ error: 'incomplete shortlist' }, 400);
-  }
+  if (!body) return c.json({ error: 'bad_json' }, 400);
+  const req = sanitizePickBody(body);
+  if (!req.ok) return c.json({ error: req.error }, 400);
+  const { seed, shortlist } = req;
+  const model = MODELS.pick;
 
   // Cache key — sorted IDs per slot so order doesn't matter; same shortlist
   // hits the same cache entry regardless of input ordering.
@@ -274,15 +305,14 @@ llm.post('/tier2/pick', async (c) => {
     landmark: shortlist.landmark.slice().sort(),
     surface: shortlist.surface.slice().sort(),
     // Spread keeps creature-less requests on their historical cache keys.
-    ...(shortlist.creature?.length ? { creature: shortlist.creature.slice().sort() } : {}),
+    ...(shortlist.creature ? { creature: shortlist.creature.slice().sort() } : {}),
   });
-  const cacheKey = `t2pick:${seed}:${MODELS.pick}:${fnv1a(sortedKey)}`;
+  const cacheKey = `t2pick:${seed}:${model}:${fnv1a(sortedKey)}`;
 
-  if (c.env.LLM_CACHE) {
-    const cached = await c.env.LLM_CACHE.get(cacheKey, { type: 'json' });
-    if (cached) { c.header('x-cache', 'hit'); return c.json(cached); }
-  }
-  if (!c.env.ANTHROPIC_API_KEY) return c.json({ error: 'no api key configured' }, 500);
+  const hit = await cacheGet(c, cacheKey, 'pick', model);
+  if (hit) return hit;
+  const blocked = await budgetGate(c);
+  if (blocked) return blocked;
 
   // Build strict-tool schema with enum-per-slot (not array-of-enum — the
   // latter loses maxItems enforcement under Anthropic strict mode).
@@ -306,9 +336,8 @@ llm.post('/tier2/pick', async (c) => {
     },
   };
   // Creature slots (Phase 12b) appear only when the client retrieved a
-  // creature shortlist (i.e. Tier 2 emitted inhabitant_hints). Old clients
-  // never send one → identical schema + cache keys to before.
-  if (shortlist.creature?.length) {
+  // creature shortlist (i.e. Tier 2 emitted inhabitant_hints).
+  if (shortlist.creature) {
     tool.input_schema.properties.creature_a = { type: 'string', enum: shortlist.creature };
     tool.input_schema.properties.creature_b = { type: 'string', enum: shortlist.creature };
     tool.input_schema.required.push('creature_a', 'creature_b');
@@ -316,126 +345,131 @@ llm.post('/tier2/pick', async (c) => {
 
   // Compact user message — shortlist as a structured prose blob so the
   // model can reason about each candidate by name/role rather than just
-  // the enum value. shortlist_meta (if the client sent it) annotates each
-  // candidate with pack + family so the model can honor pack cohesion.
+  // the enum value. shortlist_meta annotates each candidate with pack +
+  // family so the model can honor pack cohesion.
   const userMsg = JSON.stringify({
     seed,
-    direction: body.direction || null,    // optional creative-direction recap (may include anchor_pack)
-    shortlists: body.shortlist_meta || shortlist,
+    direction: req.direction,
+    shortlists: req.shortlistMeta || shortlist,
   });
 
-  let resp;
-  try {
-    resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'anthropic-version': '2023-06-01',
-        'x-api-key': c.env.ANTHROPIC_API_KEY,
-      },
-      body: JSON.stringify({
-        model: MODELS.pick,
-        max_tokens: MAX_TOKENS.pick,
-        // System as array → enables prompt caching on the static guide.
-        // Shortlist + direction stay in messages, not cached.
-        system: [
-          { type: 'text', text: PICK_SYSTEM, cache_control: { type: 'ephemeral' } },
-        ],
-        tools: [tool],
-        tool_choice: { type: 'tool', name: 'pick_assets' },
-        messages: [{ role: 'user', content: userMsg }],
-      }),
-    });
-  } catch (e) {
-    return c.json({ error: 'upstream fetch failed', detail: String(e) }, 502);
-  }
-
-  if (!resp.ok) {
-    const text = await resp.text();
-    return c.json({ error: 'upstream', status: resp.status, detail: text.slice(0, 500) }, 502);
-  }
-
-  const apiData = await resp.json();
-  const toolUse = (apiData.content || []).find((p) => p.type === 'tool_use');
-  if (!toolUse) return c.json({ error: 'no tool_use', raw: apiData }, 502);
-  const output = toolUse.input;
-
-  if (c.env.LLM_CACHE) {
-    c.executionCtx.waitUntil(c.env.LLM_CACHE.put(cacheKey, JSON.stringify(output), {
-      expirationTtl: 60 * 60 * 24 * 30,
-    }));
-  }
-
-  c.header('x-cache', 'miss');
-  return c.json(output);
+  return callUpstream(c, {
+    route: 'pick',
+    model,
+    cacheKey,
+    request: {
+      model,
+      max_tokens: MAX_TOKENS.pick,
+      // Plain string, no cache_control: the tool definition (per-request
+      // enums) precedes the system prompt in the cache prefix, so this
+      // could never hit, and on Haiku 5.5 (512-token minimum) it would
+      // pay the 1.25x cache-write surcharge on every call for nothing.
+      system: PICK_SYSTEM,
+      tools: [tool],
+      tool_choice: { type: 'tool', name: 'pick_assets' },
+      messages: [{ role: 'user', content: userMsg }],
+    },
+  });
 });
 
-// ─── Shared handler for /tier1 /tier2 /tier3 + /tier2/direct ───────────
+// ─── Shared handler for /concept, /tier2(/direct), /tier3 ──────────────
 
-// Per-tier prompt versions. Bump a tier here when its system prompt or tool
-// schema changes shape enough that old cached responses are wrong (concept
-// v2: the concept owns the planet name — pre-v2 entries have no name).
-// Tiers absent from the map stay on their historical un-versioned keys.
-const PROMPT_VERSION = { concept: 4 };
-
-async function handleTier(c, tier) {
-  const body = await c.req.json().catch(() => null);
-  if (!body) return c.json({ error: 'bad json' }, 400);
-
-  const seed = (body.seed | 0) >>> 0;
-  const context = body.context || {};
+async function handleTier(c, tier, seed, context) {
+  const model = MODELS[tier];
+  const route = ROUTE_LABEL[tier];
   const ver = PROMPT_VERSION[tier] ? `v${PROMPT_VERSION[tier]}:` : '';
   const cacheKey = `t${tier}:${ver}${seed}:${hashContext(context)}`;
 
-  if (c.env.LLM_CACHE) {
-    const cached = await c.env.LLM_CACHE.get(cacheKey, { type: 'json' });
-    if (cached) {
-      c.header('x-cache', 'hit');
-      return c.json(cached);
-    }
-  }
+  const hit = await cacheGet(c, cacheKey, route, model);
+  if (hit) return hit;
+  const blocked = await budgetGate(c);
+  if (blocked) return blocked;
 
-  if (!c.env.ANTHROPIC_API_KEY) {
-    return c.json({ error: 'no api key configured' }, 500);
-  }
+  return callUpstream(c, {
+    route,
+    model,
+    cacheKey,
+    request: {
+      model,
+      max_tokens: MAX_TOKENS[tier],
+      system: SYSTEM[tier],
+      tools: TOOLS[tier],
+      tool_choice: { type: 'tool', name: TOOLS[tier][0].name },
+      messages: [{ role: 'user', content: JSON.stringify({ seed, context }) }],
+    },
+  });
+}
 
-  const userMsg = JSON.stringify({ seed, context });
+// KV hit → response (always served: it's free). Miss → null.
+async function cacheGet(c, cacheKey, route, model) {
+  if (!c.env.LLM_CACHE) return null;
+  const cached = await c.env.LLM_CACHE.get(cacheKey, { type: 'json' });
+  if (!cached) return null;
+  recordCacheHit(c, route, model);
+  c.header('x-cache', 'hit');
+  return c.json(cached);
+}
+
+// Daily spend breaker. Checked only on a cache miss.
+async function budgetGate(c) {
+  const b = await budgetStatus(c.env);
+  if (b.ok) return null;
+  c.header('retry-after', String(secondsUntilUtcMidnight()));
+  return c.json({ error: 'budget_exhausted', degraded: true }, 503);
+}
+
+// One Anthropic call with ledger bookkeeping. Upstream error bodies are
+// logged, never echoed to the client.
+async function callUpstream(c, { route, model, cacheKey, request }) {
+  if (!c.env.ANTHROPIC_API_KEY) return c.json({ error: 'no api key configured' }, 500);
 
   let resp;
   try {
-    resp = await fetch('https://api.anthropic.com/v1/messages', {
+    resp = await fetch(c.env.ANTHROPIC_API_URL || DEFAULT_ANTHROPIC_URL, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         'anthropic-version': '2023-06-01',
         'x-api-key': c.env.ANTHROPIC_API_KEY,
       },
-      body: JSON.stringify({
-        model: MODELS[tier],
-        max_tokens: MAX_TOKENS[tier],
-        system: SYSTEM[tier],
-        tools: TOOLS[tier],
-        tool_choice: { type: 'tool', name: TOOLS[tier][0].name },
-        messages: [{ role: 'user', content: userMsg }],
-      }),
+      body: JSON.stringify(request),
     });
   } catch (e) {
-    return c.json({ error: 'upstream fetch failed', detail: String(e) }, 502);
+    console.error(`llm ${route}: upstream fetch failed`, e);
+    recordError(c, route, model);
+    return c.json({ error: 'upstream_fetch_failed' }, 502);
   }
 
   if (!resp.ok) {
-    const text = await resp.text();
-    return c.json({ error: 'upstream', status: resp.status, detail: text.slice(0, 500) }, 502);
+    const text = await resp.text().catch(() => '');
+    console.error(`llm ${route}: upstream ${resp.status}`, text.slice(0, 500));
+    recordError(c, route, model);
+    return c.json({ error: 'upstream', status: resp.status }, 502);
   }
 
-  const apiData = await resp.json();
+  const apiData = await resp.json().catch(() => null);
+  if (!apiData) {
+    recordError(c, route, model);
+    return c.json({ error: 'upstream_bad_json' }, 502);
+  }
+  // Billed regardless of what came back. Ledger rows use the model we
+  // asked for, so a day's rows group cleanly by route.
+  recordUsage(c, { route, model, usage: apiData.usage });
+
   const toolUse = (apiData.content || []).find((p) => p.type === 'tool_use');
-  if (!toolUse) return c.json({ error: 'no tool_use', raw: apiData }, 502);
+  // A truncated (max_tokens) or refused turn can't be trusted even if a
+  // partial tool_use block is present: never cache it.
+  const stop = apiData.stop_reason ?? null;
+  if (!toolUse || stop === 'max_tokens' || stop === 'refusal') {
+    console.warn(`llm ${route}: no usable tool_use (stop_reason=${stop})`);
+    recordError(c, route, model);
+    return c.json({ error: 'no_tool_use', stop_reason: stop }, 502);
+  }
   const output = toolUse.input;
 
   if (c.env.LLM_CACHE) {
     c.executionCtx.waitUntil(c.env.LLM_CACHE.put(cacheKey, JSON.stringify(output), {
-      expirationTtl: 60 * 60 * 24 * 30,
+      expirationTtl: CACHE_TTL_S,
     }));
   }
 
@@ -450,10 +484,7 @@ function fnv1a(s) {
 }
 
 function hashContext(ctx) {
-  const s = stableStringify(ctx);
-  let h = 2166136261 >>> 0;
-  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return (h >>> 0).toString(16);
+  return fnv1a(stableStringify(ctx));
 }
 
 function stableStringify(v) {
@@ -462,3 +493,4 @@ function stableStringify(v) {
   const keys = Object.keys(v).sort();
   return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
 }
+

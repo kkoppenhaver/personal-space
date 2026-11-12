@@ -24,6 +24,11 @@ SESSION_COOKIE_DOMAIN = ".personalspace.fun"
 # Resend "from" address. Must be on a verified domain.
 RESEND_FROM = "Personal Space <noreply@personalspace.fun>"
 PUBLIC_GAME_URL = "https://personalspace.fun"
+# LLM spend breaker (Phase 0b): once the UTC day's recorded spend in
+# llm_usage reaches this, uncached LLM calls answer 503 {degraded:true} and
+# the client uses its offline generator. Unset or <= 0 disables the breaker.
+# $3.70/day is the runtime share of the $200/month budget.
+DAILY_BUDGET_USD = "3.70"
 
 # ---- Bindings ----
 
@@ -76,7 +81,24 @@ type = "ratelimit"
 namespace_id = "2003"
 simple = { limit = 5, period = 60 }
 
+# LLM proxy + /assets/search: per principal (user id, or the dev key)…
+[[unsafe.bindings]]
+name = "LLM_LIMITER"
+type = "ratelimit"
+namespace_id = "2004"
+simple = { limit = 60, period = 60 }
+
+# …and per IP, so one client minting many anonymous sessions is still capped.
+[[unsafe.bindings]]
+name = "LLM_IP_LIMITER"
+type = "ratelimit"
+namespace_id = "2005"
+simple = { limit = 120, period = 60 }
+
 # Secrets (set via `wrangler secret put`):
 #   ANTHROPIC_API_KEY   (existing — LLM proxy)
 #   SESSION_SECRET      (new — HMAC for signed session cookies; >=32 random bytes)
 #   RESEND_API_KEY      (new — magic link sender)
+#   DEV_LLM_KEY         (optional — >=16 chars; lets scripts call the LLM
+#                        routes with an `x-dev-key` header instead of a session)
+#   POLY_PIZZA_API_KEY  (optional — /assets/search)
