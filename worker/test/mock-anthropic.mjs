@@ -11,6 +11,7 @@
 // Failure knobs (env vars; the worker doesn't forward client headers):
 //   MOCK_MODE=no_tool   → reply with a text block, stop_reason "refusal"
 //   MOCK_MODE=error     → reply 529 overloaded
+//   MOCK_LOG_BODIES=1   → also print each request's system type + user message
 
 import http from 'node:http';
 
@@ -60,6 +61,12 @@ const server = http.createServer((req, res) => {
     const toolName = body.tool_choice?.name || body.tools?.[0]?.name;
     const tool = (body.tools || []).find((t) => t.name === toolName);
     console.log(`[mock] #${calls} ${req.method} ${req.url} model=${body.model} tool=${toolName} key=${req.headers['x-api-key'] ? 'set' : 'missing'}`);
+    if (process.env.MOCK_LOG_BODIES) {
+      const sys = Array.isArray(body.system) ? 'array(cache_control?)' : typeof body.system;
+      console.log(`[mock]    max_tokens=${body.max_tokens} system=${sys} tool_choice=${JSON.stringify(body.tool_choice)}`);
+      console.log(`[mock]    user=${body.messages?.[0]?.content}`);
+      if (tool?.input_schema?.properties?.hero) console.log(`[mock]    enums=${JSON.stringify(Object.fromEntries(Object.entries(tool.input_schema.properties).filter(([, v]) => v.enum).map(([k, v]) => [k, v.enum])))}`);
+    }
 
     if (MODE === 'error') {
       res.writeHead(529, { 'content-type': 'application/json' });
