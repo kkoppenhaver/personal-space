@@ -37,10 +37,6 @@ export const CONSOLE_ERROR_ALLOWLIST = [
   // The blocked embedding-model hosts (MODEL_HOSTS above).
   /^Failed to load resource: net::ERR_FAILED @ https:\/\/([^/]*\.)?(huggingface\.co|hf\.co)\//,
   /^Failed to load resource: net::ERR_FAILED @ https:\/\/cdn\.jsdelivr\.net\//,
-  // TODO(Phase 1a): remove — 100 Kenney GLBs reference a colormap.png that is
-  // not shipped (roadmap finding 1). Phase 1a bakes colours at import.
-  /^THREE\.GLTFLoader: Couldn't load texture .*Textures\/colormap\.png @ /,
-  /^Failed to load resource: .* @ http:\/\/127\.0\.0\.1:\d+\/assets\/bundled\/kenney\/.*\/Textures\/colormap\.png$/, // TODO(Phase 1a): same
 ];
 
 /**

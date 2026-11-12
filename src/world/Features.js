@@ -341,12 +341,17 @@ function extractMergedGeometry(root) {
   if (!geoms.every((g) => g.index)) {
     geoms = geoms.map((g) => (g.index ? g.toNonIndexed() : g));
   }
-  const merged = mergeGeometries(geoms, true);   // true → material groups
+  // Phase 1a: MaterialSet makes every mesh vertex-coloured with the same
+  // neutral material, so the parts merge into ONE draw call (no groups, no
+  // material array). Anything else (dynamic assets keeping their own
+  // materials) still merges with groups.
+  const oneMaterial = meshes.every((o) => o.material?.userData?.vertexColored) && common.has('color');
+  const merged = mergeGeometries(geoms, !oneMaterial);   // true → material groups
   if (!merged) {
     console.warn('[Features] geometry merge failed; falling back to first mesh');
     return { geom: meshes[0].geometry, mat: meshes[0].material };
   }
-  return { geom: merged, mat: meshes.map((o) => o.material) };
+  return { geom: merged, mat: oneMaterial ? meshes[0].material : meshes.map((o) => o.material) };
 }
 
 export function buildInstancedFeatures({ geometry, elevations, radius, seed, palette, excludeZone = null, seaLevel = 0.42 }) {

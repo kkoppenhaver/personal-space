@@ -19,6 +19,7 @@
 //   family identity intact while breaking visual repetition.
 
 import { hexToOklch, mixOklch, oklchToHex } from './OKLCH.js';
+import { oklabToLch, lchToOklab } from './ColorGrade.js';
 
 // ── Family base colors ────────────────────────────────────────────────
 //
@@ -132,10 +133,81 @@ export function resolveColor({ family, biome, biomeAccentHex, assetId }) {
   });
 }
 
+// ── Authored-colour grade (Phase 1a) ──────────────────────────────────
+//
+// When an asset carries its own colours, the asset's average colour takes
+// the place of the generic family colour above: that average is pulled
+// toward the biome accent by the family's blend amount, and every part
+// keeps its offset from the average (see ColorGrade.js).
+//
+// Tunables. `strength` scales the family blend for authored assets: at 1
+// an authored asset's average lands where its flat family colour used to;
+// lower lets more of the kit's own colour through. `lightnessFollow`
+// keeps lightness closer to the authored value than hue and chroma — the
+// accent is the palette's brightest colour, and following it fully washes
+// every asset out. `contrast` scales part-to-part differences.
+export const GRADE = {
+  // false → ignore authored colours and paint flat family colours, as
+  // before Phase 1a. For A/B in the placement lab (`&flat=1`).
+  enabled: true,
+  strength: 0.75,
+  lightnessFollow: 0.4,
+  contrast: 1.0,
+};
+
+// Structures used to take ~95% of the accent because that was the only way
+// to make a landmark pop. With real roofs, walls and windows they carry
+// their own interest; a lighter hand keeps stone looking like stone.
+const AUTHORED_BLEND_OVERRIDES = { structure: 0.6, metal: 0.4 };
+
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const smooth = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+
+/**
+ * OKLab colour that an authored asset's mean colour is re-centred on.
+ *
+ * @param {object} args
+ * @param {string} args.family
+ * @param {string|null} args.biome
+ * @param {number} args.biomeAccentHex   0xRRGGBB; usually palette.snow
+ * @param {string} args.assetId          for per-asset jitter
+ * @param {[number, number, number]} args.mean  the asset's OKLab mean
+ * @returns {[number, number, number]} OKLab
+ */
+export function gradeCentre({ family, biome, biomeAccentHex, assetId, mean }) {
+  const anchor = oklabToLch(mean);
+  const accent = hexToOklch(biomeAccentHex);
+  const blend = AUTHORED_BLEND_OVERRIDES[family] ?? blendFactor(biome, family);
+  const t = clamp01(blend * GRADE.strength);
+
+  // Hue + chroma. A coloured anchor rotates around the hue wheel toward the
+  // accent (green fronds go teal on an ice world, they don't go grey). A
+  // near-grey anchor has no meaningful hue to rotate from, so it is tinted
+  // straight toward the accent in a/b instead. Blend the two by chroma.
+  const rotated = lchToOklab(mixOklch(anchor, accent, t));
+  const accentLab = lchToOklab(accent);
+  const tintedA = mean[1] + (accentLab[1] - mean[1]) * t;
+  const tintedB = mean[2] + (accentLab[2] - mean[2]) * t;
+  const w = smooth(0.02, 0.06, anchor.c);
+  let a = tintedA + (rotated[1] - tintedA) * w;
+  let b = tintedB + (rotated[2] - tintedB) * w;
+
+  // Lightness follows the accent less than hue does.
+  const l = anchor.l + (accent.l - anchor.l) * t * GRADE.lightnessFollow;
+
+  // Same small per-asset hue jitter as resolveColor, so two kinds of tree
+  // on one planet don't land on the identical green.
+  const h = hashStr(assetId || '');
+  const dh = (((h & 0xff) / 255 - 0.5) * 4) * Math.PI / 180;
+  const cos = Math.cos(dh), sin = Math.sin(dh);
+  [a, b] = [a * cos - b * sin, a * sin + b * cos];
+  return [l, a, b];
+}
+
 /** Default biome accent if no palette is available. Used as a safety net. */
 export function biomeFallbackAccent(biome) {
   return BIOME_FALLBACK_ACCENT[biome] ?? 0xb0b0b0;
 }
 
 /** Exported for tests and debug overlays. */
-export const _internal = { FAMILY_BASE, FAMILY_BLEND_DEFAULT, BIOME_BLEND_OVERRIDES };
+export const _internal = { FAMILY_BASE, FAMILY_BLEND_DEFAULT, BIOME_BLEND_OVERRIDES, AUTHORED_BLEND_OVERRIDES };

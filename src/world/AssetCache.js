@@ -23,6 +23,7 @@ import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 import { applyMaterialSet } from './MaterialSet.js';
+import { prepareAuthoredColor } from './AuthoredColor.js';
 
 let _loader = null;
 const _cache = new Map();   // url → Promise<GLTF>
@@ -102,8 +103,12 @@ export async function loadInstance(url, matSet, renderer, assetMeta) {
   }
   // clone(true) shares geometry/material refs by design — fine for static
   // meshes since we override materials on the cloned tree below.
+  // Read the model's own colours once per GLB (cached on the source scene
+  // and its geometries, which every clone shares).
+  const authoredColor = prepareAuthoredColor(gltf.scene);
   const root = gltf.scene.clone(true);
   root.userData.bbox = gltf.scene.userData.bbox;
+  root.userData.authoredColor = authoredColor;
   // Dynamic assets (Poly Pizza, Phase 7) keep their authored materials —
   // they're textured/vertex-colored one-offs, not kit pieces that need the
   // planet's cohesion recolor.

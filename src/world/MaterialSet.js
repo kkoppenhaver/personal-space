@@ -11,7 +11,8 @@
 // terrain mesh and as the "hero" opt-out sentinel.
 
 import * as THREE from 'three';
-import { resolveColor, biomeFallbackAccent } from './ColorSystem.js';
+import { resolveColor, biomeFallbackAccent, gradeCentre, GRADE } from './ColorSystem.js';
+import { gradeColors, hexToLinear } from './ColorGrade.js';
 
 /** Strip any "#" / 0x prefix from a hex color string and return an int. */
 function hexToInt(c) {
@@ -67,16 +68,29 @@ export function disposeMaterialSet(matSet) {
 }
 
 /**
- * Override every Mesh material in a GLB scene with a freshly-built
- * dual-axis-colored material. Family for the color comes from (in order):
- *   1. mesh.userData.matSlot — author-tagged at build time
- *   2. mesh.material.name prefix (e.g. "rock_01" → "rock")
- *   3. assetMeta.family — the catalog's per-asset family (covers most cases)
- *   4. 'default'
+ * Recolour a cloned GLB for one planet. Every mesh ends up with its own
+ * geometry copy carrying a `color` attribute, and one neutral vertex-colour
+ * Lambert material:
  *
- * A matSlot of 'hero' opts out entirely (the GLB's hand-crafted PBR is
- * preserved — landmark-cohesion responsibility for hero assets falls to
- * the future post-process LUT, not this pass).
+ *   - Meshes with AUTHORED colours (COLOR_0 from the import bake, or real
+ *     material colours; see AuthoredColor.js) keep them, graded toward the
+ *     planet palette: the asset's mean colour is re-centred on the biome
+ *     (gradeCentre) and each part keeps its offset from that mean. Trunks
+ *     stay darker than leaves; roofs stay different from walls.
+ *   - Meshes with no authored colour get the old flat family colour, written
+ *     into the same attribute. Family comes from (in order):
+ *       1. mesh.userData.matSlot — author-tagged at build time
+ *       2. the material name ("rock_01", "BirchTree_Bark" → rock, wood)
+ *       3. assetMeta.family — the catalog's per-asset family
+ *       4. 'default'
+ *
+ * Because every mesh is vertex-coloured the same way, a multi-part asset
+ * merges into ONE instanced draw call (Features.extractMergedGeometry).
+ *
+ * A matSlot of 'hero' opts out entirely (the GLB's own materials are kept).
+ *
+ * `root.userData.authoredColor` ({ authored, mean }) is set by
+ * AssetCache.loadInstance; without it the asset is treated as unauthored.
  *
  * @param {THREE.Object3D} root
  * @param {ReturnType<typeof buildMaterialSet>} matSet
@@ -87,31 +101,51 @@ export function applyMaterialSet(root, matSet, assetMeta = {}) {
   const assetId = assetMeta.assetId || '';
   const biome = matSet.biome;
   const accent = matSet.accent;
+  const info = root.userData?.authoredColor;
+  const authoredAsset = GRADE.enabled && !!info?.authored;
+  // One centre for the whole asset, so every part is shifted the same way
+  // and their differences survive.
+  const centre = authoredAsset
+    ? gradeCentre({ family: assetFamily || 'default', biome, biomeAccentHex: accent, assetId, mean: info.mean })
+    : null;
 
   root.traverse((o) => {
-    if (!o.isMesh) return;
+    if (!o.isMesh || !o.geometry?.attributes?.position) return;
     const slot = o.userData?.matSlot
       ?? (o.material?.name?.split(/[_\s-]/)?.[0] || null);
     if (slot === 'hero' || matSet.hero === null && slot === 'hero') return; // opt-out
     if (slot === 'terrain') return; // shouldn't occur on a loaded GLB
 
-    // Family preference: explicit author tag → name prefix that matches a
-    // family → per-asset family → fallback. Slot strings happen to align
-    // with family names for the common cases (rock, flora, structure).
-    const family = slot && isKnownFamily(slot) ? slot
-                : (assetFamily || 'default');
+    const src = o.geometry;
+    const authored = authoredAsset ? src.userData?.authoredColors : null;
+    const n = src.attributes.position.count;
 
-    const hasVC = !!o.geometry?.attributes?.color;
-    const colorHex = resolveColor({ family, biome, biomeAccentHex: accent, assetId });
+    let colors;
+    if (authored && authored.length === n * 3) {
+      colors = gradeColors(authored, { mean: info.mean, centre, contrast: GRADE.contrast });
+    } else {
+      // Family preference: explicit author tag → a family named in the
+      // material → per-asset family → fallback.
+      const family = (slot && isKnownFamily(slot) ? slot : null)
+        || familyFromName(o.material?.name)
+        || assetFamily || 'default';
+      const [r, g, b] = hexToLinear(resolveColor({ family, biome, biomeAccentHex: accent, assetId }));
+      colors = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { colors[i * 3] = r; colors[i * 3 + 1] = g; colors[i * 3 + 2] = b; }
+    }
 
-    const m = new THREE.MeshLambertMaterial({
-      color: colorHex,
-      flatShading: true,
-      vertexColors: hasVC,
-    });
-    if (hasVC) m.color.setHex(0xffffff);    // multiplier-neutral; let VC drive
-    if (o.material?.map && !m.map) m.map = o.material.map;
+    // Per-planet geometry copy that owns its colour buffer. The cached
+    // source geometry is shared by every planet and must stay untouched.
+    const geom = src.clone();
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    o.geometry = geom;
+
+    // Keep the model's sidedness: sails, flags and leaf cards are single
+    // sheets that vanish from behind when culled.
+    const side = (Array.isArray(o.material) ? o.material[0] : o.material)?.side ?? THREE.FrontSide;
+    const m = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true, vertexColors: true, side });
     m.userData.cloned = true;
+    m.userData.vertexColored = true;
     o.material = m;
   });
 }
@@ -122,3 +156,21 @@ const _KNOWN_FAMILIES = new Set([
   'rock', 'stone', 'sand', 'flora', 'wood', 'metal', 'bone', 'crystal', 'structure',
 ]);
 function isKnownFamily(s) { return _KNOWN_FAMILIES.has(s); }
+
+// Part families named anywhere in a material name ("BirchTree_Bark",
+// "Pine_Leaves"). Only consulted for meshes with no authored colour, so an
+// uncoloured tree still gets a trunk that differs from its canopy.
+const _NAME_FAMILIES = [
+  [/bark|trunk|wood|log|stump|branch|plank/i, 'wood'],
+  [/leaf|leaves|foliage|needle|frond|grass|bush|flower|petal|plant|moss|vine/i, 'flora'],
+  [/rock|stone|cliff|boulder|pebble/i, 'rock'],
+  [/metal|steel|iron/i, 'metal'],
+  [/bone|skull/i, 'bone'],
+  [/crystal|gem/i, 'crystal'],
+  [/sand|dirt|soil|mud/i, 'sand'],
+];
+export function familyFromName(name) {
+  if (!name) return null;
+  for (const [re, family] of _NAME_FAMILIES) if (re.test(name)) return family;
+  return null;
+}

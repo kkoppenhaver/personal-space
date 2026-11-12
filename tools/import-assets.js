@@ -1,24 +1,29 @@
 #!/usr/bin/env node
 // Catalog importer — converts the raw mirror at ~/code/3d-modles/assets into:
-//   - src/world/assets/bundled/<creator>/<pack>/*.glb (Draco + WebP compressed)
+//   - public/assets/bundled/<creator>/<pack>/*.glb (colour-baked + Draco,
+//     via tools/bake-colors.mjs: authored colours as COLOR_0, one neutral
+//     material, no textures, one primitive where possible)
 //   - src/world/assets/catalog.source.json (metadata, no embeddings yet)
 //
 // After running this, run `npm run build:catalog` to compute embeddings.
 //
-// Idempotent: re-running is safe. Compression is skipped for files whose
-// destination already exists. The catalog.source.json is rewritten each run
+// Idempotent: re-running is safe. The bake is skipped for files whose
+// destination already exists (re-bake everything with
+// `node tools/bake-colors.mjs`). The catalog.source.json is rewritten each run
 // so allowlist tweaks take effect.
 //
 // Usage:
 //   node tools/import-assets.js          # full run
 //   node tools/import-assets.js --dry    # plan only, no copies/compression
-//   node tools/import-assets.js --no-opt # skip gltf-transform pass
+//   node tools/import-assets.js --no-opt # raw copy, skip the colour bake
+//
+// The Kenney colormap kits need their atlases on disk first — see
+// KENNEY_COLORMAP_DIR in tools/bake-colors.mjs and src/world/assets/README.md.
 
 import { existsSync, statSync } from 'node:fs';
 import { mkdir, copyFile, writeFile, readdir, stat } from 'node:fs/promises';
 import { join, dirname, basename, relative } from 'node:path';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
 
 import { resolveFamily, resolvePlacement, SCALE_OVERRIDES } from './family.js';
@@ -113,7 +118,7 @@ function resolveBiome(name, kit) {
 // any per-filename biome override inherit this. Use LLM enum values only.
 // ────────────────────────────────────────────────────────────────────────
 
-const KITS = [
+export const KITS = [
   // ─── Kenney ───────────────────────────────────────────────────────────
   {
     id: 'kenney_nature',
@@ -485,55 +490,54 @@ async function* walkGlbs(dir) {
   }
 }
 
-/** Run gltf-transform CLI on a GLB. Optimize in place. */
-function runOptimize(file) {
-  return new Promise((resolve, reject) => {
-    // optimize = dedupe + prune + weld + draco + (textures handled below)
-    const args = ['--yes', '@gltf-transform/cli', 'optimize', file, file, '--compress', 'draco', '--texture-compress', 'webp'];
-    const child = spawn('npx', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stderr = '';
-    child.stderr.on('data', (d) => { stderr += d.toString(); });
-    child.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`gltf-transform exit ${code}: ${stderr.slice(-400)}`));
-    });
-  });
-}
-
 // ────────────────────────────────────────────────────────────────────────
 // Main
 // ────────────────────────────────────────────────────────────────────────
 
-async function processKit(kit, summary) {
-  const sourceAbs = join(SOURCE_ROOT, kit.sourceDir);
-  if (!existsSync(sourceAbs)) {
-    summary.kitsMissing.push(kit.id);
-    return;
-  }
-  const destAbs = join(DEST_ROOT, kit.creator.toLowerCase(), kit.pack.replace(/^[a-z]+_/, ''));
-  await mkdir(destAbs, { recursive: true });
+/** Bundled destination directory for a kit (public/assets/bundled/<creator>/<pack>). */
+export function destDirFor(kit) {
+  return join(DEST_ROOT, kit.creator.toLowerCase(), kit.pack.replace(/^[a-z]+_/, ''));
+}
 
-  // Pre-walk + dedup (KayKit) before role classification.
-  const candidates = []; // { file, name, role }
+/** Absolute source directory for a kit in the raw mirror. */
+export function sourceDirFor(kit) {
+  return join(SOURCE_ROOT, kit.sourceDir);
+}
+
+/**
+ * Walk a kit's source dir and return the import candidates
+ * ({ file, name, role }) after reject / role / KayKit-dedup filtering.
+ * Counters are bumped on `summary` when given.
+ */
+export async function listCandidates(kit, summary = {}) {
+  const candidates = [];
   const dedupSeen = new Set();
-  for await (const file of walkGlbs(sourceAbs)) {
+  const bump = (k) => { if (k in summary) summary[k]++; };
+  for await (const file of walkGlbs(sourceDirFor(kit))) {
     const name = stem(basename(file));
-    if ((kit.reject || []).some((p) => p.test(name))) {
-      summary.rejected++;
-      continue;
-    }
+    if ((kit.reject || []).some((p) => p.test(name))) { bump('rejected'); continue; }
     const role = classifyRole(name, kit);
-    if (!role) {
-      summary.unclassified++;
-      continue;
-    }
+    if (!role) { bump('unclassified'); continue; }
     if (kit.dedupKayKit) {
       const key = kaykitShapeKey(name);
-      if (dedupSeen.has(key)) { summary.duplicated++; continue; }
+      if (dedupSeen.has(key)) { bump('duplicated'); continue; }
       dedupSeen.add(key);
     }
     candidates.push({ file, name, role });
   }
+  return candidates;
+}
+
+async function processKit(kit, summary) {
+  const sourceAbs = sourceDirFor(kit);
+  if (!existsSync(sourceAbs)) {
+    summary.kitsMissing.push(kit.id);
+    return;
+  }
+  const destAbs = destDirFor(kit);
+  await mkdir(destAbs, { recursive: true });
+
+  const candidates = await listCandidates(kit, summary);
 
   if (DRY) {
     console.log(`  [dry] ${kit.id}: would import ${candidates.length} (hero=${candidates.filter(c=>c.role==='hero').length} landmark=${candidates.filter(c=>c.role==='landmark').length} surface=${candidates.filter(c=>c.role==='surface').length})`);
@@ -541,17 +545,21 @@ async function processKit(kit, summary) {
     return;
   }
 
-  // Copy + (optional) compress.
+  // Bake (colour → COLOR_0, join, Draco) or, with --no-opt, raw copy.
   for (const c of candidates) {
     const destFile = join(destAbs, basename(c.file));
     if (!existsSync(destFile)) {
-      await copyFile(c.file, destFile);
-      if (!NO_OPT) {
+      if (NO_OPT) {
+        await copyFile(c.file, destFile);
+      } else {
         try {
-          await runOptimize(destFile);
+          const { bakeAsset } = await import('./bake-colors.mjs');
+          const r = await bakeAsset(c.file, destFile, kit);
+          if (!r.colored) console.warn(`  ! ${basename(destFile)}: no recoverable colour (${r.missing.join('; ')}) — baked without COLOR_0`);
         } catch (err) {
-          // Optimize failure → keep raw copy; warn.
-          console.warn(`  ! optimize failed for ${basename(destFile)}: ${err.message}`);
+          // Bake failure → keep a raw copy so the catalog entry still loads; warn.
+          await copyFile(c.file, destFile);
+          console.warn(`  ! bake failed for ${basename(destFile)}: ${err.message}`);
           summary.optFailed++;
         }
       }
@@ -567,7 +575,7 @@ async function main() {
   console.log(`Importing from ${SOURCE_ROOT}`);
   console.log(`Bundling to   ${DEST_ROOT}`);
   if (DRY) console.log('(dry run — no files written)');
-  if (NO_OPT) console.log('(no-opt — skipping gltf-transform compression)');
+  if (NO_OPT) console.log('(no-opt — raw copies, skipping the colour bake)');
   console.log('');
 
   const summary = {
@@ -634,7 +642,7 @@ async function main() {
   console.log(`Unclassified:       ${summary.unclassified}`);
   if (summary.duplicated) console.log(`KayKit dedup'd:     ${summary.duplicated}`);
   if (summary.skippedExisting) console.log(`Skipped existing:   ${summary.skippedExisting}`);
-  if (summary.optFailed) console.log(`Optimize failures:  ${summary.optFailed}`);
+  if (summary.optFailed) console.log(`Bake failures:      ${summary.optFailed}`);
   console.log('──────────────────────────────────────────────\n');
 
   if (DRY) {
@@ -651,7 +659,10 @@ async function main() {
   console.log(`\nNext: run \`npm run build:catalog\` to compute embeddings.`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Run only as a CLI — tools/bake-colors.mjs imports KITS from this module.
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
