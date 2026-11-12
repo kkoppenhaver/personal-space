@@ -12,8 +12,8 @@ scope: whole project (supersedes plan.md "Phase 3+ vision roadmap" and master-pl
 
 | Phase | Status | PR | Notes |
 |---|---|---|---|
-| 0. Foundations | ✅ Shipped | [#33](https://github.com/kkoppenhaver/personal-space/pull/33) | **Live 2026-11-12** (client via Pages; worker version `5a78740c` at 100%; D1 migration 0003 applied). 0a: #32 squash-merged, #30/#31 closed. 0b: session-gated, rate-limited LLM routes; $3.70/day breaker; `llm_usage` ledger; `/concept` derives its own context via `/shared`; tool output validated before caching, one retry, strict concept schema (the real-model check caught 1 malformed concept in 15). 0c: lazy concepts (3 requests at start, was 45); concept + pick on Haiku 5.5. 0d: 95 unit tests, browser smoke test, seed gallery, CI; logbook lost-update fix. Measured about $0.10 per four-planet session (was about $0.29). **Still open: set the $200/month spend limit in the Anthropic Console.** |
-| 1. Look | ⌛ Pending | — | |
+| 0. Foundations | ✅ Done | [#33](https://github.com/kkoppenhaver/personal-space/pull/33), [#34](https://github.com/kkoppenhaver/personal-space/pull/34) | **Live 2026-11-12** (client via Pages; worker version `5a78740c` at 100%; D1 migration 0003 applied). 0a: #32 squash-merged, #30/#31 closed. 0b: session-gated, rate-limited LLM routes; $3.70/day breaker; `llm_usage` ledger; `/concept` derives its own context via `/shared`; tool output validated before caching, one retry, strict concept schema (the real-model check caught 1 malformed concept in 15). 0c: lazy concepts (3 requests at start, was 45); concept + pick on Haiku 5.5. 0d: 95 unit tests, browser smoke test, seed gallery, CI; logbook lost-update fix. Measured about $0.10 per four-planet session (was about $0.29). #34: aim-to-chart only counts in open space (an orbiting plane was charting systems nobody aimed at). |
+| 1. Look | 🔄 In progress | — | 1a (true colours) started 2026-11-12. |
 | 2. Loop | ⌛ Pending | — | |
 | 3. Sound | ⌛ Pending | — | |
 | 4. Brain | ⌛ Pending | — | |
@@ -97,7 +97,7 @@ One PR is one focused build session plus about 20 minutes of your time to playte
 
 | Phase | Outcome | PRs | Needs you |
 |---|---|---|---|
-| **0. Foundations** | Stack landed, wallet guarded, spend measured, CI on | 4 | Merge, one worker deploy, set a Console spend limit |
+| **0. Foundations** ✅ | Stack landed, wallet guarded, spend measured, CI on | 4 (done 2026-11-12) | Done |
 | **1. Look** | Planets look authored: real colours, shadows, clean skies, crisp ground, a real HUD | 6 | Pick an art direction from three presets |
 | **2. Loop** | You find the premise and photograph it. Travel is short. The logbook is a book. | 5 | Playtest the photo claim |
 | **3. Sound** | Wind, paper, shutter, and generative ambience keyed to each planet's mood | 2 | Listen |
@@ -108,7 +108,9 @@ At three PRs a week this is about eight weeks. Phases 1 and 2 can interleave: I 
 
 ---
 
-## Phase 0 — Foundations
+## Phase 0 — Foundations ✅ Done 2026-11-12
+
+Shipped in #32, #33 and #34; what was found and left is under "Carried forward from Phase 0" near the top. The text below is the plan as written.
 
 **0a. Land the stack (1 PR, about 30 minutes).**
 - Squash-merge `feat/surfaces-terrain-shapes` into `main` as one PR. It contains #30 and #31; close those as superseded. Retargeting three stacked squash-merges one by one produces conflicts for no benefit.
@@ -131,7 +133,7 @@ At three PRs a week this is about eight weeks. Phases 1 and 2 can interleave: I 
 - Fix the logbook lost update: field-level merge inside one IndexedDB transaction. Add a unit test that interleaves `update`, `attachThumbnail` and `markSyncing`.
 - Start splitting `main.js` as phases touch it: `ClaimSystem`, `ApproachDirector`, `SkyAndLight`. No big-bang refactor.
 
-**Done when:** `main` matches what you play, a day's spend is one SQL query, and a runaway client cannot spend more than the daily budget.
+**Done when:** `main` matches what you play, a day's spend is one SQL query, and a runaway client cannot spend more than the daily budget. **Met:** all three, verified on the live site.
 
 ## Phase 1 — Look
 
