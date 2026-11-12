@@ -1,0 +1,27 @@
+{
+  "_doc": [
+    "Name palette for tools/bake-colors.mjs. Used ONLY where a material carries no authored colour:",
+    "no texture, and a baseColorFactor that is Blender's unlinked default grey (0.64 or 0.8).",
+    "Each rule's `match` is a case-insensitive regex tested against '<assetName>/<materialName>'",
+    "(e.g. 'DeadBirch_3/Birch_Bark', 'Pine_1/Pine_Leaves'). First match wins, so list species-specific",
+    "rules before generic ones. Colours are sRGB hex (what you would pick in a colour picker); the bake",
+    "converts them to linear. Keep trunk vs foliage clearly apart in hue AND lightness.",
+    "Kits that consult this table opt in with `namePalette: true` in BAKE_CONFIG (tools/bake-colors.mjs)."
+  ],
+  "rules": [
+    { "match": "birch.*/.*leaves",                 "srgb": "#9cc15a", "note": "birch foliage: light yellow-green" },
+    { "match": "(birch.*/.*bark|/birch.*bark)",    "srgb": "#d8d2c4", "note": "birch bark: pale cream" },
+    { "match": "pine.*/.*(leaves|needles)",        "srgb": "#2f5e3c", "note": "pine needles: dark blue-green" },
+    { "match": "maple.*/.*leaves",                 "srgb": "#d0682e", "note": "maple: warm orange" },
+    { "match": "palm.*/.*leaves",                  "srgb": "#5a9e3c", "note": "palm fronds" },
+    { "match": "palm.*/.*(trunk|bark)",            "srgb": "#9a7a52", "note": "palm trunk: light tan-brown" },
+    { "match": "dead.*/.*(leaves|leaf)",           "srgb": "#8f7445", "note": "dead foliage: dry brown" },
+    { "match": "dead.*/.*(bark|trunk|wood)",       "srgb": "#6e6052", "note": "dead wood: grey-brown" },
+    { "match": "/.*(bark|trunk|wood|branch)",      "srgb": "#6b4a2f", "note": "generic trunk: mid brown" },
+    { "match": "/.*(leaves|leaf|foliage|needles)", "srgb": "#4e8f3a", "note": "generic foliage: mid green" },
+    { "match": "/.*flower",                        "srgb": "#e3c64e", "note": "flowers (no texture)" },
+    { "match": "/.*green$",                        "srgb": "#47803a", "note": "ruins 'Green' (ivy on overgrown walls)" },
+    { "match": "grass",                            "srgb": "#6aa84f", "note": "grass (asset or material name)" },
+    { "match": "/.*(rock|stone)",                  "srgb": "#8c8a84", "note": "rock: warm grey" }
+  ]
+}
