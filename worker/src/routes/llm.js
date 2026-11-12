@@ -307,7 +307,11 @@ llm.post('/tier2/pick', llmGuard, async (c) => {
     // Spread keeps creature-less requests on their historical cache keys.
     ...(shortlist.creature ? { creature: shortlist.creature.slice().sort() } : {}),
   });
-  const cacheKey = `t2pick:${seed}:${model}:${fnv1a(sortedKey)}`;
+  // The premise is part of the key: picking is premise-first, so the same
+  // shortlist under a different premise (e.g. after a concept prompt
+  // bump) must not return the old pick.
+  const premiseKey = fnv1a(req.direction?.premise || '');
+  const cacheKey = `t2pick:${seed}:${model}:${fnv1a(sortedKey)}:${premiseKey}`;
 
   const hit = await cacheGet(c, cacheKey, 'pick', model);
   if (hit) return hit;
