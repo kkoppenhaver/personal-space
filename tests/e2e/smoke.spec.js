@@ -34,12 +34,26 @@ test('game boots offline, flies, and mounts a planet without errors', async ({ p
   const moved = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
   expect(moved, 'plane should move while the loop runs').toBeGreaterThan(0.5);
 
+  // Cost regression guard: concepts are requested lazily (ConceptScheduler),
+  // only for the system the player is in / near / aimed at. Before that,
+  // every loaded planet got a paid /concept call right after START (~45).
+  await page.waitForTimeout(2000);
+  const lazy = await page.evaluate(() => ({
+    planets: [...window.__GAME.galaxy.allPlanets()].length,
+    requested: window.__GAME.conceptScheduler.stats.requested,
+    charted: window.__GAME.conceptScheduler.stats.systemsCharted,
+  }));
+  console.log('[smoke] lazy concepts', lazy);
+  expect(lazy.planets, 'neighbouring systems are loaded').toBeGreaterThan(12);
+  expect(lazy.requested, 'at least the home system is charted').toBeGreaterThan(0);
+  expect(lazy.requested, 'concept requests stay near one system\'s worth').toBeLessThanOrEqual(8);
+
   // Drop onto planet 0 of the active system and wait for it to settle:
   // concept applied, Tier 2 (placeholder) words applied, then either its
   // GLB visuals mount, or the pick stage gives up and the planet stays
-  // procedural. KNOWN GAP: with the model host blocked, retrieval does not
-  // reach its BM25-only mode (AssetRetriever re-awaits the rejected model
-  // promise), so today the pick stage fails and nothing mounts in-game.
+  // procedural. With the model host blocked, retrieval runs BM25-only, and
+  // for some concepts one slot's shortlist comes back empty, so the pick
+  // stage is skipped as low-confidence and the planet stays procedural.
   // The seed gallery covers the GLB mount path through the placement lab.
   const name = await page.evaluate(() => window.__GAME.warpTo(0, 40));
   expect(name).not.toBe('no such planet');

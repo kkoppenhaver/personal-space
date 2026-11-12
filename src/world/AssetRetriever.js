@@ -258,7 +258,9 @@ export async function shortlist({ query, role, k = 8, recentIds, biomeAffinity, 
   let queryVec = null;
   let denseAvailable = false;
   if (_embedderPromise) {
-    const embedder = await _embedderPromise;
+    // A failed model download (offline, blocked CDN) must not sink the
+    // whole shortlist: swallow the rejection and carry on BM25-only.
+    const embedder = await _embedderPromise.catch(() => null);
     if (embedder) {
       const out = await embedder(q, { pooling: 'mean', normalize: true });
       queryVec = Array.from(out.data);
