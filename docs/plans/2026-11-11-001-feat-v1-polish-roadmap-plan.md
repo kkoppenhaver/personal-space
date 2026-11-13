@@ -13,7 +13,7 @@ scope: whole project (supersedes plan.md "Phase 3+ vision roadmap" and master-pl
 | Phase | Status | PR | Notes |
 |---|---|---|---|
 | 0. Foundations | ✅ Done | [#33](https://github.com/kkoppenhaver/personal-space/pull/33), [#34](https://github.com/kkoppenhaver/personal-space/pull/34) | **Live 2026-11-12** (client via Pages; worker version `5a78740c` at 100%; D1 migration 0003 applied). 0a: #32 squash-merged, #30/#31 closed. 0b: session-gated, rate-limited LLM routes; $3.70/day breaker; `llm_usage` ledger; `/concept` derives its own context via `/shared`; tool output validated before caching, one retry, strict concept schema (the real-model check caught 1 malformed concept in 15). 0c: lazy concepts (3 requests at start, was 45); concept + pick on Haiku 5.5. 0d: 95 unit tests, browser smoke test, seed gallery, CI; logbook lost-update fix. Measured about $0.10 per four-planet session (was about $0.29). #34: aim-to-chart only counts in open space (an orbiting plane was charting systems nobody aimed at). |
-| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) in review; art direction is the open pick.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
+| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) in review. Art direction picked 2026-11-12: sunlit low-poly, with soft shadows.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
 | 2. Loop | ⌛ Pending | — | |
 | 3. Sound | ⌛ Pending | — | |
 | 4. Brain | ⌛ Pending | — | |
@@ -98,7 +98,7 @@ One PR is one focused build session plus about 20 minutes of your time to playte
 | Phase | Outcome | PRs | Needs you |
 |---|---|---|---|
 | **0. Foundations** ✅ | Stack landed, wallet guarded, spend measured, CI on | 4 (done 2026-11-12) | Done |
-| **1. Look** | Planets look authored: real colours, shadows, clean skies, crisp ground, a real HUD | 6 | Pick an art direction from three presets |
+| **1. Look** | Planets look authored: real colours, shadows, clean skies, crisp ground, a real HUD | 6 | Pick an art direction from three presets (done: sunlit low-poly) |
 | **2. Loop** | You find the premise and photograph it. Travel is short. The logbook is a book. | 5 | Playtest the photo claim |
 | **3. Sound** | Wind, paper, shutter, and generative ambience keyed to each planet's mood | 2 | Listen |
 | **4. Brain** | Claude 5 models, one call per system, journal written about your photo, evals gate changes | 5 | Worker deploys |
@@ -158,8 +158,8 @@ What was built, and where it differs from the first draft of this plan:
 *Step 1, the look lab, is built (in review: [#37](https://github.com/kkoppenhaver/personal-space/pull/37)). Step 2 puts the chosen look into the game.*
 
 - **`?lookLab=1`** draws the five reference planets in four looks, switched live: the game as it is now, and three candidates.
-  - **Paper diorama** (recommended): two soft tones, cool shade, warm edge light, card grain, soft shadows, tilt-shift in photos.
-  - **Sunlit low-poly:** plain cosine shading on crisp facets, sharp shadows, contact shading, filmic tone mapping, bloom.
+  - **Paper diorama** (my recommendation): two soft tones, cool shade, warm edge light, card grain, soft shadows, tilt-shift in photos.
+  - **Sunlit low-poly (picked):** plain cosine shading on crisp facets, soft-edged shadows with cool blue shade, contact shading, filmic tone mapping, bloom. The first draft had sharp, dark shadows; they were softened on the same day at your request (edge about three times softer, more sky fill, a little sun still reaching shadowed ground).
   - **Inked storybook:** three flat tones, drawn outlines from depth and normals, hatched shade, paper grain.
 - **A look is data** (`src/render/Looks.js`): light colours and strengths, a shading ramp, and finishing-pass settings. Three modules read it: `Rig.js` (lights, one 2048 sun shadow map around the planet), `LookMaterial.js` (ramp shading, rim light, card grain), `Post.js` (contact shading, bloom, outline, tilt-shift, tone mapping, page effects).
 - **Only the bench uses these modules so far.** The game still renders the `now` look. Step 2 wires the chosen look into the game and the other benches, fits the shadow map around the camera, and removes the looks that lost.
@@ -192,7 +192,7 @@ Planned for the game:
 - Nav markers: nearest three, edge arrows, no overlap with other UI.
 - Remove the permanent controls line (the pause menu has it). Add a title screen.
 
-**Art direction — needs your pick.** My recommendation is **paper diorama**: soft two-band shading, paper-fibre grain, warm rim light, tilt-shift in photos. These are 100 m worlds seen from a paper plane; a miniature look makes the low-poly kits read as a choice. I will build a `?lookLab=1` bench that renders three presets on the five Phase 14 reference planets. Choosing takes about ten minutes.
+**Art direction: sunlit low-poly, picked 2026-11-12 in the look lab.** Crisp flat-shaded facets in clear daylight, soft-edged shadows, cool blue shade, filmic colour. My recommendation had been paper diorama; the look lab (`?lookLab=1`) showed both, plus an inked storybook look, on the five reference planets. Every later Look step (sky, ground, HUD) follows this choice.
 
 **Done when:** the seed gallery reads as one art style, and a stranger shown a screenshot does not say "prototype".
 
@@ -317,7 +317,7 @@ Each has a default. I will proceed on the defaults unless you say otherwise.
 | # | Decision | Default |
 |---|---|---|
 | 1 | Replace the passive survey claim with a player-taken photo? | **Yes.** Survey stays as a stat. |
-| 2 | Art direction | **Paper diorama**, confirmed by you in the look lab. |
+| 2 | Art direction | **Sunlit low-poly** with soft shadows, picked by you in the look lab on 2026-11-12. (I had recommended paper diorama.) |
 | 3 | Budget split and daily breaker | **The envelope above, $3.70/day.** |
 | 4 | Run the Forge spike? | **Yes, two sessions, after 4c.** |
 | 5 | Shared entries: default visibility | **Private until the player shares.** |

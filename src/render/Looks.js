@@ -75,15 +75,19 @@ export const LOOKS = {
   sunlit: {
     id: 'sunlit',
     name: 'Sunlit low-poly',
-    blurb: 'Crisp facets in hard daylight: sharp shadows, contact shading, filmic colour, glow on the brightest parts.',
+    blurb: 'Crisp facets in clear daylight: soft-edged shadows, cool blue shade, contact shading, filmic colour, glow on the brightest parts.',
     background: 0x060912,
     lights: {
-      sun: { color: 0xfff3dc, intensity: 4.3 },
+      sun: { color: 0xfff3dc, intensity: 3.9 },
       fill: null,
-      hemi: { sky: 0xa9c9ff, ground: 0x7a6650, intensity: 1.15 },
-      ambient: { color: 0xffffff, intensity: 0.1 },
+      // A strong, blue sky fill: shade is a cool mid tone, not near-black,
+      // and reads as shade by its colour as much as its darkness.
+      hemi: { sky: 0x9cbcff, ground: 0x8f7a62, intensity: 1.45 },
+      ambient: { color: 0xffffff, intensity: 0.12 },
     },
-    shadow: { radius: 1.1, intensity: 1.0, bias: -0.0005, normalBias: 0.18 },
+    // Soft-edged, and not fully dark: a little of the sun still reaches
+    // shadowed ground, standing in for light bounced off everything nearby.
+    shadow: { radius: 3.0, intensity: 0.94, bias: -0.0005, normalBias: 0.18 },
     // Plain cosine falloff: every facet a slightly different tone.
     ramp: (ndl) => Math.max(0, ndl),
     surface: {
@@ -93,13 +97,13 @@ export const LOOKS = {
     },
     post: {
       toneMapping: THREE.ACESFilmicToneMapping,
-      exposure: 1.12,
-      ao: { radius: 3.0, intensity: 1.0 },
+      exposure: 1.02,
+      ao: { radius: 3.0, intensity: 0.8 },
       bloom: { strength: 0.22, radius: 0.55, threshold: 1.0 },
       outline: null,
       tiltShift: 0,
       saturation: 1.1,
-      contrast: 1.03,
+      contrast: 1.0,
       lift: null,
       hatch: 0,
       grain: 0.0,
