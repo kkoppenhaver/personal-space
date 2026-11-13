@@ -71,8 +71,9 @@ function sheetHtml() {
 }
 
 test('look lab: every look draws', async ({ page }) => {
-  // Software rendering: about ten seconds a frame with the full pipeline.
-  test.setTimeout(FULL ? 1_200_000 : 360_000);
+  // Software rendering: about ten seconds a frame with the full pipeline on
+  // a fast laptop, and CI runners are roughly three times slower.
+  test.setTimeout(FULL ? 1_200_000 : 600_000);
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const guard = await armPage(page);
 
