@@ -7,8 +7,12 @@ import { mulberry32 } from '../../shared/prng.js';
 
 export { mulberry32, hashSeeds, hashString } from '../../shared/prng.js';
 
-// Cheap value-noise. Smooth enough for terrain, fast enough for instancing.
-export function makeNoise3(seed) {
+/**
+ * The seeded tables behind makeNoise3: 256 unit gradients and a 256-entry
+ * permutation (repeated to 512). Exported so the ground shader can upload
+ * the same tables and evaluate the same noise per pixel (GroundMaterial.js).
+ */
+export function noise3Tables(seed) {
   const rand = mulberry32(seed);
   const grad = new Float32Array(256 * 3);
   for (let i = 0; i < 256; i++) {
@@ -23,6 +27,12 @@ export function makeNoise3(seed) {
     [perm[i], perm[j]] = [perm[j], perm[i]];
   }
   for (let i = 0; i < 256; i++) perm[i + 256] = perm[i];
+  return { grad, perm };
+}
+
+// Cheap value-noise. Smooth enough for terrain, fast enough for instancing.
+export function makeNoise3(seed) {
+  const { grad, perm } = noise3Tables(seed);
 
   const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
   const lerp = (a, b, t) => a + (b - a) * t;

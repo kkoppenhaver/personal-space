@@ -96,6 +96,20 @@ export const LOOKS = {
       // ground (m) they keep under.
       fireflies: { boost: 2.6, band: 9 },
     },
+    // The ground's surface detail (roadmap 1d; src/world/GroundMaterial.js).
+    // All of it darkens or tints, none of it brightens: the day side was
+    // already dimmed once.
+    ground: {
+      // Steep faces lean toward a darker, greyer rock colour. Slope is
+      // 1 − cos(face tilt): 0.2 ≈ 37°, 0.45 ≈ 57°.
+      rock: { from: 0.2, to: 0.45, amount: 0.45 },
+      // A pale band where land meets the sea: `width` metres of height
+      // above the waterline, `amount` its strongest mix.
+      foam: { width: 0.35, amount: 0.5 },
+      // Fine grain inside facets: at most `amount` darker, in two sizes
+      // around `size` metres, faded out where a pixel covers the grain.
+      grain: { amount: 0.06, size: 1.4 },
+    },
   },
 };
 
