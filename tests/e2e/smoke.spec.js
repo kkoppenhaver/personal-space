@@ -32,16 +32,19 @@ test('game boots offline, flies, and mounts a planet without errors', async ({ p
   const auto = await page.evaluate(() => window.__GAME.quality);
   console.log(`[smoke] auto quality: ${auto.tier} after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
-  // The loop is running: the plane moves over a second of wall time.
+  // The loop is running: the plane moves. Polled, not sampled over one
+  // fixed second: `settled` flips at the moment auto picks its tier, and the
+  // first frame on a new tier recompiles every shader, which on a slow
+  // software renderer (CI) can take longer than a second.
   const pos = () => page.evaluate(() => {
     const p = window.__GAME.plane.position();
     return [p.x, p.y, p.z];
   });
   const a = await pos();
-  await page.waitForTimeout(1000);
-  const b = await pos();
-  const moved = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-  expect(moved, 'plane should move while the loop runs').toBeGreaterThan(0.5);
+  await expect.poll(async () => {
+    const b = await pos();
+    return Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  }, { message: 'plane should move while the loop runs', timeout: 30_000, intervals: [500] }).toBeGreaterThan(0.5);
 
   // Cost regression guard: concepts are requested lazily (ConceptScheduler),
   // only for the system the player is in / near / aimed at. Before that,
