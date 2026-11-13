@@ -117,8 +117,10 @@ export const LOOKS = {
       dusk: [0.12, -0.08],
       // The sky's fill light (lights.hemi) at full night, as a fraction of
       // itself: moonlit, not the daytime teal. Eases in over a wider band
-      // than the lights (Rig.setNight).
-      skyFill: 0.3,
+      // than the lights (Rig.setNight). 0.3 read well against the old,
+      // paler night sky; under the 1c sky (dark at night) the ground was
+      // close to black, so it is a little higher.
+      skyFill: 0.45,
       // Warm windows, under the bloom threshold: they read as lit rooms and
       // do not glow. Lamps are over it and get a soft halo. `lit` is the
       // share of windows that are on.
