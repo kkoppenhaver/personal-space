@@ -75,12 +75,17 @@ downstream obeys it:
   no jump on a floating-origin rebase. `Shadows.js` `setShadowFlags` is the
   only place cast/receive flags are set (Planet, Plane call it; reveal-
   dithered assets get a dithered depth material). Only the active planet
-  casts. `Post.js`: HDR → GTAO → bloom → OutputPass (ACES) → saturation/
-  contrast/vignette. Lambert materials are already right for the look.
+  casts. `Post.js`: HDR → GTAO (half resolution) → bloom → OutputPass
+  (ACES) → saturation/contrast/vignette. Lambert materials are already
+  right for the look. Bloom's threshold is 2: sunlit ground reaches about
+  1.7 and must not glow, so anything meant to glow (the star's disc, later
+  lamps and windows) has to be drawn brighter than 2.
 - Quality tiers (`Quality.js`, pure + unit-tested; `QualityControl.js`
   glue): high / medium (no GTAO, 1024 shadows) / low (no composer, no
-  shadows, tone mapping on the renderer). Auto starts high, measures once
-  settled, only ever steps down. Override: pause menu (saved),
+  shadows, tone mapping on the renderer). MSAA is 4× on high, 2× where the
+  pixel ratio is 1.5 or more (`msaaFor`). Auto starts high, measures once
+  settled (median frame time, and the share of dropped frames over two
+  windows), only ever steps down. Override: pause menu (saved),
   `?quality=…` (session), `__GAME.setQuality(…)`.
 
 ## Dev commands & benches

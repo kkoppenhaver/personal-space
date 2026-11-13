@@ -13,7 +13,7 @@ scope: whole project (supersedes plan.md "Phase 3+ vision roadmap" and master-pl
 | Phase | Status | PR | Notes |
 |---|---|---|---|
 | 0. Foundations | ✅ Done | [#33](https://github.com/kkoppenhaver/personal-space/pull/33), [#34](https://github.com/kkoppenhaver/personal-space/pull/34) | **Live 2026-11-12** (client via Pages; worker version `5a78740c` at 100%; D1 migration 0003 applied). 0a: #32 squash-merged, #30/#31 closed. 0b: session-gated, rate-limited LLM routes; $3.70/day breaker; `llm_usage` ledger; `/concept` derives its own context via `/shared`; tool output validated before caching, one retry, strict concept schema (the real-model check caught 1 malformed concept in 15). 0c: lazy concepts (3 requests at start, was 45); concept + pick on Haiku 5.5. 0d: 95 unit tests, browser smoke test, seed gallery, CI; logbook lost-update fix. Measured about $0.10 per four-planet session (was about $0.29). #34: aim-to-chart only counts in open space (an orbiting plane was charting systems nobody aimed at). |
-| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) in review. Art direction picked 2026-11-12: sunlit low-poly, with soft shadows. 1b step 2 (the look in the game) built on a branch, not yet a PR.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
+| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) shipped 2026-11-12. Art direction picked 2026-11-12: sunlit low-poly, with soft shadows. 1b step 2 (the look in the game) in review.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
 | 2. Loop | ⌛ Pending | — | |
 | 3. Sound | ⌛ Pending | — | |
 | 4. Brain | ⌛ Pending | — | |
@@ -155,7 +155,7 @@ What was built, and where it differs from the first draft of this plan:
 
 **1b. Light, shadow, tone (1 to 2 PRs).**
 
-*Step 1, the look lab, is built (in review: [#37](https://github.com/kkoppenhaver/personal-space/pull/37)); sunlit low-poly was picked from it. Step 2 puts that look into the game: built, not yet a PR.*
+*Step 1, the look lab, shipped 2026-11-12 ([#37](https://github.com/kkoppenhaver/personal-space/pull/37)); sunlit low-poly was picked from it. Step 2 puts that look into the game: in review.*
 
 Step 1 (the bench):
 - **`?lookLab=1`** drew the five reference planets in four looks: the game as it was, paper diorama, **sunlit low-poly (picked)**, inked storybook. The sunlit draft had sharp, dark shadows; they were softened the same day (edge about three times softer, more sky fill, a little sun still reaching shadowed ground).
@@ -169,6 +169,12 @@ Step 2 (the game), what was built:
 - **Logbook thumbnails** render through the same pipeline at 512² (same tier stages, shadow box fitted to the capture camera). Average brightness of a capture and the live frame agree within 1/255 on every tier.
 - **Benches:** placement lab (so the seed gallery) and terrain lab use the shared rig and pipeline; screenshot mode draws on demand. The contact sheet keeps its own flat audit lighting: it is a colour audit of 572 cells, and a composer per cell would make it unusably slow.
 - **Quality tiers** (`src/render/Quality.js`, pure and unit-tested): high (everything, 2048 shadows, 4× MSAA, up to 2× pixels), medium (no GTAO, 1024 shadows, 2× MSAA, 1.5× pixels), low (no composer, tone mapping on the renderer, no shadows, 1× pixels). Auto starts at high, waits 2.5 s and 8 frames, measures 90 frames, and steps down if the median is over 28 ms; a run of very slow frames decides at once (software rendering lands on low in about 5 s). It only steps down and stops once a tier holds. Override: the pause menu (saved), `?quality=` (one session), `__GAME.setQuality()`.
+
+Changed in review, after looking at the game and measuring on a real GPU:
+- **Bloom threshold 1.0 → 2.0.** At 1.0, pale ground facing the sun (about 1.7 in the HDR buffer) and the white plane glowed, which put a haze over bright scenes. Now only light sources and glints glow. The star's disc is drawn 4× brighter than its colour so it does.
+- **Contact shading at half resolution**, and **2× MSAA instead of 4× on dense displays** (pixel ratio 1.5 or more). On an Apple M4 Pro at 2880×1800 the top tier cost about 17 ms a frame with 4× MSAA and about 12 ms with 2×.
+- **Auto quality also counts dropped frames.** A machine that almost keeps up has a fine median and a stutter (every fifth frame late). More than 15% of frames late, in two measuring windows in a row, now steps down a tier.
+- Known: pale ground under a high sun is very bright (near white). The look was tuned with the sun at 50° from overhead; straight overhead gives about a third more light. Left as is until it is seen in play.
 
 Still to do in 1b:
 - Night side: lit windows, lamp posts and fireflies instead of flat dark.
