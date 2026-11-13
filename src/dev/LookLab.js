@@ -8,7 +8,9 @@
 //   planet=0..4                   which reference planet (default 0)
 //   view=wide|photo               whole planet, or a low shot of the hero
 //                                 with the look's tilt-shift on
-//   shot=1                        screenshot mode: no panel, no motion,
+//   shot=1                        screenshot mode: no panel, and a frame is
+//                                 drawn only when something changes (software
+//                                 rendering takes seconds a frame);
 //                                 `window.__LAB_READY = true` once drawn
 //
 // Keys: 1–4 look · ←/→ planet · V view · H hide the panel.
@@ -209,8 +211,19 @@ export async function runLookLab() {
       history.replaceState(null, '', `?${q}`);
     }
   }
+  function draw() {
+    placeCamera();
+    if (stage) post.render();
+    frames++;
+  }
+  // Screenshot mode draws on demand: twice (the first frame compiles
+  // shaders and fills the shadow map), then waits for the browser to show it.
+  const drawnAndShown = () => {
+    draw(); draw();
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  };
   // One change at a time, in order.
-  const set = (next) => (busy = busy.then(() => apply(next)).then(() => afterFrames(3)));
+  const set = (next) => (busy = busy.then(() => apply(next)).then(() => (shot ? drawnAndShown() : afterFrames(3))));
 
   // ── Panel ───────────────────────────────────────────────────────────
   const panel = document.createElement('div');
@@ -280,17 +293,9 @@ export async function runLookLab() {
   });
 
   // ── Go ──────────────────────────────────────────────────────────────
-  renderer.setAnimationLoop(() => {
-    placeCamera();
-    if (stage) post.render();
-    frames++;
-  });
+  if (!shot) renderer.setAnimationLoop(draw);
 
   globalThis.__LOOKLAB = { set, state, stages, rig, post, scene, camera, renderer, THREE };
   await set({});
-  if (shot) {
-    await renderer.compileAsync?.(scene, camera);
-    await afterFrames(3);
-  }
   globalThis.__LAB_READY = true;
 }

@@ -24,6 +24,11 @@ const VIEWS = [
   { id: 'photo', label: 'Photo of the hero' },
 ];
 
+// The full pipeline costs CI's software renderer many seconds a frame at
+// 720p. The check only needs every look to compile and draw, so it runs
+// small; the full sheet keeps the config's 1280×720.
+if (!FULL) test.use({ viewport: { width: 640, height: 360 } });
+
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function sheetHtml() {
@@ -71,8 +76,6 @@ function sheetHtml() {
 }
 
 test('look lab: every look draws', async ({ page }) => {
-  // Software rendering: about ten seconds a frame with the full pipeline on
-  // a fast laptop, and CI runners are roughly three times slower.
   test.setTimeout(FULL ? 1_200_000 : 600_000);
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const guard = await armPage(page);
