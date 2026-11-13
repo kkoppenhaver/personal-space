@@ -8,7 +8,7 @@ import { defineConfig, devices } from '@playwright/test';
 //
 // Port 5187 on purpose: 5173/5174 (vite dev) and 8787 (wrangler) are
 // usually taken on dev machines.
-const PORT = 5187;
+const PORT = Number(process.env.E2E_PORT) || 5187;
 
 export default defineConfig({
   testDir: 'tests/e2e',
