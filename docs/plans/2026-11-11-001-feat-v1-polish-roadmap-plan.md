@@ -180,7 +180,7 @@ Tuned after flying it (2026-11-13). The day side read as too bright in the game:
 - **`skyGain: 0.65`** (new look setting): the daytime sky backdrop, haze and atmosphere shell are drawn at about two thirds of the planet's sky colour. Filmic tone mapping lifts mid tones, so at full strength the sky came out pale grey and was most of the brightness.
 - The bench planets approved on the look lab change only slightly (a little less bright; shadows a touch softer in contrast).
 
-Night side (in review), what was built:
+Night side (in review: [#41](https://github.com/kkoppenhaver/personal-space/pull/41)), what was built:
 - **Lit windows.** 6 of the 48 building models have their window panes as separate dark parts; those panes glow, and about a third stay dark. On the other 42 the shader draws a grid of window rectangles on wall faces (near-vertical, between 14% and 86% of the model's height, two to five storeys whatever the model's size). All at runtime: a bake-time mask would have found windows on only those 6.
 - **Lamps** (lightposts, light-trees, base lights; found by catalog id): their bright warm parts glow above the bloom threshold, and each puts a soft pool of warm light on the ground. Pools are one merged additive mesh per planet, not real lights; overlapping pools are dimmed so a lamp-lined path does not burn into one strip.
 - **Crystals** glow faintly. Every light also gets a small warm glint that still shows from orbit.
