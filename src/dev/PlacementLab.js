@@ -18,10 +18,16 @@
 //                                 (shared/planet-dice TERRAIN_SHAPES / GROUND_PATTERNS)
 //   flat=1                        ignore authored colours (flat family colour
 //                                 per asset, the pre-Phase-1a look) for A/B
+//   look=sunlit|now               the look (default: the game's, sunlit)
 //   shot=1                        screenshot mode (seed gallery, tests/e2e):
 //                                 no auto-orbit, camera held on the hero
-//                                 slot, `window.__LAB_READY = true` once the
+//                                 slot, frames drawn only on demand (the full
+//                                 pipeline takes software rendering seconds),
+//                                 `window.__LAB_READY = true` once the
 //                                 assets are mounted and a frame has rendered
+//
+// Lit and finished like the game: the shared rig and post pipeline
+// (src/render/Rig.js, Post.js), the sun's shadow box on the whole planet.
 //
 // Console: `__LAB.planet`, `__LAB.camera`, `__LAB.THREE` for poking.
 // Drag to orbit, scroll to zoom.
@@ -30,6 +36,12 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { GRADE } from '../world/ColorSystem.js';
 import { buildLabPlanet, LAB_RADIUS } from './labPlanet.js';
+import { getLook } from '../render/Looks.js';
+import { createRig } from '../render/Rig.js';
+import { createPost } from '../render/Post.js';
+
+// The sun direction the bench has always used (the game's old fixed key light).
+const SUN_DIR = new THREE.Vector3(220, 180, 120).normalize();
 
 const DEFAULTS = {
   hero: 'kenney:space:hangar_largeA',           // the prod float case
@@ -52,20 +64,16 @@ export async function runPlacementLab() {
 
   const canvas = document.getElementById('canvas');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.setClearColor(0x0a0c12);
+  const look = getLook(params.get('look'));
 
   const scene = new THREE.Scene();
+  scene.background = new THREE.Color(look.background);
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000);
 
-  // Match the game's lighting posture (main.js) so colors read the same.
-  const sun = new THREE.DirectionalLight(0xfff2d6, 0.75);
-  sun.position.set(220, 180, 120);
-  scene.add(sun);
-  const fill = new THREE.DirectionalLight(0xcbd9ff, 0.45);
-  fill.position.set(-160, -120, -80);
-  scene.add(fill);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+  const rig = createRig(scene, renderer);
+  rig.setLook(look);
+  const post = createPost(renderer, scene, camera);
+  post.setLook(look);
 
   await RAPIER.init();
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
@@ -76,6 +84,7 @@ export async function runPlacementLab() {
     rapier: RAPIER, world, renderer, defaults: DEFAULTS, serial: shot, tag: 'placementLab',
   });
   scene.add(planet.group);
+  planet.setShadowCaster(true);
   console.log('[placementLab] mounted', info);
 
   // ── Minimal orbit controls (drag + scroll) ──────────────────────────
@@ -87,7 +96,7 @@ export async function runPlacementLab() {
     // toward the sun so the hero side is lit. No time dependence anywhere.
     const d = (planet.heroSlot || planet.landmarks[0])?.direction;
     if (d) {
-      const v = d.clone().normalize().add(sun.position.clone().normalize().multiplyScalar(0.45)).normalize();
+      const v = d.clone().normalize().add(SUN_DIR.clone().multiplyScalar(0.45)).normalize();
       phi = Math.max(0.05, Math.min(Math.PI - 0.05, Math.acos(Math.max(-1, Math.min(1, v.y)))));
       theta = Math.atan2(v.z, v.x);
     }
@@ -106,14 +115,18 @@ export async function runPlacementLab() {
   }, { passive: true });
 
   function resize() {
+    const dpr = Math.min(devicePixelRatio, 2);
+    renderer.setPixelRatio(dpr);
     renderer.setSize(innerWidth, innerHeight, false);
+    post.setSize(Math.round(innerWidth * dpr), Math.round(innerHeight * dpr));
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
   }
   addEventListener('resize', resize);
   resize();
 
-  renderer.setAnimationLoop((t) => {
+  const _up = new THREE.Vector3();
+  function draw(t = 0) {
     if (auto) theta = t * 0.0001;
     camera.position.set(
       dist * Math.sin(phi) * Math.cos(theta),
@@ -121,18 +134,25 @@ export async function runPlacementLab() {
       dist * Math.sin(phi) * Math.sin(theta)
     );
     camera.lookAt(0, 0, 0);
-    renderer.render(scene, camera);
-  });
+    // Sky "up" toward the camera: the face of the planet in view is lit
+    // by the sky, as the game's hemisphere follows the plane's up.
+    rig.aim({ center: planet.group.position, radius, sunDir: SUN_DIR, up: _up.copy(camera.position).normalize() });
+    post.render();
+  }
 
   if (shot) {
     // Ready = shaders compiled, assets mounted (applyVisuals resolved
-    // above, reveal forced solid) and at least two frames presented.
-    await renderer.compileAsync?.(scene, camera);
+    // above, reveal forced solid), two frames drawn (the first compiles
+    // and fills the shadow map) and shown.
+    await post.compileAsync();
+    draw(); draw();
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     globalThis.__LAB_READY = true;
+  } else {
+    renderer.setAnimationLoop(draw);
   }
 
-  globalThis.__LAB = { planet, camera, scene, renderer, THREE,
+  globalThis.__LAB = { planet, camera, scene, renderer, rig, post, THREE, draw,
     lookAtSlot(slotId, zoom = 2.2) {
       const slot = planet.landmarks.find((s) => s.slotId === slotId) || planet.landmarks[0];
       if (!slot) return null;

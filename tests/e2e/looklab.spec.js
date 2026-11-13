@@ -1,11 +1,12 @@
-// Look lab (?lookLab=1, src/dev/LookLab.js): every look in
-// src/render/Looks.js must draw without a shader or page error.
+// Look lab (?lookLab=1, src/dev/LookLab.js): both looks in
+// src/render/Looks.js (the game's, and the pre-1b baseline) must draw
+// without a shader or page error.
 //
 // It also writes the comparison sheet: one PNG per planet × view × look,
 // plus index.html laying them out side by side.
-//   CI / npm run test:e2e   the first reference planet, 8 images, in
+//   CI / npm run test:e2e   the first reference planet, 4 images, in
 //                           test-results/look-lab/ (CI artifact `look-lab`)
-//   npm run look:sheet      all five reference planets, 40 images, in
+//   npm run look:sheet      all five reference planets, 20 images, in
 //                           look-sheet/ — outside test-results/, which
 //                           Playwright empties at the start of every run
 

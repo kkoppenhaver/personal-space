@@ -13,7 +13,7 @@ scope: whole project (supersedes plan.md "Phase 3+ vision roadmap" and master-pl
 | Phase | Status | PR | Notes |
 |---|---|---|---|
 | 0. Foundations | ✅ Done | [#33](https://github.com/kkoppenhaver/personal-space/pull/33), [#34](https://github.com/kkoppenhaver/personal-space/pull/34) | **Live 2026-11-12** (client via Pages; worker version `5a78740c` at 100%; D1 migration 0003 applied). 0a: #32 squash-merged, #30/#31 closed. 0b: session-gated, rate-limited LLM routes; $3.70/day breaker; `llm_usage` ledger; `/concept` derives its own context via `/shared`; tool output validated before caching, one retry, strict concept schema (the real-model check caught 1 malformed concept in 15). 0c: lazy concepts (3 requests at start, was 45); concept + pick on Haiku 5.5. 0d: 95 unit tests, browser smoke test, seed gallery, CI; logbook lost-update fix. Measured about $0.10 per four-planet session (was about $0.29). #34: aim-to-chart only counts in open space (an orbiting plane was charting systems nobody aimed at). |
-| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) in review. Art direction picked 2026-11-12: sunlit low-poly, with soft shadows.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
+| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37), [#38](https://github.com/kkoppenhaver/personal-space/pull/38) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) shipped 2026-11-12. Art direction picked 2026-11-12: sunlit low-poly, with soft shadows. 1b step 2 (the look in the game) in review.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
 | 2. Loop | ⌛ Pending | — | |
 | 3. Sound | ⌛ Pending | — | |
 | 4. Brain | ⌛ Pending | — | |
@@ -155,23 +155,31 @@ What was built, and where it differs from the first draft of this plan:
 
 **1b. Light, shadow, tone (1 to 2 PRs).**
 
-*Step 1, the look lab, is built (in review: [#37](https://github.com/kkoppenhaver/personal-space/pull/37)). Step 2 puts the chosen look into the game.*
+*Step 1, the look lab, shipped 2026-11-12 ([#37](https://github.com/kkoppenhaver/personal-space/pull/37)); sunlit low-poly was picked from it. Step 2 puts that look into the game: in review ([#38](https://github.com/kkoppenhaver/personal-space/pull/38)).*
 
-- **`?lookLab=1`** draws the five reference planets in four looks, switched live: the game as it is now, and three candidates.
-  - **Paper diorama** (my recommendation): two soft tones, cool shade, warm edge light, card grain, soft shadows, tilt-shift in photos.
-  - **Sunlit low-poly (picked):** plain cosine shading on crisp facets, soft-edged shadows with cool blue shade, contact shading, filmic tone mapping, bloom. The first draft had sharp, dark shadows; they were softened on the same day at your request (edge about three times softer, more sky fill, a little sun still reaching shadowed ground).
-  - **Inked storybook:** three flat tones, drawn outlines from depth and normals, hatched shade, paper grain.
-- **A look is data** (`src/render/Looks.js`): light colours and strengths, a shading ramp, and finishing-pass settings. Three modules read it: `Rig.js` (lights, one 2048 sun shadow map around the planet), `LookMaterial.js` (ramp shading, rim light, card grain), `Post.js` (contact shading, bloom, outline, tilt-shift, tone mapping, page effects).
-- **Only the bench uses these modules so far.** The game still renders the `now` look. Step 2 wires the chosen look into the game and the other benches, fits the shadow map around the camera, and removes the looks that lost.
-- **`npm run look:sheet`** renders every planet, view and look to `look-sheet/index.html` for side-by-side comparison. CI renders the first planet and uploads it as the `look-lab` artifact.
-- Known limits of the bench: water keeps its own shader (it takes the finishing pass but not the ramp or shadows); card grain is fixed in world space, which is fine on a bench but must become planet-local in the game.
+Step 1 (the bench):
+- **`?lookLab=1`** drew the five reference planets in four looks: the game as it was, paper diorama, **sunlit low-poly (picked)**, inked storybook. The sunlit draft had sharp, dark shadows; they were softened the same day (edge about three times softer, more sky fill, a little sun still reaching shadowed ground).
 
-Planned for the game:
-- One shared `Rig` for the game and all benches.
-- A single sun shadow map fitted around the camera. Planets are about 100 m across, so one 2048 map covers the visible cap.
-- Post pipeline: tone mapping, bloom on the sun and emissive parts, a light vignette. Night side gets lit windows, lamp posts and fireflies instead of flat teal.
-- The logbook capture renders through the same pipeline, so the keepsake matches the screen. (#31 skipped tone mapping to protect thumbnail parity; this removes that constraint.)
-- Three quality tiers, chosen automatically, overridable in settings.
+Step 2 (the game), what was built:
+- **One look, in the game and every bench.** `src/render/Looks.js` keeps `sunlit` (numbers unchanged from the lab) and `now` (the pre-1b game, kept one more PR as the A/B baseline on the look lab). Paper, ink, `LookMaterial.js` and the outline, tilt-shift, hatch, lift and grain stages are gone: sunlit's shading is plain cosine, which the game's Lambert materials already do (checked: lab renders before and after the swap match).
+- **Lights:** the shared `Rig.js` replaces main.js's hand-built lights. The sun still follows the active system's star (tinted toward its colour as before) and the hemisphere's up still follows the plane's radial up. The look has no fill light, so the night side is darker than before 1b: lit windows and lamps are still to come.
+- **Shadows:** terrain, landmarks, heroes, instanced scatter and the plane cast; everything solid receives (the plane does not: thin paper stripes itself). `src/render/Shadows.js` sets the flags in one place. Only the planet the player is at casts. Assets that are still materialising get a depth material with the same dither, so they cast no shadow until they appear.
+- **Shadow fit** (`src/render/ShadowFit.js`, unit-tested): the 2048 box sits over the ground just ahead of the camera, about 50 to 60 m half-size near the ground, growing with altitude in 1.25× steps (with hysteresis) up to the whole planet from far out. Its centre is snapped to whole shadow texels in light space, measured from the planet centre, so shadows do not shimmer as the plane moves and do not jump on a floating-origin rebase (checked by shifting the world in a paused game: identical shadows). The rebase also moves the chase camera now; before, it swooped across the whole shift.
+- **Finishing pipeline in the game:** HDR → GTAO → bloom → ACES (OutputPass) → saturation, contrast, vignette. The sky colour moved to `scene.background` (a clear colour through the composer is sRGB-encoded twice). GTAO's prepass skips see-through things (atmosphere, sun glow, contrail, motes) and assets mid-reveal.
+- **Logbook thumbnails** render through the same pipeline at 512² (same tier stages, shadow box fitted to the capture camera). Average brightness of a capture and the live frame agree within 1/255 on every tier.
+- **Benches:** placement lab (so the seed gallery) and terrain lab use the shared rig and pipeline; screenshot mode draws on demand. The contact sheet keeps its own flat audit lighting: it is a colour audit of 572 cells, and a composer per cell would make it unusably slow.
+- **Quality tiers** (`src/render/Quality.js`, pure and unit-tested): high (everything, 2048 shadows, 4× MSAA, up to 2× pixels), medium (no GTAO, 1024 shadows, 2× MSAA, 1.5× pixels), low (no composer, tone mapping on the renderer, no shadows, 1× pixels). Auto starts at high, waits 2.5 s and 8 frames, measures 90 frames, and steps down if the median is over 28 ms; a run of very slow frames decides at once (software rendering lands on low in about 5 s). It only steps down and stops once a tier holds. Override: the pause menu (saved), `?quality=` (one session), `__GAME.setQuality()`.
+
+Changed in review, after looking at the game and measuring on a real GPU:
+- **Bloom threshold 1.0 → 2.0.** At 1.0, pale ground facing the sun (about 1.7 in the HDR buffer) and the white plane glowed, which put a haze over bright scenes. Now only light sources and glints glow. The star's disc is drawn 4× brighter than its colour so it does.
+- **Contact shading at half resolution**, and **2× MSAA instead of 4× on dense displays** (pixel ratio 1.5 or more). On an Apple M4 Pro at 2880×1800 the top tier cost about 17 ms a frame with 4× MSAA and about 12 ms with 2×.
+- **Auto quality also counts dropped frames.** A machine that almost keeps up has a fine median and a stutter (every fifth frame late). More than 15% of frames late, in two measuring windows in a row, now steps down a tier.
+- Known: pale ground under a high sun is very bright (near white). The look was tuned with the sun at 50° from overhead; straight overhead gives about a third more light. Left as is until it is seen in play.
+
+Still to do in 1b:
+- Night side: lit windows, lamp posts and fireflies instead of flat dark.
+- Remove the `now` look once nobody needs the A/B.
+- Known: a display locked at 30 Hz reads as slow to auto and lands on low (override in the pause menu).
 
 **1c. Sky (1 PR).**
 - Fix draw order so nothing shows through a daytime sky.

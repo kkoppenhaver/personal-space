@@ -86,6 +86,9 @@ export class Atmosphere {
           col += uSunColor * (pow(mu, 12.0) * 0.6 + pow(mu, 3.0) * 0.12);
           float alpha = 1.0 - exp(-depth * (1.9 / uScaleH));
           gl_FragColor = vec4(col, clamp(alpha, 0.0, 0.97));
+          // Tone mapping applies only when drawn straight to the screen (the "low"
+          // quality tier); through the composer OutputPass does it (Post.js).
+          #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }
       `,

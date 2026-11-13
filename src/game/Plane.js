@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TUNING } from './Tuning.js';
+import { setShadowFlags } from '../render/Shadows.js';
 
 // Plane wraps a Rapier ball body + a low-poly paper mesh. Tracks high-level
 // state (flying / grounded / crashed / launching). All physical reads go
@@ -18,6 +19,9 @@ export class Plane {
     this.group = new THREE.Group();
     this.mesh = buildPaperPlaneMesh();
     this.group.add(this.mesh);
+    // Casts onto the ground (the best height cue near it). Does not
+    // receive: thin double-sided paper shadows itself in stripes.
+    setShadowFlags(this.mesh, { cast: true, receive: false });
 
     // Rigid body
     const bodyDesc = rapier.RigidBodyDesc.dynamic()
@@ -195,7 +199,6 @@ function buildPaperPlaneMesh() {
   });
   const mesh = new THREE.Mesh(geom, mat);
   mesh.scale.setScalar(1.6);
-  mesh.castShadow = false;
 
   // Add a subtle darker "fold line" along the spine to read the silhouette
   // better — drawn as a thin line geometry from nose to fin-top to tail-base.

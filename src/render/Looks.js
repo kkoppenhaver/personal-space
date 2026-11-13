@@ -1,28 +1,24 @@
-// Art-direction presets ("looks") — roadmap Phase 1b.
+// The game's look (roadmap Phase 1b).
 //
-// A look is plain data: how the lights are set, how a surface turns light
-// into colour (the ramp), and what happens to the finished frame (post).
-// Three modules read it:
-//   Rig.js           lights and the sun's shadow map
-//   LookMaterial.js  surface shading (ramp, rim light, card grain)
-//   Post.js          the frame: tone mapping, bloom, outline, grain, …
+// A look is plain data: how the lights are set and what happens to the
+// finished frame. Two modules read it:
+//   Rig.js   lights and the sun's shadow map
+//   Post.js  the frame: contact shading, bloom, tone mapping, colour, vignette
 //
-// `now` is the game as it shipped before 1b, kept as the baseline.
-// The other three are candidates; `?lookLab=1` shows them side by side.
-// Once one is chosen it becomes the game's look and the rest can go.
+// `sunlit` is the art direction picked in 1b step 1 and the look of the
+// game and every bench. `now` is the game as it shipped before 1b, kept for
+// one more PR as the A/B baseline on the look lab (`?lookLab=1`).
+//
+// Surfaces need no look of their own: sunlit shades with plain cosine
+// falloff, which is what the game's flat-shaded Lambert materials already do.
 
 import * as THREE from 'three';
-
-const smoothstep = (a, b, x) => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-};
 
 export const LOOKS = {
   now: {
     id: 'now',
-    name: 'Now',
-    blurb: 'The game today: smooth shading, no shadows, no finishing pass.',
+    name: 'Before 1b',
+    blurb: 'The game before 1b: smooth shading, no shadows, no finishing pass.',
     background: 0x05060a,
     lights: {
       sun: { color: 0xfff2d6, intensity: 3.4 },
@@ -31,45 +27,7 @@ export const LOOKS = {
       ambient: { color: 0xffffff, intensity: 0.12 },
     },
     shadow: null,
-    ramp: null,       // null = leave the game's own materials alone
-    surface: null,
-    post: null,       // null = draw straight to the screen
-  },
-
-  paper: {
-    id: 'paper',
-    name: 'Paper diorama',
-    blurb: 'A miniature made of card: two soft tones, cool shade, warm edges, paper grain.',
-    background: 0x17182e,
-    lights: {
-      sun: { color: 0xfff0d6, intensity: 2.4 },
-      fill: null,
-      hemi: { sky: 0xcdd3ff, ground: 0xf0cfae, intensity: 1.35 },
-      ambient: { color: 0xffffff, intensity: 0.0 },
-    },
-    shadow: { radius: 2.2, intensity: 1.0, bias: -0.0005, normalBias: 0.22 },
-    // Two tones with a soft edge: everything the sun reaches sits in one
-    // nearly flat lit tone, everything else in the shade tone the sky gives.
-    ramp: (ndl) => smoothstep(0.02, 0.2, ndl) * (0.76 + 0.24 * Math.max(0, ndl)),
-    surface: {
-      rim: { color: 0xffd7a6, strength: 0.34, power: 2.6 },
-      grain: 0.075,   // fibre noise that sticks to the surface
-      facet: 0.06,    // each flat face is its own piece of card
-    },
-    post: {
-      toneMapping: THREE.NeutralToneMapping,
-      exposure: 0.92,
-      ao: { radius: 4.0, intensity: 0.6 },
-      bloom: null,      // card does not glow
-      outline: null,
-      tiltShift: 1.0,   // used by "photo" framing only
-      saturation: 0.97,
-      contrast: 0.98,
-      lift: { color: 0x241b2b, amount: 0.22 },
-      hatch: 0,
-      grain: 0.05,
-      vignette: 0.24,
-    },
+    post: null,       // null = draw straight to the screen, no tone mapping
   },
 
   sunlit: {
@@ -87,104 +45,29 @@ export const LOOKS = {
     },
     // Soft-edged, and not fully dark: a little of the sun still reaches
     // shadowed ground, standing in for light bounced off everything nearby.
+    // `radius` is in texels of a 2048 map; `bias` is in depth-buffer units
+    // of the bench's shadow box (Rig.js converts both for other boxes).
     shadow: { radius: 3.0, intensity: 0.94, bias: -0.0005, normalBias: 0.18 },
-    // Plain cosine falloff: every facet a slightly different tone.
-    ramp: (ndl) => Math.max(0, ndl),
-    surface: {
-      rim: { color: 0xffffff, strength: 0.0, power: 3.0 },
-      grain: 0.0,
-      facet: 0.0,
-    },
     post: {
       toneMapping: THREE.ACESFilmicToneMapping,
       exposure: 1.02,
       ao: { radius: 3.0, intensity: 0.8 },
-      bloom: { strength: 0.22, radius: 0.55, threshold: 1.0 },
-      outline: null,
-      tiltShift: 0,
+      // Only light sources and glints glow. Pale ground facing the sun
+      // reaches about 1.7 in the HDR buffer, and must not: a threshold of 1
+      // put a haze over every bright surface and the paper plane.
+      bloom: { strength: 0.22, radius: 0.55, threshold: 2.0 },
       saturation: 1.1,
       contrast: 1.0,
-      lift: null,
-      hatch: 0,
-      grain: 0.0,
       vignette: 0.14,
-    },
-  },
-
-  ink: {
-    id: 'ink',
-    name: 'Inked storybook',
-    blurb: 'A picture-book page: flat colour in three steps, drawn outlines, hatched shade.',
-    background: 0x1c2140,
-    lights: {
-      sun: { color: 0xffffff, intensity: 2.0 },
-      fill: null,
-      hemi: { sky: 0xdfe5ff, ground: 0xe6d6c2, intensity: 1.7 },
-      ambient: { color: 0xffffff, intensity: 0.0 },
-    },
-    shadow: { radius: 0.9, intensity: 1.0, bias: -0.0005, normalBias: 0.18 },
-    // Three hard steps.
-    ramp: (ndl) => 0.55 * smoothstep(-0.01, 0.01, ndl) + 0.45 * smoothstep(0.54, 0.56, ndl),
-    surface: {
-      rim: { color: 0xffffff, strength: 0.0, power: 3.0 },
-      grain: 0.03,
-      facet: 0.0,
-    },
-    post: {
-      toneMapping: THREE.NoToneMapping,
-      exposure: 1.0,
-      ao: null,
-      bloom: null,
-      outline: { color: 0x241a17, thickness: 1.1, depth: 0.012, normal: 0.75, wobble: 0.6, fullAt: 60 },
-      tiltShift: 0,
-      saturation: 0.9,
-      contrast: 1.0,
-      lift: { color: 0x2b2233, amount: 0.2 },
-      hatch: 0.55,
-      grain: 0.085,
-      vignette: 0.18,
     },
   },
 };
 
-export const LOOK_ORDER = ['now', 'paper', 'sunlit', 'ink'];
+export const LOOK_ORDER = ['sunlit', 'now'];
+
+/** The look the game renders. */
+export const GAME_LOOK = LOOKS.sunlit;
 
 export function getLook(id) {
-  return LOOKS[id] || LOOKS.now;
-}
-
-/**
- * How much of the sun's light a surface takes, by the angle between its
- * normal and the sun (`ndl` = cosine, −1…1). 0 = shade tone only.
- */
-export function rampValue(look, ndl) {
-  if (!look?.ramp) return Math.max(0, ndl);
-  return Math.min(1, Math.max(0, look.ramp(ndl)));
-}
-
-const RAMP_SIZE = 256;
-const _rampTextures = new Map();
-
-/**
- * The look's ramp as a 256×1 texture for MeshToonMaterial.gradientMap,
- * which samples it at u = ndl·0.5 + 0.5.
- */
-export function rampTexture(look) {
-  let tex = _rampTextures.get(look.id);
-  if (tex) return tex;
-  const data = new Uint8Array(RAMP_SIZE);
-  for (let i = 0; i < RAMP_SIZE; i++) {
-    const ndl = ((i + 0.5) / RAMP_SIZE) * 2 - 1;
-    data[i] = Math.round(rampValue(look, ndl) * 255);
-  }
-  tex = new THREE.DataTexture(data, RAMP_SIZE, 1, THREE.RedFormat, THREE.UnsignedByteType);
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.generateMipmaps = false;
-  tex.colorSpace = THREE.NoColorSpace;
-  tex.needsUpdate = true;
-  _rampTextures.set(look.id, tex);
-  return tex;
+  return LOOKS[id] || GAME_LOOK;
 }

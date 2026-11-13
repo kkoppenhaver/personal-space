@@ -17,8 +17,19 @@
 // roll-leveled — see _composeShot) at a fixed thumbnail resolution and
 // read pixels back into a 2D canvas, which `toBlob('image/jpeg', 0.7)`
 // encodes for upload.
+//
+// Colour (Phase 1b): the shot goes through the same finishing pipeline as
+// the screen (Post.js: contact shading, bloom, tone mapping, colour), so
+// the keepsake matches what the player saw. It always uses the composer,
+// even on the `low` tier, because materials are not tone-mapped when drawn
+// into a render target; on `low` the composer runs with nothing but tone
+// mapping, which is what the screen shows on that tier. (Phase 11 drew
+// straight into an sRGB render target, which was right while the game had
+// no tone mapping.) The composer hands back display values, so the 8-bit
+// target has no colour space and nothing converts them twice.
 
 import * as THREE from 'three';
+import { createPost } from '../render/Post.js';
 
 const THUMB_SIZE = 512;
 const JPEG_QUALITY = 0.7;
@@ -28,12 +39,23 @@ const SETTLE_TIMEOUT_MS = 4000;
 
 export class ThumbnailCapture {
   /**
-   * @param {{ renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera }} ctx
+   * @param {object} ctx
+   * @param {THREE.WebGLRenderer} ctx.renderer
+   * @param {THREE.Scene} ctx.scene
+   * @param {THREE.Camera} ctx.camera  the live camera
+   * @param {object} ctx.look          the game's look (Looks.js)
+   * @param {() => object} [ctx.getQuality]  the current tier's settings (Quality.js)
+   * @param {(cam: THREE.Camera) => void} [ctx.beforeCapture]  e.g. fit the
+   *   sun's shadow box to the capture camera
    */
-  constructor({ renderer, scene, camera }) {
+  constructor({ renderer, scene, camera, look, getQuality = () => null, beforeCapture = null }) {
     this.renderer = renderer;
     this.scene = scene;
     this.camera = camera;
+    this.look = look;
+    this.getQuality = getQuality;
+    this.beforeCapture = beforeCapture;
+    this._post = null;
     this._renderTarget = null;
     this._readbackCanvas = null;
     this._pending = []; // { plane, deadline, settledFor, resolve }
@@ -138,18 +160,12 @@ export class ThumbnailCapture {
 
   async _snapshot(planet = null) {
     if (!this._renderTarget) {
+      // Display values from the composer, stored as-is (see the header).
       this._renderTarget = new THREE.WebGLRenderTarget(THUMB_SIZE, THUMB_SIZE, {
         type: THREE.UnsignedByteType,
         format: THREE.RGBAFormat,
-        depthBuffer: true,
-        // The default canvas pass converts linear→sRGB per
-        // renderer.outputColorSpace, but a render-target pass follows the
-        // RT texture's color space — leaving this unset reads back
-        // linear-light pixels that the JPEG encode treats as sRGB (the
-        // "thumbnails look dark" bug). MSAA matches the canvas's
-        // antialias: true.
-        colorSpace: THREE.SRGBColorSpace,
-        samples: 4,
+        depthBuffer: false,
+        colorSpace: THREE.NoColorSpace,
       });
       this._readbackCanvas = document.createElement('canvas');
       this._readbackCanvas.width = THUMB_SIZE;
@@ -171,10 +187,19 @@ export class ThumbnailCapture {
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld();
 
-    const prevTarget = this.renderer.getRenderTarget();
-    this.renderer.setRenderTarget(this._renderTarget);
-    this.renderer.render(this.scene, cam);
-    this.renderer.setRenderTarget(prevTarget);
+    if (!this._post) {
+      this._post = createPost(this.renderer, this.scene, cam);
+      this._post.setLook(this.look);
+      this._post.setSize(THUMB_SIZE, THUMB_SIZE);
+    }
+    // Same stages as the screen's tier; `low` has no composer on screen,
+    // only tone mapping, so the capture drops the rest too.
+    const q = this.getQuality() || { composer: true, ao: true, bloom: true, msaa: 4 };
+    this._post.setQuality(q.composer
+      ? { ao: q.ao, bloom: q.bloom, msaa: q.msaa, page: true }
+      : { ao: false, bloom: false, msaa: 4, page: false });
+    this.beforeCapture?.(cam);
+    this._post.renderToTarget(this._renderTarget);
 
     // Read pixels out of the GPU.
     const pixels = new Uint8Array(THUMB_SIZE * THUMB_SIZE * 4);
@@ -199,6 +224,8 @@ export class ThumbnailCapture {
   }
 
   dispose() {
+    this._post?.dispose();
+    this._post = null;
     this._renderTarget?.dispose();
     this._renderTarget = null;
     this._readbackCanvas = null;

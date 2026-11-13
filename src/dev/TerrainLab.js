@@ -10,10 +10,23 @@
 //   pattern=<name>    force one pattern on every cell (default: cycle)
 //   palette=<a,b,..>  water,low,mid,high,snow as hex without '#'
 //   spin=0            freeze rotation
+//   look=sunlit|now   the look (default: the game's, sunlit)
+//
+// Lit and finished like the game (src/render/Rig.js, Post.js): each cell
+// has its own scene and rig, and one post pipeline draws them in turn.
 
 import * as THREE from 'three';
 import { buildPlanetGeometry } from '../world/TerrainGen.js';
 import { TERRAIN_SHAPES, GROUND_PATTERNS } from '../world/TerrainShapes.js';
+import { getLook } from '../render/Looks.js';
+import { createRig } from '../render/Rig.js';
+import { createPost } from '../render/Post.js';
+import { setShadowFlags } from '../render/Shadows.js';
+
+// Lit from the side so relief reads.
+const SUN_DIR = new THREE.Vector3(-3, 2, 1.5).normalize();
+const VIEW_UP = new THREE.Vector3(0, 0, 1);   // toward the camera
+const ORIGIN = new THREE.Vector3();
 
 export async function runTerrainLab() {
   document.title = 'terrain lab — personal space';
@@ -31,8 +44,9 @@ export async function runTerrainLab() {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight, false);
-  renderer.setClearColor(0x0b0d14);
   renderer.setScissorTest(true);
+  const look = getLook(q.get('look'));
+  let post = null;
 
   const cols = 5;
   const rows = Math.ceil(TERRAIN_SHAPES.length / cols);
@@ -40,16 +54,20 @@ export async function runTerrainLab() {
     const pattern = forcedPattern || GROUND_PATTERNS[i % GROUND_PATTERNS.length];
     const built = buildPlanetGeometry({ seed: seed + i * 7919, radius: 100, palette, shape, pattern, seaLevelQuantile: 0.3 });
     const scene = new THREE.Scene();
+    scene.background = new THREE.Color(look.background);
     const mesh = new THREE.Mesh(built.geometry, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
     // Put the focal point (if any) on the upper-left limb.
     if (built.focus) mesh.quaternion.setFromUnitVectors(built.focus, new THREE.Vector3(-0.5, 0.6, 0.62).normalize());
     scene.add(mesh);
-    const sun = new THREE.DirectionalLight(0xfff2d6, 3.4);
-    sun.position.set(-3, 2, 1.5);
-    scene.add(sun);
-    scene.add(new THREE.HemisphereLight(0xc4dcff, 0x4a3d2c, 0.7));
+    setShadowFlags(mesh);
+    const rig = createRig(scene, renderer);
+    rig.setLook(look);
+    // Fifteen small cells: a 1024 map per cell is plenty (and 15 × 2048 is not).
+    rig.setQuality({ shadows: true, shadowMapSize: 1024 });
+    rig.aim({ center: ORIGIN, radius: 100, sunDir: SUN_DIR, up: VIEW_UP });
     const camera = new THREE.PerspectiveCamera(35, 1, 1, 2000);
     camera.position.set(0, 0, 420);
+    if (!post) { post = createPost(renderer, scene, camera); post.setLook(look); }
     const label = document.createElement('div');
     label.textContent = `${shape} · ${pattern}`;
     Object.assign(label.style, {
@@ -63,6 +81,8 @@ export async function runTerrainLab() {
   const layout = () => {
     renderer.setSize(innerWidth, innerHeight, false);
     const w = innerWidth / cols, h = innerHeight / rows;
+    const dpr = renderer.getPixelRatio();
+    post.setSize(Math.max(1, Math.round(w * dpr)), Math.max(1, Math.round(h * dpr)));
     for (const c of cells) {
       const x = (c.i % cols) * w, y = Math.floor(c.i / cols) * h;
       c.rect = { x, y: innerHeight - y - h, w, h };
@@ -80,7 +100,8 @@ export async function runTerrainLab() {
       const { x, y, w, h } = c.rect;
       renderer.setViewport(x, y, w, h);
       renderer.setScissor(x, y, w, h);
-      renderer.render(c.scene, c.camera);
+      post.setView(c.scene, c.camera);
+      post.render();
     }
     requestAnimationFrame(tick);
   };

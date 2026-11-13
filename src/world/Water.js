@@ -83,6 +83,9 @@ export function buildWater(planet) {
         col += uColor * (h0 - 0.5) * 0.18;          // slow swell tint
         col += uSunColor * glint * 1.6;
         gl_FragColor = vec4(col, 1.0);
+        // Tone mapping applies only when drawn straight to the screen (the "low"
+        // quality tier); through the composer OutputPass does it (Post.js).
+        #include <tonemapping_fragment>
         #include <colorspace_fragment>
         #include <fog_fragment>
       }

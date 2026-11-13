@@ -19,6 +19,7 @@ import { buildMaterialSet, disposeMaterialSet } from './MaterialSet.js';
 import { loadInstance } from './AssetCache.js';
 import { isDebugOn, attachInstanceHelpers, detachInstanceHelpers } from './DebugPlacement.js';
 import { patchReveal } from './RevealMaterial.js';
+import { setShadowFlags } from '../render/Shadows.js';
 
 // Seeds whose asset reveal has completed at least once. A planet streamed
 // out and back in mounts solid (no re-fade on every home-system flyby).
@@ -119,8 +120,6 @@ export class Planet {
 
     const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
     this.mesh = new THREE.Mesh(this.geometry, mat);
-    this.mesh.castShadow = false;
-    this.mesh.receiveShadow = false;
     // Tag so the MaterialSet audit (Phase 6) exempts the terrain — it uses
     // its own vertex-colored material, not a per-mesh matSet clone.
     this.mesh.userData.matSlot = 'terrain';
@@ -154,6 +153,12 @@ export class Planet {
     this.group.add(this.landmarkGroup);
     this.group.add(this.featuresGroup);
     this.group.position.copy(this.center);
+
+    // Shadows (Phase 1b): everything solid receives; only the planet the
+    // player is at casts (see setShadowCaster), so the shadow pass does not
+    // draw every loaded planet.
+    this.castsShadows = false;
+    setShadowFlags(this.group, { cast: false });
 
     // Rapier trimesh collider
     const bodyDesc = rapier.RigidBodyDesc.fixed().setTranslation(center.x, center.y, center.z);
@@ -653,6 +658,9 @@ export class Planet {
     });
     if (replacingLandmarks) collect(this.landmarkGroup);
     if (newFeaturesGroup) collect(this.featuresGroup);
+    // Shadow depth materials follow the reveal uniforms just patched.
+    if (replacingLandmarks) setShadowFlags(this.landmarkGroup, { cast: this.castsShadows });
+    if (newFeaturesGroup) setShadowFlags(this.featuresGroup, { cast: this.castsShadows });
 
     rv._resolveMounted();
     if (revealedSeeds.has(this.seed) || _reducedMotion) {
@@ -816,6 +824,18 @@ export class Planet {
     }
     this[key] = newGroup;
     this.group.add(newGroup);
+    setShadowFlags(newGroup, { cast: this.castsShadows });
+  }
+
+  /**
+   * Cast the sun's shadow or not (Phase 1b). The game turns it on for the
+   * planet the player is at and off for the rest; benches turn it on.
+   */
+  setShadowCaster(on) {
+    on = !!on;
+    if (this.castsShadows === on) return;
+    this.castsShadows = on;
+    setShadowFlags(this.group, { cast: on });
   }
 
   _reTintVertexColors() {

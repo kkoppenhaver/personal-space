@@ -23,16 +23,28 @@ test('game boots offline, flies, and mounts a planet without errors', async ({ p
   await page.goto('/');
   await page.waitForFunction(() => !!window.__GAME?.plane, null, { timeout: 120_000 });
 
-  // The loop is running: the plane moves over a second of wall time.
+  // Auto quality (src/render/Quality.js) measures the first frames and steps
+  // down on a slow machine; software rendering lands on `low` within a few
+  // frames. Wait for it to decide, so the checks below run at the speed the
+  // game will actually run at.
+  const t0 = Date.now();
+  await page.waitForFunction(() => window.__GAME.quality.settled, null, { timeout: 120_000, polling: 250 });
+  const auto = await page.evaluate(() => window.__GAME.quality);
+  console.log(`[smoke] auto quality: ${auto.tier} after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+
+  // The loop is running: the plane moves. Polled, not sampled over one
+  // fixed second: `settled` flips at the moment auto picks its tier, and the
+  // first frame on a new tier recompiles every shader, which on a slow
+  // software renderer (CI) can take longer than a second.
   const pos = () => page.evaluate(() => {
     const p = window.__GAME.plane.position();
     return [p.x, p.y, p.z];
   });
   const a = await pos();
-  await page.waitForTimeout(1000);
-  const b = await pos();
-  const moved = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-  expect(moved, 'plane should move while the loop runs').toBeGreaterThan(0.5);
+  await expect.poll(async () => {
+    const b = await pos();
+    return Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  }, { message: 'plane should move while the loop runs', timeout: 30_000, intervals: [500] }).toBeGreaterThan(0.5);
 
   // Cost regression guard: concepts are requested lazily (ConceptScheduler),
   // only for the system the player is in / near / aimed at. Before that,
@@ -87,6 +99,19 @@ test('game boots offline, flies, and mounts a planet without errors', async ({ p
   // Let a few frames of the arrival land, then keep one screenshot.
   await page.waitForTimeout(1500);
   await page.screenshot({ path: testInfo.outputPath('smoke-arrival.png') });
+
+  // Every quality tier draws without errors (a shader that fails to compile
+  // only shows up as a console error). High first: the most passes.
+  for (const tier of ['high', 'medium', 'low']) {
+    const state = await page.evaluate(async (t) => {
+      const st = window.__GAME.setQuality(t);
+      // Two frames at this tier (software rendering: seconds each).
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return st;
+    }, tier);
+    expect(state.tier, `switched to ${tier}`).toBe(tier);
+  }
+  await page.evaluate(() => window.__GAME.setQuality('auto'));
 
   expect(guard.state.forbidden, 'no request may reach prod / an LLM provider').toEqual([]);
   expect(guard.state.pageErrors, 'uncaught page errors').toEqual([]);

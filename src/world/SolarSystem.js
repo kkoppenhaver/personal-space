@@ -14,6 +14,8 @@ const PLANET_COUNT_MAX = 6;
 const ORBIT_MIN = 200;
 const ORBIT_MAX = 5000;
 const SUN_RADIUS = 80;
+// The star's disc is drawn this many times brighter than its colour (HDR).
+const SUN_CORE_BOOST = 4;
 
 const SUN_PALETTE = [
   0xfff2d6, 0xffe09a, 0xffcf6b, 0xffb169,
@@ -129,7 +131,10 @@ export class SolarSystem {
     const group = new THREE.Group();
     const core = new THREE.Mesh(
       new THREE.SphereGeometry(SUN_RADIUS, 28, 18),
-      new THREE.MeshBasicMaterial({ color }),
+      // Brighter than white, so the finishing pass's bloom (threshold 2,
+      // src/render/Looks.js) gives the star a glow and tone mapping burns
+      // its core out.
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(SUN_CORE_BOOST) }),
     );
     group.add(core);
 

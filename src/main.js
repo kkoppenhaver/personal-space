@@ -42,6 +42,14 @@ import { migrateLocalStorageIfNeeded } from './logbook/migrate.js';
 import { ThumbnailCapture } from './logbook/ThumbnailCapture.js';
 import { FlightStats } from './game/FlightStats.js';
 
+import { GAME_LOOK } from './render/Looks.js';
+import { createRig } from './render/Rig.js';
+import { createPost } from './render/Post.js';
+import { viewFit } from './render/ShadowFit.js';
+import { setShadowFlags } from './render/Shadows.js';
+import { createQualityControl } from './render/QualityControl.js';
+import { msaaFor } from './render/Quality.js';
+
 // Validate a server-returned saved position. Returns null for missing,
 // malformed, or non-finite data so we fall through to the default home spawn.
 function readSavedPosition(saved) {
@@ -100,36 +108,63 @@ async function main() {
   // ThumbnailCapture renders to an offscreen target normally, but if that
   // ever fails we can read pixels out of the live canvas instead. The
   // documented perf cost is small at our scene complexity.
+  // antialias: the `low` quality tier draws straight to the canvas.
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.setSize(innerWidth, innerHeight, false);
-  renderer.setClearColor(0x05060a);
+
+  // The look (Phase 1b, src/render/Looks.js): "sunlit low-poly".
+  const look = GAME_LOOK;
 
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x05060a, 0.00025);
+  // The sky backdrop. scene.background, never renderer.setClearColor: three
+  // converts a background colour for whichever target it draws into (the
+  // composer's linear HDR buffer, or the screen on the `low` tier).
+  scene.background = new THREE.Color(look.background);
 
   const camera = new THREE.PerspectiveCamera(TUNING.FOV_BASE, innerWidth / innerHeight, 0.1, 20000);
 
-  // Lights. The key light comes from the ACTIVE SYSTEM'S SUN (re-aimed
-  // every frame at the active planet) — it used to be a fixed world
-  // direction, so the terminator never matched the sun you could see.
-  // The night side stays readable via a cool, low fill + a hemisphere
-  // light whose "up" follows the plane's radial up (a world-Y hemisphere
-  // painted the bottom of every planet in ground color).
-  const sunLight = new THREE.DirectionalLight(0xfff2d6, 3.4);
-  sunLight.position.set(220, 180, 120);
-  scene.add(sunLight);
-  scene.add(sunLight.target);
-  const fill = new THREE.DirectionalLight(0x9fb4ff, 1.35);
-  fill.position.set(-220, -120, -150);
-  scene.add(fill);
-  scene.add(fill.target);
-  const hemi = new THREE.HemisphereLight(0xc4dcff, 0x4a3d2c, 0.9);
-  scene.add(hemi);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.12));
+  // Lights: the shared rig (src/render/Rig.js). The sun comes from the
+  // ACTIVE SYSTEM'S SUN, re-aimed every frame at the active planet, with
+  // its shadow box fitted to the view; the hemisphere light's "up" follows
+  // the plane's radial up (a world-Y hemisphere painted the bottom of
+  // every planet in ground colour).
+  const rig = createRig(scene, renderer);
+  rig.setLook(look);
+  // The finishing pipeline (src/render/Post.js).
+  const post = createPost(renderer, scene, camera);
+  post.setLook(look);
   const _sunDir = new THREE.Vector3();
   const _radialUp = new THREE.Vector3();
   const _waterSun = new THREE.Vector3();
+  const _camDir = new THREE.Vector3();
+  const _skySpace = new THREE.Color(look.background);
+  const _skyDay = new THREE.Color();
+  const _fogNight = new THREE.Color(0x05060a);
+  let shadowPlanet = null;   // the one planet that casts (Planet.setShadowCaster)
+  let shadowHalf = null;     // last shadow box size (hysteresis)
+
+  // Quality tiers (src/render/Quality.js): auto unless the player picks
+  // one in the pause menu (or ?quality=high|medium|low for a session).
+  let useComposer = true;
+  let paused = false;
+  const sizeRenderer = () => {
+    const cap = quality.settings?.pixelRatioCap ?? 2;
+    const dpr = Math.min(devicePixelRatio, cap);
+    renderer.setPixelRatio(dpr);
+    renderer.setSize(innerWidth, innerHeight, false);
+    post.setSize(Math.round(innerWidth * dpr), Math.round(innerHeight * dpr));
+  };
+  const quality = createQualityControl({
+    isPaused: () => paused,
+    onTier: (tier, t) => {
+      useComposer = t.composer;
+      post.setQuality({ ao: t.ao, bloom: t.bloom, msaa: msaaFor(t, Math.min(devicePixelRatio, t.pixelRatioCap)) });
+      rig.setQuality({ shadows: t.shadows, shadowMapSize: t.shadowMapSize });
+      sizeRenderer();
+      console.info(`[quality] ${tier}${quality.state.choice === 'auto' ? ' (auto)' : ''}`);
+    },
+  });
+  quality.start();
 
   // 3. Rapier world (no global gravity — we apply our own per-frame radial pull)
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
@@ -192,7 +227,13 @@ async function main() {
   // 7b. Per-attempt flight stats (top speed, time-to-land, crashes, distance).
   // Reset on spawn/respawn; captured at claim time.
   const flightStats = new FlightStats();
-  const thumbnailCapture = new ThumbnailCapture({ renderer, scene, camera });
+  const thumbnailCapture = new ThumbnailCapture({
+    renderer, scene, camera, look,
+    getQuality: () => quality.settings,
+    // Fit the sun's shadow box to the capture camera (it is re-aimed at the
+    // hero); the next frame fits it back to the live camera.
+    beforeCapture: (cam) => aimRig(cam, false),
+  });
 
   // 7c. Account UI: sign-up modal + drawer + 3rd-claim upsell.
   const authModal = new AuthModal({ auth, toast });
@@ -423,10 +464,10 @@ async function main() {
             renderer,
           }).then(() => {
             // Warm shader programs for the just-mounted (still-hidden) assets
-            // so the reveal frame doesn't compile-stall. Safe: this renderer
-            // does a plain render with no post-processing/MRT (the known
-            // compileAsync-before-composer breakage doesn't apply).
-            renderer.compileAsync?.(scene, camera);
+            // so the reveal frame doesn't compile-stall. Through the
+            // composer the programs are the HDR-buffer variants, so compile
+            // those (Post.compileAsync), not the screen ones.
+            if (useComposer) post.compileAsync(); else renderer.compileAsync?.(scene, camera);
           }).catch((err) => {
             console.warn('[main] applyVisuals failed:', err);
           });
@@ -510,8 +551,35 @@ async function main() {
   window.addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight, false);
+    sizeRenderer();
   });
+
+  // Point the light rig at the active planet: sun from the active system's
+  // star, hemisphere up = the plane's radial up, and the shadow box fitted
+  // to what `cam` sees (src/render/ShadowFit.js).
+  function aimRig(cam, keep = true) {
+    const sunPos = activeSystem?.sun?.position;
+    if (!sunPos || !activePlanet) return;
+    if (shadowPlanet !== activePlanet) {
+      shadowPlanet?.setShadowCaster(false);
+      activePlanet.setShadowCaster(true);
+      shadowPlanet = activePlanet;
+      shadowHalf = null;
+    }
+    _sunDir.copy(sunPos).sub(activePlanet.center).normalize();
+    // Tinted toward the star's colour, as before 1b (it mixed the star
+    // with white 45/55; the look's sun colour stands in for white).
+    rig.tintSun(activeSystem.sunColor, 0.45);
+    _radialUp.copy(plane.position()).sub(activePlanet.center).normalize();
+    cam.updateMatrixWorld();
+    cam.getWorldDirection(_camDir);
+    const fit = viewFit({
+      planetCenter: activePlanet.center, radius: activePlanet.radius,
+      cameraPos: cam.position, cameraDir: _camDir, prevHalf: shadowHalf,
+    });
+    if (keep) shadowHalf = fit.half;
+    rig.aim({ center: activePlanet.center, radius: activePlanet.radius, sunDir: _sunDir, up: _radialUp, focus: fit.focus, half: fit.half });
+  }
 
   // 10. Loop
   const loop = new GameLoop({
@@ -869,6 +937,7 @@ async function main() {
         plane.translate(shift);
         galaxy.translate(shift);
         contrail.translate(shift);
+        cameraRig.translate(shift);
       }
 
       // Galaxy streaming pass. Spawns systems entering SPAWN_RADIUS (bounded
@@ -922,16 +991,7 @@ async function main() {
       }
       // Key light from the active system's sun onto the active planet.
       const sunPos = activeSystem?.sun?.position;
-      if (sunPos && activePlanet) {
-        _sunDir.copy(sunPos).sub(activePlanet.center).normalize();
-        sunLight.target.position.copy(activePlanet.center);
-        sunLight.position.copy(activePlanet.center).addScaledVector(_sunDir, 400);
-        fill.target.position.copy(activePlanet.center);
-        fill.position.copy(activePlanet.center).addScaledVector(_sunDir, -400);
-        sunLight.color.copy(activeSystem.sunColor).lerp(new THREE.Color(0xffffff), 0.55);
-        _radialUp.copy(planePos).sub(activePlanet.center).normalize();
-        hemi.position.copy(_radialUp);
-      }
+      aimRig(camera);
       WATER_TIME.value += dt;
       for (const ref of galaxy.allPlanets()) {
         if (!ref.system.sun) continue;
@@ -948,10 +1008,8 @@ async function main() {
       // zenith reads as deep blue rather than space-black.
       const r = activeAtmosphere.density(planePos);
       const dayAtPlane = sunPos ? THREE.MathUtils.smoothstep(_radialUp.dot(_sunDir), -0.2, 0.4) : 1;
-      const skyA = new THREE.Color(0x04060c);
       const skyHex = activePlanet?.palette?.sky;
-      const skyB = new THREE.Color(skyHex || 0x8bb8dc).multiplyScalar(0.18 * dayAtPlane);
-      scene.background = null;
+      _skyDay.set(skyHex || 0x8bb8dc).multiplyScalar(0.18 * dayAtPlane);
       galaxy.starfield.material.opacity = 0.95 * (1 - 0.92 * r * dayAtPlane);
       // Ambient motes (pollen / snow / embers / spray / fireflies at night).
       if (performance.now() > moteKindAt) {
@@ -959,13 +1017,14 @@ async function main() {
         moteKindAt = performance.now() + 1000;
       }
       motes.update(dt, camera, _radialUp, r, dayAtPlane < 0.2);
-      renderer.setClearColor(new THREE.Color().lerpColors(skyA, skyB, r), 1.0);
+      scene.background.lerpColors(_skySpace, _skyDay, r);
       scene.fog.density = 0.0012 * r + 0.00004;
       // Haze toward the planet's sky color (daylit) so distant terrain
       // melts into the horizon; night side hazes toward dark blue.
       scene.fog.color.set(skyHex || 0x8bb8dc).multiplyScalar(0.25 + 0.6 * dayAtPlane)
-        .lerp(new THREE.Color(0x05060a), 1 - r);
-      renderer.render(scene, camera);
+        .lerp(_fogNight, 1 - r);
+      if (useComposer) post.render(); else renderer.render(scene, camera);
+      quality.frame();
     },
   });
 
@@ -974,7 +1033,6 @@ async function main() {
   // stale Escape edge from firing the moment the game ticks again.
   const pauseMenu = document.getElementById('pause-menu');
   const resumeBtn = document.getElementById('resume-btn');
-  let paused = false;
   const setPaused = (next) => {
     if (paused === next) return;
     paused = next;
@@ -1009,6 +1067,19 @@ async function main() {
   });
   if (resumeBtn) resumeBtn.addEventListener('click', () => setPaused(false));
 
+  // Graphics quality picker in the pause menu (src/render/Quality.js).
+  {
+    const buttons = [...document.querySelectorAll('#quality-picker button[data-quality]')];
+    const note = document.getElementById('quality-note');
+    const sync = (st) => {
+      for (const b of buttons) b.classList.toggle('active', b.dataset.quality === st.choice);
+      if (note) note.textContent = st.choice === 'auto' ? `auto: ${st.tier}${st.settled ? '' : ', measuring…'}` : '';
+    };
+    for (const b of buttons) b.addEventListener('click', () => quality.set(b.dataset.quality));
+    quality.onChange(sync);
+    sync(quality.state);
+  }
+
   // Done bootstrapping
   document.getElementById('boot').classList.add('hidden');
 
@@ -1021,7 +1092,11 @@ async function main() {
   window.__GAME = {
     plane, galaxy, flight, cameraRig, origin,
     auth, logbookStore, logbookSync, flightStats, thumbnailCapture,
-    conceptScheduler,
+    conceptScheduler, rig, post,
+    // Graphics quality: { choice, tier, auto, settled }.
+    get quality() { return quality.state; },
+    // __GAME.setQuality('auto' | 'high' | 'medium' | 'low') — saved, like the pause menu.
+    setQuality(choice) { return quality.set(choice); },
     // Network LLM requests this session, per route (cost check).
     llmCalls() { return { ...llm.netCalls }; },
     get planet() { return activePlanet; },
@@ -1153,6 +1228,7 @@ async function main() {
       group.scale.setScalar(opts.scale ?? 1);
       group.userData.testAsset = true;
       activePlanet.group.add(group);
+      setShadowFlags(group, { cast: activePlanet.castsShadows });
       console.log(`testAsset mounted on planet ${activePlanet.seed} at`, surfacePos);
       return group;
     },
