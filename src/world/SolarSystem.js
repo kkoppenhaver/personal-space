@@ -131,8 +131,14 @@ export class SolarSystem {
       new THREE.SphereGeometry(SUN_RADIUS, 28, 18),
       // Brighter than white, so the finishing pass's bloom (threshold 2,
       // src/render/Looks.js) gives the star a glow and tone mapping burns
-      // its core out.
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(SUN_CORE_BOOST) }),
+      // its core out. Drawn in the transparent pass (fully opaque) so its
+      // order against the sky can be chosen: main.js draws the ACTIVE
+      // system's star after the atmosphere (it shines through a daytime
+      // sky) and every other star before it (hidden, like the stars).
+      new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color).multiplyScalar(SUN_CORE_BOOST),
+        transparent: true, fog: false,
+      }),
     );
     group.add(core);
 
@@ -148,6 +154,7 @@ export class SolarSystem {
     }));
     glow.scale.setScalar(SUN_RADIUS * 9);
     group.add(glow);
+    group.userData.glow = glow;
 
     return group;
   }

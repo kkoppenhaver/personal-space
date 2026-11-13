@@ -45,7 +45,8 @@ import { ThumbnailCapture } from './logbook/ThumbnailCapture.js';
 import { FlightStats } from './game/FlightStats.js';
 
 import { GAME_LOOK } from './render/Looks.js';
-import { SKY_GAIN } from './world/Atmosphere.js';
+import { SKY_GAIN, SKY_SETTINGS } from './world/Atmosphere.js';
+import { DEFAULT_SKY, horizonAt } from './render/SkyPalette.js';
 import { createRig } from './render/Rig.js';
 import { createPost } from './render/Post.js';
 import { viewFit } from './render/ShadowFit.js';
@@ -117,6 +118,7 @@ async function main() {
   // The look (Phase 1b, src/render/Looks.js): "sunlit low-poly".
   const look = GAME_LOOK;
   SKY_GAIN.value = look.skyGain ?? 1;
+  SKY_SETTINGS.value = { ...DEFAULT_SKY, ...look.sky };
 
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x05060a, 0.00025);
@@ -1016,15 +1018,29 @@ async function main() {
         }
       }
 
-      // Sky: the atmosphere shell now paints the sky itself (thin overhead,
-      // pale at the horizon, dark on the night side), so the clear color
-      // only needs to be a deep backdrop — slightly lifted inside so the
-      // zenith reads as deep blue rather than space-black.
+      // Sky: the atmosphere shell paints the sky itself (Atmosphere.js:
+      // a gradient set by the sun's elevation, opaque by day, see-through at
+      // night), so the background only needs to be a deep backdrop.
       const r = activeAtmosphere.density(planePos);
       const dayAtPlane = sunPos ? THREE.MathUtils.smoothstep(_radialUp.dot(_sunDir), -0.2, 0.4) : 1;
       const skyHex = activePlanet?.palette?.sky;
       _skyDay.set(skyHex || 0x8bb8dc).multiplyScalar(0.18 * dayAtPlane * SKY_GAIN.value);
       galaxy.starfield.material.opacity = 0.95 * (1 - 0.92 * r * dayAtPlane);
+      // Draw order against the sky (roadmap 1c). The atmosphere is opaque
+      // by day, so whatever is drawn before it is hidden: the stars, other
+      // planets and their shells, and every other system's star. Only the
+      // active system's star comes after it (it shines through a daytime
+      // sky, its glow toned down there); clouds come after that.
+      const sky = SKY_SETTINGS.value;
+      for (const sys of galaxy.systems.values()) {
+        const mine = sys === activeSystem;
+        const under = mine ? r * dayAtPlane : 0;   // how much daytime sky is in front of it
+        for (const o of sys.sun.children) {
+          o.renderOrder = mine ? 5 : 0;
+          const day = o === sys.sun.userData.glow ? sky.sunGlowDay : sky.sunDiscDay;
+          o.material.opacity = 1 - (1 - day) * under;
+        }
+      }
       // Ambient motes (pollen / snow / embers / spray / fireflies at night).
       if (performance.now() > moteKindAt) {
         motes.setKind(moteKindFor(activePlanet));
@@ -1033,10 +1049,11 @@ async function main() {
       motes.update(dt, camera, _radialUp, r, dayAtPlane < 0.2);
       scene.background.lerpColors(_skySpace, _skyDay, r);
       scene.fog.density = 0.0012 * r + 0.00004;
-      // Haze toward the planet's sky color (daylit) so distant terrain
-      // melts into the horizon; night side hazes toward dark blue.
-      scene.fog.color.set(skyHex || 0x8bb8dc).multiplyScalar((0.25 + 0.6 * dayAtPlane) * SKY_GAIN.value)
-        .lerp(_fogNight, 1 - r);
+      // The fog takes the sky's horizon colour at this sun elevation
+      // (SkyPalette.js), so the ground meets the sky without a seam.
+      if (activeAtmosphere.palette && sunPos) horizonAt(activeAtmosphere.palette, _radialUp.dot(_sunDir), scene.fog.color);
+      else scene.fog.color.set(skyHex || 0x8bb8dc).multiplyScalar((0.25 + 0.6 * dayAtPlane) * SKY_GAIN.value);
+      scene.fog.color.lerp(_fogNight, 1 - r);
       if (useComposer) post.render(); else renderer.render(scene, camera);
       quality.frame();
     },
