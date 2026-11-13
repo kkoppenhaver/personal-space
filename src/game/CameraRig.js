@@ -22,6 +22,16 @@ export class CameraRig {
     this.initialized = false;
   }
 
+  // Floating-origin rebase: move the smoothed camera with the world. Without
+  // this the spring chased the plane across the whole shift (a swoop of up
+  // to 5 km over ~0.5 s), and the sun's shadow box, fitted to the camera,
+  // went with it.
+  translate(delta) {
+    this.smoothedPos.add(delta);
+    this.smoothedTgt.add(delta);
+    this.camera.position.add(delta);
+  }
+
   update(plane, planet, atmosphere, dt) {
     const planePos = plane.position();
     const planeFwd = plane.forward();

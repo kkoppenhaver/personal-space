@@ -101,6 +101,9 @@ export class Motes {
           if (d > 0.5) discard;
           float a = smoothstep(0.5, 0.1, d) * uOpacity * vFade * vTw;
           gl_FragColor = vec4(uColor, a);
+          // Tone mapping applies only when drawn straight to the screen (the "low"
+          // quality tier); through the composer OutputPass does it (Post.js).
+          #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }
       `,

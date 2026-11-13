@@ -93,6 +93,11 @@
     #pause-menu .controls { font-size: 11px; opacity: 0.55; line-height: 1.8; letter-spacing: 0.08em; }
     #pause-menu button { background: rgba(255,111,60,0.15); border: 1px solid rgba(255,111,60,0.55); color: var(--accent); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.18em; padding: 8px 18px; border-radius: 6px; cursor: pointer; margin-bottom: 18px; }
     #pause-menu button:hover { background: rgba(255,111,60,0.28); }
+    #quality-picker { margin-bottom: 20px; }
+    #quality-picker .label { font-size: 11px; opacity: 0.6; letter-spacing: 0.16em; margin-bottom: 8px; }
+    #quality-picker button { margin: 0 2px 6px; padding: 5px 9px; font-size: 11px; letter-spacing: 0.12em; background: transparent; border-color: rgba(244,237,224,0.25); color: var(--paper); }
+    #quality-picker button.active { background: rgba(255,111,60,0.22); border-color: rgba(255,111,60,0.6); color: var(--accent); }
+    #quality-note { font-size: 10px; opacity: 0.5; letter-spacing: 0.1em; min-height: 1em; }
 
     /* Account drawer + auth modal */
     #account-toggle { position: absolute; top: 14px; left: 138px; background: rgba(20,16,12,0.55); border: 1px solid rgba(244,237,224,0.18); border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer; color: var(--paper); }
@@ -218,6 +223,11 @@
         <h1>PAUSED</h1>
         <button id="resume-btn">RESUME</button>
         <div class="resume-hint">ESC TO RESUME</div>
+        <div id="quality-picker">
+          <div class="label">GRAPHICS</div>
+          <button data-quality="auto">AUTO</button><button data-quality="high">HIGH</button><button data-quality="medium">MEDIUM</button><button data-quality="low">LOW</button>
+          <div id="quality-note"></div>
+        </div>
         <div class="controls">
           ↑↓ pitch &middot; ←→ bank<br>
           SPACE throttle &middot; SHIFT brake<br>

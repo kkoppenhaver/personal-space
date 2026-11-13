@@ -23,6 +23,15 @@ test('game boots offline, flies, and mounts a planet without errors', async ({ p
   await page.goto('/');
   await page.waitForFunction(() => !!window.__GAME?.plane, null, { timeout: 120_000 });
 
+  // Auto quality (src/render/Quality.js) measures the first frames and steps
+  // down on a slow machine; software rendering lands on `low` within a few
+  // frames. Wait for it to decide, so the checks below run at the speed the
+  // game will actually run at.
+  const t0 = Date.now();
+  await page.waitForFunction(() => window.__GAME.quality.settled, null, { timeout: 120_000, polling: 250 });
+  const auto = await page.evaluate(() => window.__GAME.quality);
+  console.log(`[smoke] auto quality: ${auto.tier} after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+
   // The loop is running: the plane moves over a second of wall time.
   const pos = () => page.evaluate(() => {
     const p = window.__GAME.plane.position();
@@ -87,6 +96,19 @@ test('game boots offline, flies, and mounts a planet without errors', async ({ p
   // Let a few frames of the arrival land, then keep one screenshot.
   await page.waitForTimeout(1500);
   await page.screenshot({ path: testInfo.outputPath('smoke-arrival.png') });
+
+  // Every quality tier draws without errors (a shader that fails to compile
+  // only shows up as a console error). High first: the most passes.
+  for (const tier of ['high', 'medium', 'low']) {
+    const state = await page.evaluate(async (t) => {
+      const st = window.__GAME.setQuality(t);
+      // Two frames at this tier (software rendering: seconds each).
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return st;
+    }, tier);
+    expect(state.tier, `switched to ${tier}`).toBe(tier);
+  }
+  await page.evaluate(() => window.__GAME.setQuality('auto'));
 
   expect(guard.state.forbidden, 'no request may reach prod / an LLM provider').toEqual([]);
   expect(guard.state.pageErrors, 'uncaught page errors').toEqual([]);
