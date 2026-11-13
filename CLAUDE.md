@@ -64,6 +64,18 @@ downstream obeys it:
   offset from that mean (`ColorGrade.js`). Meshes with no authored colour
   fall back to the flat family colour. Dynamic Poly Pizza assets keep their
   own materials.
+- Night side (roadmap 1b): `NightGlow.prepareNightGlow` (called in
+  `AssetCache.loadInstance`) tags buildings, lamps and crystals by catalog
+  id and writes a `nightMask` vertex attribute (real dark window panes where
+  a model has them, bulb parts on lamps). `NightLights.PlanetNight` (mounted
+  by `Planet.applyVisuals` after the reveal patch) adds emission to those
+  materials (a procedural window grid on walls when a model has no panes),
+  plus one merged additive pool mesh and glint points per planet. Lights
+  switch on per fragment from the planet's own sun; `main.js` calls
+  `planet.night.update(sunPos)` every frame. `Rig.setNight` dims the sky
+  fill to `night.skyFill` and switches off a set sun inside the atmosphere.
+  Settings: `Looks.js` `night`. Bench: `?placementLab=1&sun=x,y,z`,
+  `__LAB.view(pos, target)`, `__LAB.setSun(dir)`.
 - Tier 3 lore: pilot's journal, spoken-not-written, written against the
   actually-mounted assets, never answers the planet's question.
 - Look (roadmap 1b, `src/render/`): **sunlit low-poly**, in the game and
