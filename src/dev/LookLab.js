@@ -1,19 +1,19 @@
 // Look lab (roadmap Phase 1b). Boot with `?lookLab=1`.
 //
-// The art-direction bench: the five reference planets, each drawable in
-// every look from src/render/Looks.js, switched live. Pick a look by eye.
+// The lighting bench: the five reference planets in the game's look
+// ("sunlit low-poly") or the game as it was before 1b ("now"), switched
+// live, through the shared rig and post pipeline (src/render/).
 //
 // Query params (the page keeps them in the address bar as you click):
-//   look=now|paper|sunlit|ink     which look (default paper)
+//   look=sunlit|now               which look (default sunlit)
 //   planet=0..4                   which reference planet (default 0)
 //   view=wide|photo               whole planet, or a low shot of the hero
-//                                 with the look's tilt-shift on
 //   shot=1                        screenshot mode: no panel, and a frame is
 //                                 drawn only when something changes (software
 //                                 rendering takes seconds a frame);
 //                                 `window.__LAB_READY = true` once drawn
 //
-// Keys: 1–4 look · ←/→ planet · V view · H hide the panel.
+// Keys: 1–2 look · ←/→ planet · V view · H hide the panel.
 // Drag to orbit, scroll to zoom.
 // Console: `__LOOKLAB.set({ look, planet, view })` (resolves once drawn).
 
@@ -22,7 +22,6 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { REFERENCE_PLANETS } from './galleryPlanets.js';
 import { buildLabPlanet, LAB_RADIUS } from './labPlanet.js';
 import { LOOKS, LOOK_ORDER, getLook } from '../render/Looks.js';
-import { applyLook } from '../render/LookMaterial.js';
 import { createRig } from '../render/Rig.js';
 import { createPost } from '../render/Post.js';
 
@@ -40,7 +39,7 @@ export async function runLookLab() {
   const params = new URLSearchParams(location.search);
   const shot = params.has('shot');
   const state = {
-    look: LOOKS[params.get('look')] ? params.get('look') : 'paper',
+    look: LOOKS[params.get('look')] ? params.get('look') : 'sunlit',
     planet: Math.min(REFERENCE_PLANETS.length - 1, Math.max(0, parseInt(params.get('planet') || '0', 10) || 0)),
     view: params.get('view') === 'photo' ? 'photo' : 'wide',
   };
@@ -65,6 +64,7 @@ export async function runLookLab() {
       rapier: RAPIER, world, renderer, serial: shot, tag: 'lookLab',
     });
     planet.group.visible = false;
+    planet.setShadowCaster(true);
     scene.add(planet.group);
 
     const slot = planet.heroSlot || planet.landmarks[0];
@@ -183,13 +183,7 @@ export async function runLookLab() {
   function applyLookNow() {
     const look = getLook(state.look);
     rig.setLook(look);
-    applyLook(scene, look);
     post.setLook(look);
-    post.setPhoto(state.view === 'photo');
-    if (!look.post) {
-      renderer.toneMapping = THREE.NoToneMapping;
-      renderer.toneMappingExposure = 1;
-    }
     // scene.background, not the renderer's clear colour: three converts it
     // for whichever target is being drawn (screen or the HDR buffer).
     scene.background.set(look.background);
@@ -278,7 +272,7 @@ export async function runLookLab() {
     teaser.textContent = `“${ref.teaser}”`;
     const keys = document.createElement('div');
     keys.style.cssText = 'margin-top:8px;opacity:0.45;font-size:11px';
-    keys.textContent = '1–4 look · ←/→ planet · V view · H hide · drag to orbit · scroll to zoom';
+    keys.textContent = `1–${LOOK_ORDER.length} look · ←/→ planet · V view · H hide · drag to orbit · scroll to zoom`;
     panel.append(blurb, teaser, keys);
   }
 
