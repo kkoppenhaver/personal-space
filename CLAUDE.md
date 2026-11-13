@@ -64,6 +64,16 @@ downstream obeys it:
   offset from that mean (`ColorGrade.js`). Meshes with no authored colour
   fall back to the flat family colour. Dynamic Poly Pizza assets keep their
   own materials.
+- Terrain detail (roadmap 1d): every planet has a coarse mesh, and
+  placement always reads `planet.geometry` (coarse), never
+  `planet.mesh.geometry`. The planet the player is at gets a mesh 2–4×
+  finer plus per-face trimesh collider pieces (`TerrainDetail.js`: refine
+  within 1200 m, coarse past 2400 m, at most two planets, inside the frame
+  after a jump). Every coarse vertex is a fine vertex, so nothing moves.
+  The terrain material is `GroundMaterial.js`: a patched flat-shaded
+  Lambert that draws palette bands, the ground pattern per pixel, rock,
+  foam and grain (`Looks.js` `ground`). When the mesh swaps, Planet calls
+  `night.refreshGround()` so lamp pools are laid again.
 - Night side (roadmap 1b): `NightGlow.prepareNightGlow` (called in
   `AssetCache.loadInstance`) tags buildings, lamps and crystals by catalog
   id and writes a `nightMask` vertex attribute (real dark window panes where
@@ -113,7 +123,9 @@ downstream obeys it:
   filter, RAW toggle). Gate for any new pack import.
 - `?placementLab=1&seed=…&sea=…&motif=…&tier=…&hero=<catalog-id>` — one
   forced-concept planet through the real applyVisuals path, no flying.
-  `&flat=1` shows the pre-1a flat family colours for A/B.
+  `&flat=1` shows the pre-1a flat family colours for A/B. `&coarse=1`
+  (also on `?terrainLab=1`, with `&dist=<m>`) shows the coarse terrain.
+  `__GAME.terrainDetail.stats` reports what is fine.
 - `?lookLab=1` — the lighting bench (roadmap 1b): the five reference
   planets in the game's look or the pre-1b baseline (`now`, kept one more
   PR for A/B), switched live (1–2 look, ←/→ planet, V photo view).
@@ -151,6 +163,10 @@ downstream obeys it:
 
 ## Conventions & gotchas
 
+- A planet has several collider handles once refined (`colliderHandles()`,
+  `onColliderSwap(removed, added)`). Keep renders free of `Math.random`
+  (GTAO's noise is seeded in `Post.js`) so the seed gallery stays
+  pixel-repeatable.
 - Rendering: set the sky with `scene.background` (a `THREE.Color`), never
   `renderer.setClearColor` — through the composer the clear colour would be
   sRGB-encoded twice. Custom `ShaderMaterial`s output linear light and

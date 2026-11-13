@@ -13,7 +13,7 @@ scope: whole project (supersedes plan.md "Phase 3+ vision roadmap" and master-pl
 | Phase | Status | PR | Notes |
 |---|---|---|---|
 | 0. Foundations | ✅ Done | [#33](https://github.com/kkoppenhaver/personal-space/pull/33), [#34](https://github.com/kkoppenhaver/personal-space/pull/34) | **Live 2026-11-12** (client via Pages; worker version `5a78740c` at 100%; D1 migration 0003 applied). 0a: #32 squash-merged, #30/#31 closed. 0b: session-gated, rate-limited LLM routes; $3.70/day breaker; `llm_usage` ledger; `/concept` derives its own context via `/shared`; tool output validated before caching, one retry, strict concept schema (the real-model check caught 1 malformed concept in 15). 0c: lazy concepts (3 requests at start, was 45); concept + pick on Haiku 5.5. 0d: 95 unit tests, browser smoke test, seed gallery, CI; logbook lost-update fix. Measured about $0.10 per four-planet session (was about $0.29). #34: aim-to-chart only counts in open space (an orbiting plane was charting systems nobody aimed at). |
-| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37), [#38](https://github.com/kkoppenhaver/personal-space/pull/38) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) shipped 2026-11-12. Art direction picked 2026-11-12: sunlit low-poly, with soft shadows. 1b step 2 (the look in the game) shipped 2026-11-13. 1b night-side lights in review. 1c (sky) and 1d (ground) in progress.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
+| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37), [#38](https://github.com/kkoppenhaver/personal-space/pull/38) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) shipped 2026-11-12. Art direction picked 2026-11-12: sunlit low-poly, with soft shadows. 1b step 2 (the look in the game) shipped 2026-11-13. 1b night-side lights shipped 2026-11-13. 1d (ground) in review. 1c (sky) built, in review next.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
 | 2. Loop | ⌛ Pending | — | |
 | 3. Sound | ⌛ Pending | — | |
 | 4. Brain | ⌛ Pending | — | |
@@ -180,7 +180,7 @@ Tuned after flying it (2026-11-13). The day side read as too bright in the game:
 - **`skyGain: 0.65`** (new look setting): the daytime sky backdrop, haze and atmosphere shell are drawn at about two thirds of the planet's sky colour. Filmic tone mapping lifts mid tones, so at full strength the sky came out pale grey and was most of the brightness.
 - The bench planets approved on the look lab change only slightly (a little less bright; shadows a touch softer in contrast).
 
-Night side (in review: [#41](https://github.com/kkoppenhaver/personal-space/pull/41)), what was built:
+Night side (shipped 2026-11-13, [#41](https://github.com/kkoppenhaver/personal-space/pull/41)), what was built:
 - **Lit windows.** 6 of the 48 building models have their window panes as separate dark parts; those panes glow, and about a third stay dark. On the other 42 the shader draws a grid of window rectangles on wall faces (near-vertical, between 14% and 86% of the model's height, two to five storeys whatever the model's size). All at runtime: a bake-time mask would have found windows on only those 6.
 - **Lamps** (lightposts, light-trees, base lights; found by catalog id): their bright warm parts glow above the bloom threshold, and each puts a soft pool of warm light on the ground. Pools are one merged additive mesh per planet, not real lights; overlapping pools are dimmed so a lamp-lined path does not burn into one strip.
 - **Crystals** glow faintly. Every light also gets a small warm glint that still shows from orbit.
@@ -199,10 +199,17 @@ Still to do in 1b:
 - Sky gradient by sun elevation with a real dusk palette. A one-draw noise cloud shell, varied by biome and register.
 - From space: a thin lit limb. The atmosphere disc currently reads 2.5× the planet.
 
-**1d. Ground (1 PR).**
-- Smooth-shaded terrain, tessellated higher for the active planet only (detail 48 near, 8 far).
-- Compute patterns in the fragment shader, not per face. Rings, rows and patchwork stay crisp at any facet size.
-- Slope-based rock tint, a shoreline foam band, fine grain so the ground is not a flat fill.
+**1d. Ground (1 PR).** In review.
+
+The first draft said "smooth-shaded terrain". The art direction picked since then is crisp flat-shaded facets, so that became **finer facets where you are**. What was built:
+- **Fine terrain at the planet you're at** (`src/world/TerrainDetail.js`). Within 1200 m of a planet's surface its mesh is rebuilt 2 to 4 times finer (aiming at about 2.6 m facets: 23,000 to 92,000 triangles, against 5,780 coarse). It goes back to coarse past 2400 m; at most two planets are fine at once. The build is spread over frames at 3 ms a frame (about 7 frames), or done inside the frame after a warp or respawn, where it is hidden by the cut.
+- **Nothing moves.** Placement always reads the coarse mesh, and every coarse vertex is also a fine vertex, so every hero, landmark and scatter instance is in the same place on all 8 gallery planets and sits on the new surface.
+- **The collider follows.** The fine mesh comes with its own collider pieces (one per icosahedron face, built with it and switched on in the same step). Collider and drawn mesh agree to 0.1 mm; the plane's ball rests 1.199 m above the drawn ground (its radius is 1.2 m).
+- **Patterns per pixel** (`src/world/GroundMaterial.js`): rings, rows, patchwork, stripes, spots and veins keep their old seeded layout but are drawn in the shader, so they are crisp at any facet size (the crater's rings were a triangle checkerboard). Still the flat-shaded Lambert material, so shadows, contact shading, the low tier and thumbnails are unchanged.
+- **Not a flat fill:** a darker, greyer rock tint on steep faces, a pale foam band at the waterline, and a fine grain. All only darken or tint; settings are in `Looks.js` under `ground`. The dark rim that used to sit along every shoreline is gone.
+- **Seed gallery repeatable again.** Contact shading built its noise with `Math.random`, so two runs of the same commit differed by up to 31/255. The noise is now seeded; runs are pixel-identical.
+- **Night lights follow the ground:** lamp pools are laid again when a planet swaps between coarse and fine.
+- Known: the fine mesh shows the true shape of spires, which are thinner than the coarse mesh drew them, so a model on a needle can overhang it. The upload of the fine mesh to the GPU at the swap is unmeasured on real hardware.
 
 **1e. Camera and plane (1 PR).**
 - On approach, bias the look-at toward the hero so the premise is in frame when you arrive.
