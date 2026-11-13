@@ -40,6 +40,46 @@ export const LOOKS = {
     // strength the sky came out pale grey and the whole day side read as
     // bright.
     skyGain: 0.65,
+    // The sky (roadmap 1c): SkyPalette.js derives its colours from the
+    // planet's sky colour; Atmosphere.js and Clouds.js draw it. Levels are
+    // fractions of the palette colour, multiplied by skyGain. The pre-1c sky
+    // was about 1.05 everywhere; these keep the day sky at or under that.
+    sky: {
+      zenithDeepen: 0.9,     // overhead: toward the palette colour squared
+      zenithLevel: 0.55,
+      horizonPale: 0.35,     // horizon: toward the palette's own grey
+      horizonLevel: 0.82,
+      duskWarm: 0xff7a3c,    // the band toward a setting sun (× the star)
+      duskCool: 0x4a5c9c,    // the side away from it
+      duskWarmLevel: 0.75,
+      duskCoolLevel: 0.32,
+      duskZenithLevel: 0.16,
+      night: 0x0a1020,
+      nightTint: 0.35,
+      nightLevel: 0.06,
+      nightAlpha: 0.25,      // night sky opacity overhead: stars show
+      glare: 1,              // glow around the sun in the day sky
+      lowSunDim: 0.55,       // the day sky's level with the sun at the horizon
+      limbLevel: 1.1,        // from space: the rim's colour level
+      limbHeight: 0.07,      // its scale height, × planet radius (keeps it thin)
+      limbStrength: 0.25,    // optical depth → opacity
+      faceHaze: 0.25,        // haze over the planet's face, relative to the rim
+      skyFullBelow: 0.25,    // full sky below this fraction of ATM_TOP
+      sunGlowDay: 0.35,      // the star's glow sprite under a daytime sky
+      sunDiscDay: 0.3,       // and its disc
+      clouds: {
+        altitude: 0.1,       // from space: × planet radius above the ground
+        skyAltitude: 0.75,   // from inside: × ATM_TOP (rises as you descend)
+        level: 0.75,         // lit colour level (HDR; bloom starts at 2)
+        opacity: 0.8,        // from below
+        spaceOpacity: 0.4,   // × opacity from above: the surface stays readable
+        amount: 0.75,        // × the biome's coverage
+        soft: 0.05,          // edge width in coverage units (crisp); streaky forms ×2-2.4
+        shade: 0x8c9cc0,     // cool underside
+        warm: 0xff9a62,      // lit by a low sun
+        night: 0x0b0f1a,
+      },
+    },
     lights: {
       sun: { color: 0xfff3dc, intensity: 3.4 },
       fill: null,
@@ -77,8 +117,10 @@ export const LOOKS = {
       dusk: [0.12, -0.08],
       // The sky's fill light (lights.hemi) at full night, as a fraction of
       // itself: moonlit, not the daytime teal. Eases in over a wider band
-      // than the lights (Rig.setNight).
-      skyFill: 0.3,
+      // than the lights (Rig.setNight). 0.3 read well against the old,
+      // paler night sky; under the 1c sky (dark at night) the ground was
+      // close to black, so it is a little higher.
+      skyFill: 0.45,
       // Warm windows, under the bloom threshold: they read as lit rooms and
       // do not glow. Lamps are over it and get a soft halo. `lit` is the
       // share of windows that are on.

@@ -78,7 +78,7 @@ export class Galaxy {
   *allPlanets() {
     for (const sys of this.systems.values()) {
       for (let i = 0; i < sys.planets.length; i++) {
-        yield { system: sys, planet: sys.planets[i], atmosphere: sys.atmospheres[i], index: i };
+        yield { system: sys, planet: sys.planets[i], atmosphere: sys.atmospheres[i], clouds: sys.clouds?.[i], index: i };
       }
     }
   }
