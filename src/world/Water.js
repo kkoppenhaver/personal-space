@@ -11,7 +11,7 @@ import * as THREE from 'three';
 
 export const WATER_TIME = { value: 0 };
 
-const SEA_R = 0.9962;
+export const SEA_R = 0.9962;
 
 export function buildWater(planet) {
   const geom = new THREE.SphereGeometry(planet.radius * SEA_R, 96, 64);

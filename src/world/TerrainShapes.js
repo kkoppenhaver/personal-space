@@ -180,19 +180,41 @@ export function makeShaper(seed, shape = 'rolling') {
 }
 
 /**
- * Per-face ground pattern. Returns a function (centroidDir, above) →
- * { mix: 0..1, which: 0|1 } telling the colorizer to blend toward one of
- * two pattern colors. Water (above < 0) is left alone except for stripes.
+ * The seeded layout behind a ground pattern: the axis rows and stripes run
+ * on, the centre rings circle, the cells patchwork and veins are cut from,
+ * and the seed of the noise spots and stripes wobble with. One source for
+ * the CPU reference below and the ground shader (GroundMaterial.js), which
+ * draws the same layout per pixel.
  */
-// Patterns that are smooth bands evaluate per VERTEX (soft gradients);
-// the rest evaluate per FACE (crisp low-poly tiles).
-export function patternIsSoft(pattern) { return pattern === 'rows' || pattern === 'stripes'; }
+export const PATCHWORK_CELLS = 110;
+export const VEIN_CELLS = 55;
 
-export function makePattern(seed, pattern, focus) {
+export function patternParams(seed, pattern, focus) {
   const rand = mulberry32((seed ^ 0x6b2d1) >>> 0);
   const axis = randomUnit(rand);
-  const center = focus || randomUnit(rand);
-  const n = makeNoise3((seed ^ 0x1f3b) >>> 0);
+  const center = focus ? focus.clone() : randomUnit(rand);
+  const noiseSeed = (seed ^ 0x1f3b) >>> 0;
+  const cells = [];
+  if (pattern === 'patchwork') {
+    for (let i = 0; i < PATCHWORK_CELLS; i++) cells.push({ c: randomUnit(rand), k: rand() });
+  } else if (pattern === 'veins') {
+    for (let i = 0; i < VEIN_CELLS; i++) cells.push({ c: randomUnit(rand), k: 0 });
+  }
+  return { pattern, axis, center, noiseSeed, cells };
+}
+
+/**
+ * Ground pattern, CPU reference. Returns a function (dir, above) →
+ * { mix: 0..1, which: 0|1|2 } telling the colouring to blend toward one of
+ * three pattern colours. Water (above < 0) is left alone except for stripes.
+ *
+ * The game draws patterns in the ground shader per pixel since roadmap 1d
+ * (GroundMaterial.js, a line-for-line port with anti-aliased edges); this
+ * stays as the reference the unit tests hold the shader's layout to.
+ */
+export function makePattern(seed, pattern, focus) {
+  const { axis, center, noiseSeed, cells } = patternParams(seed, pattern, focus);
+  const n = makeNoise3(noiseSeed);
   // which: 0 = field A (lighter/warmer sibling of the ground),
   //        1 = accent (a vivid mark someone made),
   //        2 = field B (darker sibling).
@@ -203,8 +225,6 @@ export function makePattern(seed, pattern, focus) {
 
   switch (pattern) {
     case 'patchwork': {
-      const cells = [];
-      for (let i = 0; i < 110; i++) cells.push({ c: randomUnit(rand), k: rand() });
       return (d, above) => {
         if (above < 0 || above > 0.75) return none();
         let best = -2, k = 0;
@@ -244,12 +264,10 @@ export function makePattern(seed, pattern, focus) {
         return out;
       };
     case 'veins': {
-      const cells = [];
-      for (let i = 0; i < 55; i++) cells.push(randomUnit(rand));
       return (d, above) => {
         if (above < 0) return none();
         let d1 = -2, d2 = -2;
-        for (const c of cells) {
+        for (const { c } of cells) {
           const k = d.dot(c);
           if (k > d1) { d2 = d1; d1 = k; } else if (k > d2) d2 = k;
         }

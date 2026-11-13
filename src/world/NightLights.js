@@ -383,9 +383,23 @@ export class PlanetNight {
     planet.landmarkGroup?.traverse(visit);
     planet.featuresGroup?.traverse(visit);
 
-    if (pools.length) this.group.add(this._buildPools(pools));
+    // Kept so the pools can be laid again when the terrain mesh changes
+    // (TerrainDetail swaps a planet between its coarse and fine mesh).
+    this._pools = pools;
+    this._poolMesh = null;
+    this._groundDirty = false;
+    if (pools.length) { this._poolMesh = this._buildPools(pools); this.group.add(this._poolMesh); }
     if (glints.length) this.group.add(this._buildGlints(glints));
     planet.group.add(this.group);
+  }
+
+  /**
+   * The terrain mesh under the pools changed (coarse ↔ fine): lay them
+   * again on the next update. Pools follow the drawn facets, so on the old
+   * mesh they would hover over hollows the fine mesh opens up.
+   */
+  refreshGround() {
+    if (this._pools.length) this._groundDirty = true;
   }
 
   get empty() { return this._patched.length === 0; }
@@ -399,10 +413,17 @@ export class PlanetNight {
         if (q === p) continue;
         overlap += Math.max(0, 1 - p.at.distanceTo(q.at) / (p.radius + q.radius));
       }
-      p.intensity /= 1 + overlap;
+      p.dim = 1 / (1 + overlap);
     }
     const RINGS = 6, SEG = 18;
-    const probe = makeGroundProbe(this.planet);
+    // On a coarse mesh the drawn facets can sit metres off the exact
+    // surface, so each pool vertex is dropped onto the facet under it. On
+    // the fine mesh (TerrainDetail) the facets follow the surface closely
+    // and there are many more of them: probing them cost 83 ms for 76 lamps
+    // at k=2, so there the exact surface alone is used, lifted a little more.
+    const fine = !!this.planet.fine;
+    const probe = fine ? null : makeGroundProbe(this.planet);
+    const lift = fine ? 0.25 : 0.12;
     const sample = this.planet.sample;
     const verts = [], attrs = [], idx = [];
     const t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), d = new THREE.Vector3();
@@ -411,7 +432,7 @@ export class PlanetNight {
       t1.set(Math.abs(up.y) < 0.9 ? 0 : 1, Math.abs(up.y) < 0.9 ? 1 : 0, 0).cross(up).normalize();
       t2.crossVectors(up, t1);
       const R = p.at.length();
-      const ground = probe(up, (p.radius + 6) / R);
+      const ground = probe ? probe(up, (p.radius + 6) / R) : null;
       const base = verts.length / 3;
       for (let r = 0; r <= RINGS; r++) {
         const rr = r / RINGS;
@@ -422,9 +443,9 @@ export class PlanetNight {
           d.copy(p.at).addScaledVector(t1, x * p.radius).addScaledVector(t2, y * p.radius).normalize();
           // The higher of the facet and the exact surface, lifted a touch:
           // follows the faceted mesh today and a finer one later.
-          const h = Math.max(ground(d) ?? 0, sample ? sample(d.x, d.y, d.z) : R) + 0.12;
+          const h = Math.max(ground ? (ground(d) ?? 0) : 0, sample ? sample(d.x, d.y, d.z) : R) + lift;
           verts.push(d.x * h, d.y * h, d.z * h);
-          attrs.push(x, y, p.intensity);
+          attrs.push(x, y, p.intensity * p.dim);
         }
       }
       // centre fan, then ring quads
@@ -514,6 +535,18 @@ export class PlanetNight {
     s.uNlCenter.value.copy(p.center);
     s.uNlSun.value.copy(sunPos).sub(p.center).normalize();
     s.uNlOn.value = 1;
+    if (this._groundDirty) {
+      this._groundDirty = false;
+      const on = this.poolUniforms?.uOn.value ?? 0;
+      if (this._poolMesh) {
+        this.group.remove(this._poolMesh);
+        this._poolMesh.geometry.dispose();
+        this._poolMesh.material.dispose();
+      }
+      this._poolMesh = this._buildPools(this._pools);
+      this.poolUniforms.uOn.value = on;
+      this.group.add(this._poolMesh);
+    }
     // Pools and glints appear with the models (the models' own lights are
     // already gated by their reveal dither).
     const rv = p.reveal;

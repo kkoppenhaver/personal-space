@@ -112,17 +112,15 @@ export class SolarSystem {
       this.group.add(planet.group);
       this.group.add(atmosphere.mesh);
 
-      this._planetByColliderHandle.set(planet.collider.handle, { planet, atmosphere, index: i });
+      const entry = { planet, atmosphere, index: i };
+      for (const h of planet.colliderHandles()) this._planetByColliderHandle.set(h, entry);
 
-      // Concept-driven terrain rebuilds (Phase 14a) swap the trimesh
-      // collider — re-key the registry so collision events keep resolving
-      // to this planet.
-      planet.onColliderSwap = (oldHandle, newHandle) => {
-        const entry = this._planetByColliderHandle.get(oldHandle);
-        if (entry) {
-          this._planetByColliderHandle.delete(oldHandle);
-          this._planetByColliderHandle.set(newHandle, entry);
-        }
+      // Concept-driven terrain rebuilds (Phase 14a) and the fine terrain
+      // (roadmap 1d) swap trimesh colliders — re-key the registry so
+      // collision events keep resolving to this planet.
+      planet.onColliderSwap = (removed, added) => {
+        for (const h of removed) this._planetByColliderHandle.delete(h);
+        for (const h of added) this._planetByColliderHandle.set(h, entry);
       };
     }
   }
