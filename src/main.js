@@ -6,6 +6,7 @@ import { Contrail } from './game/Contrail.js';
 import { Motes, moteKindFor } from './world/Motes.js';
 import { nightLighting } from './world/NightLights.js';
 import { WATER_TIME } from './world/Water.js';
+import { TerrainDetail } from './world/TerrainDetail.js';
 import { GameLoop } from './game/GameLoop.js';
 import { Input } from './game/Input.js';
 import { Plane } from './game/Plane.js';
@@ -585,6 +586,7 @@ async function main() {
   }
 
   // 10. Loop
+  const terrainDetail = new TerrainDetail();
   const loop = new GameLoop({
     stepHz: 60,
     onFixedStep: (dt) => {
@@ -982,6 +984,8 @@ async function main() {
     },
 
     onRender: (dt) => {
+      // Fine terrain on the planet the player is at (roadmap 1d).
+      terrainDetail.update(Array.from(galaxy.allPlanets(), (r) => r.planet), plane.position());
       // Atmosphere shader breathes with player altitude
       activeAtmosphere.tick(plane.position(), camera);
       // Reveal-as-you-fly: advance the asset fade for EVERY loaded planet
@@ -1101,7 +1105,7 @@ async function main() {
   window.__GAME = {
     plane, galaxy, flight, cameraRig, origin,
     auth, logbookStore, logbookSync, flightStats, thumbnailCapture,
-    conceptScheduler, rig, post,
+    conceptScheduler, rig, post, terrainDetail,
     // Graphics quality: { choice, tier, auto, settled }.
     get quality() { return quality.state; },
     // __GAME.setQuality('auto' | 'high' | 'medium' | 'low') — saved, like the pause menu.

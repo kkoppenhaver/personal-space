@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { buildPlanetGeometry, colorizeTerrain } from './TerrainGen.js';
+import { buildPlanetGeometry, buildFineTerrain } from './TerrainGen.js';
+import { createGroundMaterial, disposeGroundMaterial } from './GroundMaterial.js';
 import { buildWater } from './Water.js';
 import { rollShape, rollPattern, normalizeShape, normalizePattern } from './TerrainShapes.js';
 import {
@@ -21,6 +22,7 @@ import { isDebugOn, attachInstanceHelpers, detachInstanceHelpers } from './Debug
 import { patchReveal } from './RevealMaterial.js';
 import { setShadowFlags } from '../render/Shadows.js';
 import { mountNightLights } from './NightLights.js';
+import { GAME_LOOK } from '../render/Looks.js';
 
 // Seeds whose asset reveal has completed at least once. A planet streamed
 // out and back in mounts solid (no re-fade on every home-system flyby).
@@ -114,13 +116,24 @@ export class Planet {
     this._rapier = rapier;
     this._world = world;
     // Set by SolarSystem so its collider-handle registry survives terrain
-    // rebuilds (a Rapier trimesh can't mutate — swap means a new handle).
+    // rebuilds (a Rapier trimesh can't mutate — swap means new handles):
+    // onColliderSwap(removedHandles, addedHandles).
     this.onColliderSwap = null;
+
+    // Terrain detail (roadmap 1d; TerrainDetail.js). `this.geometry` is
+    // always the COARSE mesh: placement reads it, and it is what distant
+    // planets draw. The planet the player is at swaps a finer mesh (and
+    // collider pieces to match) onto `this.mesh`; placement never sees it.
+    //   detailState: 'coarse' | 'building' (async refine running) | 'fine'
+    this.detailState = 'coarse';
+    this.fine = null;            // { k, geometry, triangles } while fine
+    this.fineColliders = [];
+    this._fineJob = null;
 
     this._buildTerrainState();
 
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-    this.mesh = new THREE.Mesh(this.geometry, mat);
+    this.material = this._makeGroundMaterial();
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
     // Tag so the MaterialSet audit (Phase 6) exempts the terrain — it uses
     // its own vertex-colored material, not a per-mesh matSet clone.
     this.mesh.userData.matSlot = 'terrain';
@@ -150,6 +163,7 @@ export class Planet {
     // SolarSystem traverse disposes its geometry/material with the rest.
     this.water = buildWater(this);
     this.water.mesh.visible = this.terrainParams.seaLevelQuantile > 0.001;
+    this.material.userData.ground.setSea(this.water.mesh.visible);
     this.group.add(this.water.mesh);
     this.group.add(this.landmarkGroup);
     this.group.add(this.featuresGroup);
@@ -186,12 +200,12 @@ export class Planet {
     });
     this.geometry = built.geometry;
     this.elevations = built.elevations;
-    this.surface = built.surface;
+    this.field = built.field;
     this.focus = built.focus;
     // Don't clobber an LLM-supplied palette on rebuild (applyConcept runs
-    // before Tier 2, but belt-and-braces). Repaint with it if we have one.
+    // before Tier 2, but belt-and-braces). The ground shader paints from
+    // the palette (GroundMaterial.js), so a rebuild needs no repaint.
     if (!this.palette) this.palette = built.palette;
-    else colorizeTerrain(this.geometry, this.surface, this.palette);
     this.seaLevel = built.seaLevel;
     this.sample = built.sample;
 
@@ -217,6 +231,17 @@ export class Planet {
         this.landmarks.push(waterSlot);
       }
     }
+  }
+
+  _makeGroundMaterial() {
+    return createGroundMaterial({
+      seed: this.seed,
+      pattern: this.terrainParams.pattern,
+      focus: this.focus,
+      palette: this.palette,
+      radius: this.radius,
+      ground: GAME_LOOK.ground,
+    });
   }
 
   _createCollider() {
@@ -274,10 +299,23 @@ export class Planet {
     this.terrainParams = { seaLevelQuantile: sea, ampScale: amp, shape, pattern };
     if (this.water) this.water.mesh.visible = sea > 0.001 || shape === 'archipelago';
 
+    // A fine mesh (or one being built) belongs to the old terrain: drop it.
+    // A fine one is rebuilt at once below, so the reshape is one visible
+    // swap; a build in progress just starts over.
+    const refineK = this.fine?.k ?? 0;
+    const restartK = this._fineJob?.k ?? 0;
+    this.coarsen();
+
     const oldGeometry = this.geometry;
     this._buildTerrainState();
     this.mesh.geometry = this.geometry;
     oldGeometry.dispose();
+
+    // The pattern and its focus may have changed: new ground material.
+    disposeGroundMaterial(this.material);
+    this.material = this._makeGroundMaterial();
+    this.material.userData.ground.setSea(!!this.water?.mesh.visible);
+    this.mesh.material = this.material;
 
     const newLandmarks = buildLandmarkMeshes(this.landmarks, this.palette);
     newLandmarks.userData.procedural = true;
@@ -301,7 +339,97 @@ export class Planet {
     const oldHandle = this.collider.handle;
     this._world.removeCollider(this.collider, false);
     this.collider = this._createCollider();
-    this.onColliderSwap?.(oldHandle, this.collider.handle);
+    this.onColliderSwap?.([oldHandle], [this.collider.handle]);
+
+    if (refineK) this.refineNow(refineK);
+    else if (restartK) this.beginRefine(restartK);
+  }
+
+  // ── Terrain detail (roadmap 1d) ─────────────────────────────────────
+
+  /** Every live collider handle of this planet (coarse + fine pieces). */
+  colliderHandles() {
+    return [this.collider.handle, ...this.fineColliders.map((c) => c.handle)];
+  }
+
+  /**
+   * Start building the fine mesh `k` times finer than the coarse one, to be
+   * advanced by stepRefine over frames. No-op unless coarse.
+   */
+  beginRefine(k) {
+    if (this.detailState !== 'coarse') return;
+    this._fineJob = { k, it: buildFineTerrain(this.field, k), colliders: [] };
+    this.detailState = 'building';
+  }
+
+  /**
+   * Advance a refine until `deadline` (performance.now() ms), at least one
+   * step: a base face of the mesh and its collider piece (created disabled).
+   * On the last step the fine mesh and colliders swap in, in one go.
+   * Returns true when the planet is fine.
+   */
+  stepRefine(deadline) {
+    const job = this._fineJob;
+    if (!job) return this.detailState === 'fine';
+    do {
+      const r = job.it.next();
+      if (r.done) {
+        for (let i = job.colliders.length; i < r.value.pieces.length; i++) {
+          job.colliders.push(this._createPieceCollider(r.value.pieces[i]));
+        }
+        this._finishRefine(job, r.value);
+        return true;
+      }
+      job.colliders.push(this._createPieceCollider(r.value));
+    } while (performance.now() < deadline);
+    return false;
+  }
+
+  /** Refine now, inside this call (spawn, warp, a reshape up close, benches). */
+  refineNow(k) {
+    if (this.detailState === 'fine' && this.fine.k === k) return;
+    if (this.detailState === 'building' && this._fineJob.k !== k) this.coarsen();
+    if (this.detailState === 'fine') this.coarsen();
+    this.beginRefine(k);
+    this.stepRefine(Infinity);
+  }
+
+  /** Back to the coarse mesh and collider (and cancel a refine in progress). */
+  coarsen() {
+    if (this._fineJob) {
+      for (const c of this._fineJob.colliders) this._world.removeCollider(c, false);
+      this._fineJob = null;
+    }
+    if (this.fine) {
+      this.mesh.geometry = this.geometry;
+      this.fine.geometry.dispose();
+      this.fine = null;
+      const removed = this.fineColliders.map((c) => c.handle);
+      for (const c of this.fineColliders) this._world.removeCollider(c, false);
+      this.fineColliders = [];
+      this.collider.setEnabled(true);
+      this.onColliderSwap?.(removed, []);
+    }
+    this.detailState = 'coarse';
+  }
+
+  _createPieceCollider(piece) {
+    const desc = this._rapier.ColliderDesc.trimesh(piece.vertices, piece.indices)
+      .setFriction(0.6).setRestitution(0.2)
+      .setActiveEvents(this._rapier.ActiveEvents.COLLISION_EVENTS)
+      .setEnabled(false);
+    return this._world.createCollider(desc, this.body);
+  }
+
+  _finishRefine(job, result) {
+    for (const c of job.colliders) c.setEnabled(true);
+    this.collider.setEnabled(false);
+    this.fineColliders = job.colliders;
+    this.fine = { k: job.k, geometry: result.geometry, triangles: result.triangles };
+    this.mesh.geometry = result.geometry;
+    this._fineJob = null;
+    this.detailState = 'fine';
+    this.onColliderSwap?.([], this.fineColliders.map((c) => c.handle));
   }
 
   // Distance from `pos` (world coords) along surface up direction → altitude above terrain.
@@ -766,6 +894,11 @@ export class Planet {
   dispose() {
     this.visualGen++;
     this.heroSlot = null;
+    // The mesh holds one terrain geometry (the scene traverse disposes it);
+    // the other, and the pattern's noise texture, are ours to free.
+    this._fineJob = null;
+    if (this.fine && this.mesh.geometry !== this.geometry) this.geometry.dispose();
+    this.material?.userData.ground?.uniforms.uPatNoise.value?.dispose();
     if (this.matSet) {
       disposeMaterialSet(this.matSet);
       this.matSet = null;
@@ -845,7 +978,7 @@ export class Planet {
   }
 
   _reTintVertexColors() {
-    colorizeTerrain(this.geometry, this.surface, this.palette);
+    this.material.userData.ground.setPalette(this.palette);
     this.water?.setPalette(this.palette);
   }
 }

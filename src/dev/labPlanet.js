@@ -7,12 +7,15 @@
 //   seed biome density shape pattern tier
 //   sea amp slots motif subjects embed heroWater creatures_budget   forced concept
 //   hero landmarks surface creatures                                catalog ids
+//   coarse=1                       keep the coarse terrain (the fine mesh is
+//                                  what the game draws at the planet you're at)
 
 import * as THREE from 'three';
 import { Planet } from '../world/Planet.js';
 import { getAssetById } from '../world/assets/Catalog.js';
 import { load as loadGLB } from '../world/AssetCache.js';
 import { normalizeShape, normalizePattern } from '../../shared/planet-dice.js';
+import { fineFactorFor } from '../world/TerrainDetail.js';
 
 export const LAB_RADIUS = 60;
 
@@ -67,6 +70,9 @@ export async function buildLabPlanet(q, { rapier, world, renderer, defaults = {}
       asset_keywords: [],
     });
   }
+
+  // The bench planet is the planet you are at: fine terrain (roadmap 1d).
+  if (params.get('coarse') !== '1') planet.refineNow(fineFactorFor(planet.radius));
 
   const ids = (key) => (params.get(key) ?? defaults[key] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const heroAsset = getAssetById(params.get('hero') || defaults.hero);

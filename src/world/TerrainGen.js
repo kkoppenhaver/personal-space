@@ -1,11 +1,25 @@
 import * as THREE from 'three';
 import { makeNoise3, fbm } from './Seed.js';
-import { makeShaper, makePattern, patternIsSoft } from './TerrainShapes.js';
+import { makeShaper } from './TerrainShapes.js';
 
-// Generate a planet mesh: subdivided icosa, multi-octave noise displacement,
-// vertex colors banded by elevation. Returns { geometry, bands, elevations, palette }.
+// Generate a planet mesh: subdivided icosa, multi-octave noise displacement.
+// Returns { geometry, elevations, palette, seaLevel, sample, field, ... }.
 //
 // elevations: per-vertex normalized elevation in [0..1] (used for landmark slot picking).
+//
+// Colour is not baked into the mesh (roadmap 1d). Each vertex carries two
+// numbers and the ground shader (GroundMaterial.js) does the rest:
+//   aAbove       shaped height above sea, 0..1 on land, -1 under water
+//                (pattern gates: patchwork stops at 0.75, rows at 0.7)
+//   aColorAbove  the colour height: the palette band the vertex is painted
+//
+// Two meshes come from one height function:
+//   - buildPlanetGeometry: the COARSE mesh (detail 16). Every planet has it;
+//     placement (landmark slots, scatter, ground snap) reads it, always.
+//   - buildFineTerrain: a FINER mesh for the planet the player is at
+//     (TerrainDetail.js). Same height function, same sea level, k times the
+//     subdivisions; every coarse vertex is also a fine vertex, bit for bit,
+//     so anything placed on a coarse vertex sits on the fine surface too.
 
 const DEFAULT_PALETTE = {
   water:  '#21507e',
@@ -16,7 +30,9 @@ const DEFAULT_PALETTE = {
   sky:    '#9ac4e8',
 };
 
-export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, subdivisions = 16, seaLevelQuantile = 0.42, ampScale = 1.0, shape = 'rolling', pattern = 'none' }) {
+export const COARSE_DETAIL = 16;
+
+export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, subdivisions = COARSE_DETAIL, seaLevelQuantile = 0.42, ampScale = 1.0, shape = 'rolling', pattern = 'none' }) {
   const noise = makeNoise3(seed);
   const noise2 = makeNoise3(seed ^ 0x9e3779b9);
   const shaper = makeShaper(seed, shape);
@@ -92,28 +108,6 @@ export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, s
     pos.setXYZ(i, tmp.x * h, tmp.y * h, tmp.z * h);
   }
 
-  // Per-face pattern weights (crisp tiles: one value per triangle,
-  // evaluated at the centroid).
-  const patternFn = makePattern(seed, pattern, shaper.focus);
-  const patMix = new Float32Array(vCount);
-  const patWhich = new Uint8Array(vCount);
-  const cen = new THREE.Vector3();
-  if (patternIsSoft(pattern)) {
-    for (let i = 0; i < vCount; i++) {
-      const r = patternFn(tmp.fromBufferAttribute(pos, i).normalize(), above[i]);
-      patMix[i] = r.mix; patWhich[i] = r.which;
-    }
-  } else {
-    for (let f = 0; f < vCount; f += 3) {
-      cen.set(0, 0, 0);
-      for (let k = 0; k < 3; k++) cen.add(tmp.fromBufferAttribute(pos, f + k));
-      cen.normalize();
-      const faceAbove = Math.min(above[f], above[f + 1], above[f + 2]);
-      const r = patternFn(cen, faceAbove);
-      for (let k = 0; k < 3; k++) { patMix[f + k] = r.mix; patWhich[f + k] = r.which; }
-    }
-  }
-
   // Color height: half absolute, half RANK among land vertices. Shapes
   // that push most land to one level (a rift world is one high plateau
   // with a canyon) would otherwise paint nearly everything snow; the
@@ -123,69 +117,181 @@ export function buildPlanetGeometry({ seed, radius, palette = DEFAULT_PALETTE, s
   landIdx.sort((a, b) => above[a] - above[b]);
   const colorAbove = new Float32Array(vCount).fill(-1);
   const nLand = Math.max(1, landIdx.length - 1);
+  const landAbove = new Float32Array(landIdx.length);
   for (let k = 0; k < landIdx.length; k++) {
     const i = landIdx[k];
+    landAbove[k] = above[i];
     colorAbove[i] = 0.5 * above[i] + 0.5 * (k / nLand);
   }
 
-  geom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(vCount * 3), 3));
-  const surface = { above: colorAbove, patMix, patWhich };
-  colorizeTerrain(geom, surface, palette);
+  geom.setAttribute('aAbove', new THREE.BufferAttribute(above, 1));
+  geom.setAttribute('aColorAbove', new THREE.BufferAttribute(colorAbove, 1));
+  geom.deleteAttribute('uv');
   geom.computeVertexNormals();
   pos.needsUpdate = true;
 
+  // Everything the fine mesh needs to evaluate the SAME surface: the raw
+  // field, this planet's sea level and range (not re-derived from the fine
+  // vertices, so the shape and `sample` never change), and the sorted land
+  // heights for the colour rank.
+  const field = { radius, subdivisions, rawAt, aboveOf, heightOfAbove, landAbove };
+
   return {
     geometry: geom, elevations, palette, seaLevel: seaNorm,
-    sample, surface, focus: shaper.focus, shape, pattern,
+    sample, field, focus: shaper.focus, shape, pattern,
   };
 }
 
+// ── Fine mesh (roadmap 1d) ──────────────────────────────────────────────
+
+// three's icosahedron (IcosahedronGeometry.js), copied so the fine mesh
+// subdivides exactly the same base faces in the same order.
+const ICO_T = (1 + Math.sqrt(5)) / 2;
+const ICO_VERTS = [
+  -1, ICO_T, 0, 1, ICO_T, 0, -1, -ICO_T, 0, 1, -ICO_T, 0,
+  0, -1, ICO_T, 0, 1, ICO_T, 0, -1, -ICO_T, 0, 1, -ICO_T,
+  ICO_T, 0, -1, ICO_T, 0, 1, -ICO_T, 0, -1, -ICO_T, 0, 1,
+];
+const ICO_FACES = [
+  0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11,
+  1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8,
+  3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9,
+  4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1,
+];
+
+/** Triangles in an icosphere of three's `detail`. */
+export function icoTriangles(detail) { return 20 * (detail + 1) * (detail + 1); }
+
+/** The detail of a mesh k times finer than `coarse` whose vertices include every coarse vertex. */
+export function fineDetailOf(coarse, k) { return k * (coarse + 1) - 1; }
+
 /**
- * (Re)paint vertex colors from the palette: elevation bands + the ground
- * pattern. Shared by the builder and Planet's palette retint so an LLM
- * palette never wipes the pattern.
+ * Build the fine terrain mesh, in steps: a generator that does one base
+ * face of the icosahedron per step and yields that face's collider piece
+ * ({ face, vertices, indices }: the face's grid, indexed), so a caller can
+ * spread the work, collider included, over frames (TerrainDetail.js) or
+ * just drain it.
+ *
+ * The subdivision reproduces three's PolyhedronGeometry exactly (same
+ * lerps, same rounding: grid point → normalize → ×radius → f32 → normalize
+ * again, as buildPlanetGeometry reads it back). With detail k·17−1 the
+ * grid point (k·i, k·j) of a face is the rational point (i, j) of the
+ * coarse grid, and IEEE division rounds both to the same double, so every
+ * coarse vertex comes out as a fine vertex with identical coordinates.
+ *
+ * Returns (as the generator's value) { geometry, pieces, triangles,
+ * detail }. The geometry is non-indexed with face normals, like the coarse
+ * mesh (shadow normal bias and the contact-shading prepass read the normal
+ * attribute). Collider pieces are indexed (each grid point once): a third
+ * of the vertices to hand to Rapier, and twenty small trimeshes build in
+ * about a millisecond each where one big one stalls a frame.
  */
-export function colorizeTerrain(geom, surface, palette) {
-  const { above, patMix, patWhich } = surface;
-  const colors = geom.attributes.color.array;
-  const colWater = new THREE.Color(palette.water);
-  const colLow   = new THREE.Color(palette.low);
-  const colMid   = new THREE.Color(palette.mid);
-  const colHigh  = new THREE.Color(palette.high);
-  const colSnow  = new THREE.Color(palette.snow);
-  // Pattern colors: 0 = a sibling of the lowland color (fields, furrows —
-  // variation you'd expect of the same ground), 1 = an accent pulled from
-  // the palette's light end (rings, spots, veins — a mark someone made).
-  const pat0 = colLow.clone().lerp(colMid, 0.3).offsetHSL(0.06, 0.12, 0.12);
-  const pat2 = colLow.clone().offsetHSL(-0.04, 0.02, -0.11);
-  const pat1 = new THREE.Color(palette.sky || palette.snow);
-  {
-    const hsl = {};
-    pat1.getHSL(hsl);
-    pat1.setHSL(hsl.h, Math.max(0.5, hsl.s), 0.62);
-  }
-  const patColors = [pat0, pat1, pat2];
-  const waterAccent = colWater.clone().lerp(new THREE.Color(palette.sky || palette.snow), 0.45);
-  const c = new THREE.Color();
-  for (let i = 0; i < above.length; i++) {
-    const a = above[i];
-    if (a < 0) {
-      c.copy(colWater);
-      if (patMix[i] > 0) c.lerp(waterAccent, patMix[i] * 0.6);
-    } else {
-      if (a < 0.25)      c.copy(colLow).lerp(colMid, smoothstep(0.0, 0.25, a));
-      else if (a < 0.65) c.copy(colMid).lerp(colHigh, smoothstep(0.25, 0.65, a));
-      else               c.copy(colHigh).lerp(colSnow, smoothstep(0.65, 1.0, a));
-      if (patMix[i] > 0) c.lerp(patColors[patWhich[i]], patMix[i]);
+export function* buildFineTerrain(field, k) {
+  const { radius, subdivisions, rawAt, aboveOf, heightOfAbove, landAbove } = field;
+  const detail = fineDetailOf(subdivisions, k);
+  const cols = detail + 1;
+  const gridPerFace = (cols + 1) * (cols + 2) / 2;
+  const trisPerFace = cols * cols;
+  const triangles = 20 * trisPerFace;
+
+  const position = new Float32Array(triangles * 9);
+  const normal = new Float32Array(triangles * 9);
+  const aboveAttr = new Float32Array(triangles * 3);
+  const colorAttr = new Float32Array(triangles * 3);
+  const pieces = [];
+
+  const nLand = Math.max(1, landAbove.length - 1);
+  const colorAboveOf = (a) => {
+    if (a < 0) return -1;
+    // Rank among the coarse land heights (upper bound), as the coarse mesh
+    // ranks its own vertices.
+    let lo = 0, hi = landAbove.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (landAbove[mid] <= a) lo = mid + 1; else hi = mid; }
+    return 0.5 * a + 0.5 * (Math.max(0, lo - 1) / nLand);
+  };
+
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const aj = new THREE.Vector3(), bj = new THREE.Vector3(), p = new THREE.Vector3();
+  const gx = new Float32Array(gridPerFace), gy = new Float32Array(gridPerFace), gz = new Float32Array(gridPerFace);
+  const gAbove = new Float32Array(gridPerFace), gColor = new Float32Array(gridPerFace);
+  // Row starts of the triangular grid: v[i][j] → rowStart[i] + j.
+  const rowStart = new Int32Array(cols + 2);
+  for (let i = 0, s = 0; i <= cols; i++) { rowStart[i] = s; s += cols - i + 1; }
+
+  let tri = 0;
+  for (let f = 0; f < 20; f++) {
+    a.fromArray(ICO_VERTS, ICO_FACES[f * 3] * 3);
+    b.fromArray(ICO_VERTS, ICO_FACES[f * 3 + 1] * 3);
+    c.fromArray(ICO_VERTS, ICO_FACES[f * 3 + 2] * 3);
+    const vertices = new Float32Array(gridPerFace * 3);
+    const indices = new Uint32Array(trisPerFace * 3);
+    const triBase = tri;
+    for (let i = 0; i <= cols; i++) {
+      aj.copy(a).lerp(c, i / cols);
+      bj.copy(b).lerp(c, i / cols);
+      const rows = cols - i;
+      for (let j = 0; j <= rows; j++) {
+        if (j === 0 && i === cols) p.copy(aj);
+        else p.copy(aj).lerp(bj, j / rows);
+        // As PolyhedronGeometry stores it (×radius, f32), then as
+        // buildPlanetGeometry reads it back (normalize).
+        p.normalize().multiplyScalar(radius);
+        p.set(Math.fround(p.x), Math.fround(p.y), Math.fround(p.z)).normalize();
+        const ab = aboveOf(rawAt(p));
+        const h = heightOfAbove(ab);
+        const g = rowStart[i] + j;
+        gx[g] = p.x * h; gy[g] = p.y * h; gz[g] = p.z * h;   // f32, as pos.setXYZ stores it
+        gAbove[g] = ab;
+        gColor[g] = colorAboveOf(ab);
+        vertices[g * 3] = gx[g]; vertices[g * 3 + 1] = gy[g]; vertices[g * 3 + 2] = gz[g];
+      }
     }
-    colors[i * 3 + 0] = c.r;
-    colors[i * 3 + 1] = c.g;
-    colors[i * 3 + 2] = c.b;
+    // Triangles in PolyhedronGeometry's order and winding.
+    const put = (g0, g1, g2) => {
+      const o = tri * 9;
+      const ids = [g0, g1, g2];
+      for (let q = 0; q < 3; q++) {
+        const g = ids[q];
+        position[o + q * 3] = gx[g]; position[o + q * 3 + 1] = gy[g]; position[o + q * 3 + 2] = gz[g];
+        aboveAttr[tri * 3 + q] = gAbove[g];
+        colorAttr[tri * 3 + q] = gColor[g];
+        indices[(tri - triBase) * 3 + q] = g;
+      }
+      // Face normal (computeVertexNormals on a non-indexed mesh does the same).
+      const e1x = position[o + 3] - position[o], e1y = position[o + 4] - position[o + 1], e1z = position[o + 5] - position[o + 2];
+      const e2x = position[o + 6] - position[o + 3], e2y = position[o + 7] - position[o + 4], e2z = position[o + 8] - position[o + 5];
+      // three: cb = c − b, ab = a − b, cb × ab
+      let nx = e2y * -e1z - e2z * -e1y, ny = e2z * -e1x - e2x * -e1z, nz = e2x * -e1y - e2y * -e1x;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx /= len; ny /= len; nz /= len;
+      for (let q = 0; q < 3; q++) { normal[o + q * 3] = nx; normal[o + q * 3 + 1] = ny; normal[o + q * 3 + 2] = nz; }
+      tri++;
+    };
+    for (let i = 0; i < cols; i++) {
+      for (let j = 0; j < 2 * (cols - i) - 1; j++) {
+        const kk = Math.floor(j / 2);
+        if (j % 2 === 0) put(rowStart[i] + kk + 1, rowStart[i + 1] + kk, rowStart[i] + kk);
+        else put(rowStart[i] + kk + 1, rowStart[i + 1] + kk + 1, rowStart[i + 1] + kk);
+      }
+    }
+    const piece = { face: f, vertices, indices };
+    pieces.push(piece);
+    if (f < 19) yield piece;
   }
-  geom.attributes.color.needsUpdate = true;
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
+  geometry.setAttribute('aAbove', new THREE.BufferAttribute(aboveAttr, 1));
+  geometry.setAttribute('aColorAbove', new THREE.BufferAttribute(colorAttr, 1));
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), radius * 2);
+  return { geometry, pieces, triangles, detail };
 }
 
-function smoothstep(a, b, t) {
-  const x = Math.max(0, Math.min(1, (t - a) / (b - a)));
-  return x * x * (3 - 2 * x);
+/** Drain buildFineTerrain in one go. */
+export function buildFineTerrainNow(field, k) {
+  const it = buildFineTerrain(field, k);
+  let r = it.next();
+  while (!r.done) r = it.next();
+  return r.value;
 }

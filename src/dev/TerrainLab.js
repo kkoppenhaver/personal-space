@@ -11,12 +11,16 @@
 //   palette=<a,b,..>  water,low,mid,high,snow as hex without '#'
 //   spin=0            freeze rotation
 //   look=sunlit|now   the look (default: the game's, sunlit)
+//   coarse=1          the coarse terrain (default: fine, as at the planet you're at)
+//   dist=<m>          camera distance from each planet's centre (default 420)
 //
 // Lit and finished like the game (src/render/Rig.js, Post.js): each cell
 // has its own scene and rig, and one post pipeline draws them in turn.
 
 import * as THREE from 'three';
-import { buildPlanetGeometry } from '../world/TerrainGen.js';
+import { buildPlanetGeometry, buildFineTerrainNow } from '../world/TerrainGen.js';
+import { createGroundMaterial } from '../world/GroundMaterial.js';
+import { fineFactorFor } from '../world/TerrainDetail.js';
 import { TERRAIN_SHAPES, GROUND_PATTERNS } from '../world/TerrainShapes.js';
 import { getLook } from '../render/Looks.js';
 import { createRig } from '../render/Rig.js';
@@ -46,16 +50,22 @@ export async function runTerrainLab() {
   renderer.setSize(innerWidth, innerHeight, false);
   renderer.setScissorTest(true);
   const look = getLook(q.get('look'));
+  const coarse = q.get('coarse') === '1';
+  const dist = Number(q.get('dist') || 420);
   let post = null;
 
   const cols = 5;
   const rows = Math.ceil(TERRAIN_SHAPES.length / cols);
   const cells = TERRAIN_SHAPES.map((shape, i) => {
     const pattern = forcedPattern || GROUND_PATTERNS[i % GROUND_PATTERNS.length];
-    const built = buildPlanetGeometry({ seed: seed + i * 7919, radius: 100, palette, shape, pattern, seaLevelQuantile: 0.3 });
+    const cellSeed = seed + i * 7919;
+    const built = buildPlanetGeometry({ seed: cellSeed, radius: 100, palette, shape, pattern, seaLevelQuantile: 0.3 });
+    const geometry = coarse ? built.geometry : buildFineTerrainNow(built.field, fineFactorFor(100)).geometry;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(look.background);
-    const mesh = new THREE.Mesh(built.geometry, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
+    const material = createGroundMaterial({ seed: cellSeed, pattern, focus: built.focus, palette, radius: 100, ground: look.ground });
+    material.userData.ground.setSea(true);
+    const mesh = new THREE.Mesh(geometry, material);
     // Put the focal point (if any) on the upper-left limb.
     if (built.focus) mesh.quaternion.setFromUnitVectors(built.focus, new THREE.Vector3(-0.5, 0.6, 0.62).normalize());
     scene.add(mesh);
@@ -66,7 +76,7 @@ export async function runTerrainLab() {
     rig.setQuality({ shadows: true, shadowMapSize: 1024 });
     rig.aim({ center: ORIGIN, radius: 100, sunDir: SUN_DIR, up: VIEW_UP });
     const camera = new THREE.PerspectiveCamera(35, 1, 1, 2000);
-    camera.position.set(0, 0, 420);
+    camera.position.set(0, 0, dist);
     if (!post) { post = createPost(renderer, scene, camera); post.setLook(look); }
     const label = document.createElement('div');
     label.textContent = `${shape} · ${pattern}`;
