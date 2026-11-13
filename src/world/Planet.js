@@ -402,6 +402,7 @@ export class Planet {
     }
     if (this.fine) {
       this.mesh.geometry = this.geometry;
+      this.night?.refreshGround();
       this.fine.geometry.dispose();
       this.fine = null;
       const removed = this.fineColliders.map((c) => c.handle);
@@ -427,6 +428,7 @@ export class Planet {
     this.fineColliders = job.colliders;
     this.fine = { k: job.k, geometry: result.geometry, triangles: result.triangles };
     this.mesh.geometry = result.geometry;
+    this.night?.refreshGround();   // light pools lie on the drawn facets
     this._fineJob = null;
     this.detailState = 'fine';
     this.onColliderSwap?.([], this.fineColliders.map((c) => c.handle));
