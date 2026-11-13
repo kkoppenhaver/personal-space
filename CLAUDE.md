@@ -66,6 +66,12 @@ downstream obeys it:
   own materials.
 - Tier 3 lore: pilot's journal, spoken-not-written, written against the
   actually-mounted assets, never answers the planet's question.
+- Looks (roadmap 1b, `src/render/`): a look is data in `Looks.js` (lights,
+  shading ramp, finishing pass). `Rig.js` sets the lights and the sun's
+  shadow map, `LookMaterial.js` swaps each flat Lambert material for a
+  ramp-shaded one, `Post.js` runs the finishing pipeline. **Only the look
+  lab uses them so far**; the game still renders the `now` look until one
+  is chosen.
 
 ## Dev commands & benches
 
@@ -78,6 +84,10 @@ downstream obeys it:
 - `?placementLab=1&seed=…&sea=…&motif=…&tier=…&hero=<catalog-id>` — one
   forced-concept planet through the real applyVisuals path, no flying.
   `&flat=1` shows the pre-1a flat family colours for A/B.
+- `?lookLab=1` — the art-direction bench (roadmap 1b): the five reference
+  planets drawn in each look from `src/render/Looks.js`, switched live
+  (1–4 look, ←/→ planet, V photo view). `npm run look:sheet` renders every
+  planet × view × look to `look-sheet/index.html` (gitignored).
 - Console hooks: `__GAME.testTier2(seed)` (full chain, uses the planet's
   concept), `__GAME.rollStats()` (tier pacing), `__GAME.auditMaterials()`,
   `__GAME.testAsset(url)`, `__GAME.debugPlacement = true`,
@@ -94,7 +104,10 @@ downstream obeys it:
   warps, fails on page errors / console errors. The console-error allowlist
   lives in `tests/e2e/guard.js` — every entry needs a reason. The guard also
   answers every worker route with 503, so nothing reaches port 8787.
-- **Seed gallery** (`gallery.spec.js`): 8 fixed planets through
+- `looklab.spec.js` boots `?lookLab=1` and draws every look (a shader that
+  fails to compile fails the test); CI uploads the images as `look-lab`.
+- **Seed gallery** (`gallery.spec.js`): 8 fixed planets (listed in
+  `src/dev/galleryPlanets.js`) through
   `?placementLab=1&shot=1` → `test-results/seed-gallery/*.png` (CI artifact
   `seed-gallery`). Deterministic: compare before/after on any visual PR. Keep
   the list stable; rename a file when you change its entry.

@@ -13,7 +13,7 @@ scope: whole project (supersedes plan.md "Phase 3+ vision roadmap" and master-pl
 | Phase | Status | PR | Notes |
 |---|---|---|---|
 | 0. Foundations | ✅ Done | [#33](https://github.com/kkoppenhaver/personal-space/pull/33), [#34](https://github.com/kkoppenhaver/personal-space/pull/34) | **Live 2026-11-12** (client via Pages; worker version `5a78740c` at 100%; D1 migration 0003 applied). 0a: #32 squash-merged, #30/#31 closed. 0b: session-gated, rate-limited LLM routes; $3.70/day breaker; `llm_usage` ledger; `/concept` derives its own context via `/shared`; tool output validated before caching, one retry, strict concept schema (the real-model check caught 1 malformed concept in 15). 0c: lazy concepts (3 requests at start, was 45); concept + pick on Haiku 5.5. 0d: 95 unit tests, browser smoke test, seed gallery, CI; logbook lost-update fix. Measured about $0.10 per four-planet session (was about $0.29). #34: aim-to-chart only counts in open space (an orbiting plane was charting systems nobody aimed at). |
-| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35) | **1a (true colours) shipped 2026-11-12.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
+| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) in review; art direction is the open pick.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
 | 2. Loop | ⌛ Pending | — | |
 | 3. Sound | ⌛ Pending | — | |
 | 4. Brain | ⌛ Pending | — | |
@@ -154,6 +154,19 @@ What was built, and where it differs from the first draft of this plan:
 - Known limits: Quaternius leaf and petal cards are alpha-cut quads, so they still render as solid polygons; stylized trees are two flat colours each.
 
 **1b. Light, shadow, tone (1 to 2 PRs).**
+
+*Step 1, the look lab, is built (in review). Step 2 puts the chosen look into the game.*
+
+- **`?lookLab=1`** draws the five reference planets in four looks, switched live: the game as it is now, and three candidates.
+  - **Paper diorama** (recommended): two soft tones, cool shade, warm edge light, card grain, soft shadows, tilt-shift in photos.
+  - **Sunlit low-poly:** plain cosine shading on crisp facets, sharp shadows, contact shading, filmic tone mapping, bloom.
+  - **Inked storybook:** three flat tones, drawn outlines from depth and normals, hatched shade, paper grain.
+- **A look is data** (`src/render/Looks.js`): light colours and strengths, a shading ramp, and finishing-pass settings. Three modules read it: `Rig.js` (lights, one 2048 sun shadow map around the planet), `LookMaterial.js` (ramp shading, rim light, card grain), `Post.js` (contact shading, bloom, outline, tilt-shift, tone mapping, page effects).
+- **Only the bench uses these modules so far.** The game still renders the `now` look. Step 2 wires the chosen look into the game and the other benches, fits the shadow map around the camera, and removes the looks that lost.
+- **`npm run look:sheet`** renders every planet, view and look to `look-sheet/index.html` for side-by-side comparison. CI renders the first planet and uploads it as the `look-lab` artifact.
+- Known limits of the bench: water keeps its own shader (it takes the finishing pass but not the ramp or shadows); card grain is fixed in world space, which is fine on a bench but must become planet-local in the game.
+
+Planned for the game:
 - One shared `Rig` for the game and all benches.
 - A single sun shadow map fitted around the camera. Planets are about 100 m across, so one 2048 map covers the visible cap.
 - Post pipeline: tone mapping, bloom on the sun and emissive parts, a light vignette. Night side gets lit windows, lamp posts and fireflies instead of flat teal.
