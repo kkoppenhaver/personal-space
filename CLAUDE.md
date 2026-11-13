@@ -66,12 +66,22 @@ downstream obeys it:
   own materials.
 - Tier 3 lore: pilot's journal, spoken-not-written, written against the
   actually-mounted assets, never answers the planet's question.
-- Looks (roadmap 1b, `src/render/`): a look is data in `Looks.js` (lights,
-  shading ramp, finishing pass). `Rig.js` sets the lights and the sun's
-  shadow map, `LookMaterial.js` swaps each flat Lambert material for a
-  ramp-shaded one, `Post.js` runs the finishing pipeline. **Only the look
-  lab uses them so far**; the game still renders the `now` look until one
-  is chosen.
+- Look (roadmap 1b, `src/render/`): **sunlit low-poly**, in the game and
+  every bench except the contact sheet. `Looks.js` holds its numbers (do not
+  retune casually; they were approved on the look lab). `Rig.js`: sun + sky
+  hemisphere + ambient, one PCF sun shadow map. `ShadowFit.js`: the shadow
+  box follows the camera (small near the ground, the whole planet from
+  far), snapped to shadow texels from the planet centre, so no shimmer and
+  no jump on a floating-origin rebase. `Shadows.js` `setShadowFlags` is the
+  only place cast/receive flags are set (Planet, Plane call it; reveal-
+  dithered assets get a dithered depth material). Only the active planet
+  casts. `Post.js`: HDR → GTAO → bloom → OutputPass (ACES) → saturation/
+  contrast/vignette. Lambert materials are already right for the look.
+- Quality tiers (`Quality.js`, pure + unit-tested; `QualityControl.js`
+  glue): high / medium (no GTAO, 1024 shadows) / low (no composer, no
+  shadows, tone mapping on the renderer). Auto starts high, measures once
+  settled, only ever steps down. Override: pause menu (saved),
+  `?quality=…` (session), `__GAME.setQuality(…)`.
 
 ## Dev commands & benches
 
@@ -84,15 +94,19 @@ downstream obeys it:
 - `?placementLab=1&seed=…&sea=…&motif=…&tier=…&hero=<catalog-id>` — one
   forced-concept planet through the real applyVisuals path, no flying.
   `&flat=1` shows the pre-1a flat family colours for A/B.
-- `?lookLab=1` — the art-direction bench (roadmap 1b): the five reference
-  planets drawn in each look from `src/render/Looks.js`, switched live
-  (1–4 look, ←/→ planet, V photo view). `npm run look:sheet` renders every
-  planet × view × look to `look-sheet/index.html` (gitignored).
+- `?lookLab=1` — the lighting bench (roadmap 1b): the five reference
+  planets in the game's look or the pre-1b baseline (`now`, kept one more
+  PR for A/B), switched live (1–2 look, ←/→ planet, V photo view).
+  `npm run look:sheet` renders every planet × view × look to
+  `look-sheet/index.html` (gitignored). Placement and terrain labs take
+  `&look=now` too.
 - Console hooks: `__GAME.testTier2(seed)` (full chain, uses the planet's
   concept), `__GAME.rollStats()` (tier pacing), `__GAME.auditMaterials()`,
   `__GAME.testAsset(url)`, `__GAME.debugPlacement = true`,
   `__GAME.llmCalls()` (network LLM requests this session, per route),
-  `__GAME.conceptScheduler.stats`.
+  `__GAME.conceptScheduler.stats`, `__GAME.quality` /
+  `__GAME.setQuality('auto'|'high'|'medium'|'low')`, `__GAME.testThumbnail()`
+  (capture vs live canvas, side by side).
 - `npm run build` — must pass before any PR.
 
 ## Testing
@@ -101,10 +115,12 @@ downstream obeys it:
   `fake-indexeddb` for the logbook store).
 - `npm run test:e2e` — Playwright on the production bundle, offline (no worker,
   no LLM; port 5187; SwiftShader WebGL): `smoke.spec.js` boots the game,
-  warps, fails on page errors / console errors. The console-error allowlist
+  waits for auto quality to settle (SwiftShader lands on `low` in a few
+  seconds), warps, draws every quality tier, fails on page errors /
+  console errors. The console-error allowlist
   lives in `tests/e2e/guard.js` — every entry needs a reason. The guard also
   answers every worker route with 503, so nothing reaches port 8787.
-- `looklab.spec.js` boots `?lookLab=1` and draws every look (a shader that
+- `looklab.spec.js` boots `?lookLab=1` and draws both looks (a shader that
   fails to compile fails the test); CI uploads the images as `look-lab`.
 - **Seed gallery** (`gallery.spec.js`): 8 fixed planets (listed in
   `src/dev/galleryPlanets.js`) through
@@ -114,6 +130,15 @@ downstream obeys it:
 - CI (`.github/workflows/ci.yml`): build, unit, worker `--dry-run` bundle, e2e.
 
 ## Conventions & gotchas
+
+- Rendering: set the sky with `scene.background` (a `THREE.Color`), never
+  `renderer.setClearColor` — through the composer the clear colour would be
+  sRGB-encoded twice. Custom `ShaderMaterial`s output linear light and
+  include `<tonemapping_fragment>` + `<colorspace_fragment>` (no-ops in the
+  composer's HDR buffer, right on the `low` tier). Anything see-through must
+  be `transparent` (or `userData.noAO`) so GTAO's prepass skips it.
+  Benches in screenshot mode draw on demand: SwiftShader takes seconds per
+  full-pipeline frame.
 
 - Worker prompt/schema changes require `npx wrangler deploy` from `worker/` —
   call it out in the PR; the frontend needs nothing (Pages auto-deploy).
