@@ -52,7 +52,10 @@ export const LOOKS = {
       toneMapping: THREE.ACESFilmicToneMapping,
       exposure: 1.02,
       ao: { radius: 3.0, intensity: 0.8 },
-      bloom: { strength: 0.22, radius: 0.55, threshold: 1.0 },
+      // Only light sources and glints glow. Pale ground facing the sun
+      // reaches about 1.7 in the HDR buffer, and must not: a threshold of 1
+      // put a haze over every bright surface and the paper plane.
+      bloom: { strength: 0.22, radius: 0.55, threshold: 2.0 },
       saturation: 1.1,
       contrast: 1.0,
       vignette: 0.14,
