@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 import { TUNING } from '../game/Tuning.js';
 
+// How bright the daylit sky is drawn, shared by every atmosphere shell.
+// The look sets it (Looks.js `skyGain`, applied in main.js): filmic tone
+// mapping lifts mid tones, so a sky drawn at full palette strength comes out
+// pale and grey.
+export const SKY_GAIN = { value: 1 };
+
 // Translucent shell around planet. Density is a smooth function of altitude.
 export class Atmosphere {
   constructor({ planet, radius }) {
@@ -23,6 +29,7 @@ export class Atmosphere {
         uAtmRadius: { value: radius },
         uScaleH: { value: TUNING.ATM_TOP * 0.28 },
         uColor: { value: new THREE.Color(0x8fbcec) },
+        uGain: SKY_GAIN,
         uSunDir: { value: new THREE.Vector3(1, 0.6, 0.4).normalize() },
         uSunColor: { value: new THREE.Color(0xfff2d6) },
       },
@@ -41,6 +48,7 @@ export class Atmosphere {
         uniform float uAtmRadius;
         uniform float uScaleH;
         uniform vec3 uColor;
+        uniform float uGain;
         uniform vec3 uSunDir;
         uniform vec3 uSunColor;
 
@@ -78,7 +86,7 @@ export class Atmosphere {
             float sun = dot(n, uSunDir);
             float day = smoothstep(-0.2, 0.35, sun);
             float dusk = smoothstep(-0.35, 0.0, sun) * (1.0 - smoothstep(0.0, 0.35, sun));
-            light += (uColor * (0.05 + day) + vec3(1.0, 0.48, 0.22) * dusk * 0.9) * d;
+            light += (uColor * (0.05 + day) + vec3(1.0, 0.48, 0.22) * dusk * 0.9) * uGain * d;
           }
           vec3 col = light / max(depth, 1e-4);
           // Forward scattering: the sky brightens toward the sun.

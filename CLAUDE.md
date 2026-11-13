@@ -80,6 +80,9 @@ downstream obeys it:
   right for the look. Bloom's threshold is 2: sunlit ground reaches about
   1.7 and must not glow, so anything meant to glow (the star's disc, later
   lamps and windows) has to be drawn brighter than 2.
+  The look's `skyGain` scales the daytime sky backdrop, haze and atmosphere
+  shell (`Atmosphere.SKY_GAIN`): ACES lifts mid tones, so a full-strength
+  sky comes out pale and makes the whole day side read as bright.
 - Quality tiers (`Quality.js`, pure + unit-tested; `QualityControl.js`
   glue): high / medium (no GTAO, 1024 shadows) / low (no composer, no
   shadows, tone mapping on the renderer). MSAA is 4× on high, 2× where the

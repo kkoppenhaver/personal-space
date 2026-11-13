@@ -35,13 +35,18 @@ export const LOOKS = {
     name: 'Sunlit low-poly',
     blurb: 'Crisp facets in clear daylight: soft-edged shadows, cool blue shade, contact shading, filmic colour, glow on the brightest parts.',
     background: 0x060912,
+    // The daylit sky, haze and atmosphere are drawn at this fraction of the
+    // planet's sky colour. Filmic tone mapping lifts mid tones, so at full
+    // strength the sky came out pale grey and the whole day side read as
+    // bright.
+    skyGain: 0.65,
     lights: {
-      sun: { color: 0xfff3dc, intensity: 3.9 },
+      sun: { color: 0xfff3dc, intensity: 3.4 },
       fill: null,
       // A strong, blue sky fill: shade is a cool mid tone, not near-black,
       // and reads as shade by its colour as much as its darkness.
-      hemi: { sky: 0x9cbcff, ground: 0x8f7a62, intensity: 1.45 },
-      ambient: { color: 0xffffff, intensity: 0.12 },
+      hemi: { sky: 0x9cbcff, ground: 0x8f7a62, intensity: 1.75 },
+      ambient: { color: 0xffffff, intensity: 0.14 },
     },
     // Soft-edged, and not fully dark: a little of the sun still reaches
     // shadowed ground, standing in for light bounced off everything nearby.
@@ -50,7 +55,7 @@ export const LOOKS = {
     shadow: { radius: 3.0, intensity: 0.94, bias: -0.0005, normalBias: 0.18 },
     post: {
       toneMapping: THREE.ACESFilmicToneMapping,
-      exposure: 1.02,
+      exposure: 0.8,
       ao: { radius: 3.0, intensity: 0.8 },
       // Only light sources and glints glow. Pale ground facing the sun
       // reaches about 1.7 in the HDR buffer, and must not: a threshold of 1
