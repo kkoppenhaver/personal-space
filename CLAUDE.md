@@ -64,6 +64,17 @@ downstream obeys it:
   offset from that mean (`ColorGrade.js`). Meshes with no authored colour
   fall back to the flat family colour. Dynamic Poly Pizza assets keep their
   own materials.
+- Sky (roadmap 1c): `render/SkyPalette.js` derives zenith, horizon, dusk
+  warm/cool and night colours from a planet's `palette.sky`; settings live
+  in `Looks.js` under `sky`. `Atmosphere.js` draws one transparent shell: a
+  thin rim from space (a short exponential layer in closed form, no
+  raymarch) and, from inside, a sky set by the sun's elevation that is
+  opaque by day. Draw order matters: anything drawn before the shell is
+  hidden by a daytime sky; the active system's star is transparent with
+  `renderOrder` 5 so it draws after the sky, clouds use 6. Clouds
+  (`Clouds.js`, `CloudStyle.js`): one shell per planet with a baked seeded
+  noise texture; register sets the form (baked), biome sets amount and tint
+  (uniforms only). Only the active planet shows clouds.
 - Terrain detail (roadmap 1d): every planet has a coarse mesh, and
   placement always reads `planet.geometry` (coarse), never
   `planet.mesh.geometry`. The planet the player is at gets a mesh 2–4×
