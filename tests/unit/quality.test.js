@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   TIERS, TIER_SETTINGS, AUTO, parseQuality, lowerTier, initialAuto, stepAuto, resolveTier,
+  droppedShare, msaaFor,
 } from '../../src/render/Quality.js';
 
 // Feed `n` frames of `ms` each, starting at `t0`. Returns [state, t].
@@ -44,6 +45,17 @@ describe('quality settings', () => {
   });
 });
 
+describe('msaaFor', () => {
+  it('uses 2× on dense displays and the tier value otherwise', () => {
+    expect(msaaFor(TIER_SETTINGS.high, 1)).toBe(4);
+    expect(msaaFor(TIER_SETTINGS.high, 1.25)).toBe(4);
+    expect(msaaFor(TIER_SETTINGS.high, 1.5)).toBe(2);
+    expect(msaaFor(TIER_SETTINGS.high, 2)).toBe(2);
+    expect(msaaFor(TIER_SETTINGS.medium, 1.5)).toBe(2);
+    expect(msaaFor(TIER_SETTINGS.low, 1)).toBe(0);
+  });
+});
+
 describe('auto tier', () => {
   it('keeps high on a fast machine and stops deciding', () => {
     let [s] = run(initialAuto(0), 400, 16.7);
@@ -82,6 +94,58 @@ describe('auto tier', () => {
     expect(s.tier).toBe('low');
     [s] = run(initialAuto(0), 5, 400);
     expect(s.tier).toBe('medium');
+  });
+
+  it('steps down when a fifth of the frames are dropped, even with a fine median', () => {
+    // 60 Hz display, GPU needs ~20 ms: four frames on time, the fifth takes two intervals.
+    let s = initialAuto(0);
+    let t = 0;
+    for (let i = 0; i < 400 && s.tier === 'high'; i++) {
+      const ms = i % 5 === 4 ? 33.3 : 16.7;
+      t += ms;
+      s = stepAuto(s, ms, t);
+    }
+    expect(s.tier).toBe('medium');
+  });
+
+  it('one stuttering window (a planet mounting) is not enough', () => {
+    let s = initialAuto(0);
+    let t = 0;
+    // Settle (2.5 s), then exactly one window with a fifth of its frames dropped, then smooth.
+    [s, t] = run(s, 160, 16.7, t);
+    s = { ...s, samples: [] };                         // start the window here
+    for (let i = 0; i < AUTO.sampleFrames; i++) {
+      const ms = i % 5 === 4 ? 33.3 : 16.7;
+      t += ms;
+      s = stepAuto(s, ms, t);
+    }
+    expect(s.tier).toBe('high');
+    expect(s.done).toBe(false);
+    expect(s.strikes).toBe(1);
+    [s, t] = run(s, AUTO.sampleFrames, 16.7, t);
+    expect(s.tier).toBe('high');
+    expect(s.done).toBe(true);
+  });
+
+  it('does not count slightly late frames on a fast display as dropped', () => {
+    // 120 Hz: a quarter of the frames take two intervals (16.7 ms). Still over 100 fps.
+    let s = initialAuto(0);
+    let t = 0;
+    for (let i = 0; i < 600; i++) {
+      const ms = i % 4 === 3 ? 16.7 : 8.3;
+      t += ms;
+      s = stepAuto(s, ms, t);
+    }
+    expect(s.tier).toBe('high');
+    expect(s.done).toBe(true);
+  });
+
+  it('droppedShare: the share of frames clearly slower than the usual one', () => {
+    expect(droppedShare([])).toBe(0);
+    expect(droppedShare(Array(90).fill(16.7))).toBe(0);
+    expect(droppedShare([...Array(80).fill(16.7), ...Array(20).fill(33.3)])).toBeCloseTo(0.2, 5);
+    // A steady 30 fps has no dropped frames: the median rule judges that case.
+    expect(droppedShare(Array(90).fill(33.3))).toBe(0);
   });
 
   it('ignores one-off stalls (shader compiles) in an otherwise fast run', () => {

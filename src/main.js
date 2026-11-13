@@ -48,6 +48,7 @@ import { createPost } from './render/Post.js';
 import { viewFit } from './render/ShadowFit.js';
 import { setShadowFlags } from './render/Shadows.js';
 import { createQualityControl } from './render/QualityControl.js';
+import { msaaFor } from './render/Quality.js';
 
 // Validate a server-returned saved position. Returns null for missing,
 // malformed, or non-finite data so we fall through to the default home spawn.
@@ -157,7 +158,7 @@ async function main() {
     isPaused: () => paused,
     onTier: (tier, t) => {
       useComposer = t.composer;
-      post.setQuality({ ao: t.ao, bloom: t.bloom, msaa: t.msaa });
+      post.setQuality({ ao: t.ao, bloom: t.bloom, msaa: msaaFor(t, Math.min(devicePixelRatio, t.pixelRatioCap)) });
       rig.setQuality({ shadows: t.shadows, shadowMapSize: t.shadowMapSize });
       sizeRenderer();
       console.info(`[quality] ${tier}${quality.state.choice === 'auto' ? ' (auto)' : ''}`);

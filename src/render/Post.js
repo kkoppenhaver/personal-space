@@ -69,6 +69,9 @@ const PageFx = {
 const isSeeThrough = (m) => !m || m.transparent || m.blending === THREE.AdditiveBlending
   || (m.userData?.revealUniform && m.userData.revealUniform.value < 1);
 
+/** Contact shading (GTAO) is drawn at this fraction of the frame's width and height. */
+const AO_SCALE = 0.5;
+
 class SolidOnlyGTAOPass extends GTAOPass {
   _overrideVisibility() {
     super._overrideVisibility();
@@ -180,6 +183,11 @@ export function createPost(renderer, scene, camera) {
     /** Size in device pixels. */
     setSize(w, h) {
       composer.setSize(w, h);
+      // Contact shading is soft and low-frequency: half resolution each way
+      // costs a quarter as much and looks the same once blended. At full
+      // resolution it and 4× MSAA together dropped frames on a retina window
+      // (2880×1800, Apple M4 Pro: 49 fps; at half resolution, 60).
+      ao.setSize(Math.max(1, Math.round(w * AO_SCALE)), Math.max(1, Math.round(h * AO_SCALE)));
       pageFx.uniforms.uAspect.value = w / h;
     },
 
