@@ -23,6 +23,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { CopyShader } from 'three/addons/shaders/CopyShader.js';
+import { mulberry32 } from '../../shared/prng.js';
 
 const FULLSCREEN_VERT = /* glsl */`
 varying vec2 vUv;
@@ -100,6 +101,12 @@ class SolidOnlyGTAOPass extends GTAOPass {
  * @param {THREE.Scene} scene
  * @param {THREE.PerspectiveCamera} camera
  */
+function withSeededRandom(seed, fn) {
+  const random = Math.random;
+  Math.random = mulberry32(seed);
+  try { return fn(); } finally { Math.random = random; }
+}
+
 export function createPost(renderer, scene, camera) {
   const target = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: 4 });
   const composer = new EffectComposer(renderer, target);
@@ -107,7 +114,9 @@ export function createPost(renderer, scene, camera) {
   composer.setPixelRatio(1);
 
   const renderPass = new RenderPass(scene, camera);
-  const ao = new SolidOnlyGTAOPass(scene, camera, 4, 4);
+  // GTAOPass builds its denoise noise texture with SimplexNoise(Math.random):
+  // seed it, so a render repeats pixel for pixel (the seed gallery).
+  const ao = withSeededRandom(0x6a70, () => new SolidOnlyGTAOPass(scene, camera, 4, 4));
   const bloom = new UnrealBloomPass(new THREE.Vector2(4, 4), 0.2, 0.5, 1.0);
   const output = new OutputPass();
   const pageFx = new ShaderPass(PageFx);
