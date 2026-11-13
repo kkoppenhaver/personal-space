@@ -84,6 +84,12 @@ async function main() {
     await runPlacementLab();
     return;
   }
+  // `?lookLab=1` — the art-direction bench (src/dev/LookLab.js).
+  if (new URLSearchParams(location.search).has('lookLab')) {
+    const { runLookLab } = await import('./dev/LookLab.js');
+    await runLookLab();
+    return;
+  }
 
   // 1. Init Rapier WASM
   await RAPIER.init();
