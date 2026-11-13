@@ -985,7 +985,8 @@ async function main() {
 
     onRender: (dt) => {
       // Fine terrain on the planet the player is at (roadmap 1d).
-      terrainDetail.update(Array.from(galaxy.allPlanets(), (r) => r.planet), plane.position());
+      const _planeAt = plane.position();
+      terrainDetail.update(Array.from(galaxy.allPlanets(), (r) => r.planet), _planeAt, origin.toGalaxy(_planeAt));
       // Atmosphere shader breathes with player altitude
       activeAtmosphere.tick(plane.position(), camera);
       // Reveal-as-you-fly: advance the asset fade for EVERY loaded planet

@@ -64,8 +64,11 @@ export function planDetail(planets, { jump = false } = {}, d = DETAIL) {
 }
 
 /**
- * Per-frame scheduler. `update(planets, planePos)` with Planet objects.
- * Builds one planet at a time, nearest first, within STEP_BUDGET_MS.
+ * Per-frame scheduler. `update(planets, planePos, galaxyPos)` with Planet
+ * objects; `galaxyPos` (the plane in galaxy coordinates) detects jumps, so a
+ * floating-origin rebase — which moves the plane's render position — is not
+ * mistaken for one. Builds one planet at a time, nearest first, within
+ * STEP_BUDGET_MS.
  */
 export class TerrainDetail {
   constructor(d = DETAIL) {
@@ -74,10 +77,10 @@ export class TerrainDetail {
     this.stats = { refines: 0, syncRefines: 0, releases: 0, lastBuildMs: 0, maxStepMs: 0 };
   }
 
-  update(planets, planePos) {
+  update(planets, planePos, galaxyPos = planePos) {
     if (!Array.isArray(planets)) planets = Array.from(planets);
-    const jump = !this.lastPos || this.lastPos.distanceTo(planePos) > this.d.JUMP_M;
-    this.lastPos = (this.lastPos || planePos.clone()).copy(planePos);
+    const jump = !this.lastPos || this.lastPos.distanceTo(galaxyPos) > this.d.JUMP_M;
+    this.lastPos = (this.lastPos || galaxyPos.clone()).copy(galaxyPos);
     const byId = new Map();
     const rows = planets.map((p, i) => {
       byId.set(i, p);

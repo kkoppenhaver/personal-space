@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { DETAIL, fineFactorFor, planDetail } from '../../src/world/TerrainDetail.js';
+import { DETAIL, fineFactorFor, planDetail, TerrainDetail } from '../../src/world/TerrainDetail.js';
 import {
   buildPlanetGeometry, buildFineTerrain, buildFineTerrainNow,
   fineDetailOf, icoTriangles, COARSE_DETAIL,
@@ -62,6 +62,46 @@ describe('planDetail', () => {
     expect(plan.refine).toEqual(['c']);
     expect(plan.release).toEqual(['b']);
     expect(planDetail([row('a', 10), row('b', 20), row('c', 30, 'building')]).release).toEqual(['c']);
+  });
+});
+
+describe('TerrainDetail scheduler', () => {
+  const fakePlanet = (x, radius = 100) => {
+    const p = {
+      center: new THREE.Vector3(x, 0, 0), radius, detailState: 'coarse', calls: [],
+      beginRefine(k) { this.calls.push(['begin', k]); this.detailState = 'building'; },
+      stepRefine() { this.calls.push(['step']); this.detailState = 'fine'; return true; },
+      refineNow(k) { this.calls.push(['now', k]); this.detailState = 'fine'; },
+      coarsen() { this.calls.push(['coarsen']); this.detailState = 'coarse'; },
+    };
+    return p;
+  };
+
+  it('refines in the frame on the first update, and asynchronously when flown into range', () => {
+    const td = new TerrainDetail();
+    const near = fakePlanet(0), far = fakePlanet(5000);
+    const pos = new THREE.Vector3(400, 0, 0);
+    td.update([near, far], pos);
+    expect(near.calls).toEqual([['now', 3]]);
+    expect(far.calls).toEqual([]);
+    // fly toward `far` a few metres a frame: no jump → begin + step
+    const g = pos.clone();
+    for (let x = 400; x <= 3900; x += 5) { pos.set(x, 0, 0); g.copy(pos); td.update([near, far], pos, g); }
+    expect(far.calls[0]).toEqual(['begin', 3]);
+    expect(far.calls.some((c) => c[0] === 'now')).toBe(false);
+  });
+
+  it('does not take a floating-origin rebase for a jump', () => {
+    const td = new TerrainDetail();
+    const a = fakePlanet(0);
+    td.update([a], new THREE.Vector3(5000, 0, 0), new THREE.Vector3(5000, 0, 0));   // out of range
+    // The world shifts by −4000: render position jumps, galaxy position does not.
+    a.center.x -= 4000;
+    td.update([a], new THREE.Vector3(1000, 0, 0), new THREE.Vector3(5002, 0, 0));
+    expect(a.calls).toEqual([]);
+    // Next frame, plane flies into range of `a` normally.
+    td.update([a], new THREE.Vector3(-2900, 0, 0), new THREE.Vector3(5004, 0, 0));
+    expect(a.calls[0][0]).toBe('begin');
   });
 });
 
