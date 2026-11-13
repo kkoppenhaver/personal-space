@@ -174,7 +174,11 @@ Changed in review, after looking at the game and measuring on a real GPU:
 - **Bloom threshold 1.0 → 2.0.** At 1.0, pale ground facing the sun (about 1.7 in the HDR buffer) and the white plane glowed, which put a haze over bright scenes. Now only light sources and glints glow. The star's disc is drawn 4× brighter than its colour so it does.
 - **Contact shading at half resolution**, and **2× MSAA instead of 4× on dense displays** (pixel ratio 1.5 or more). On an Apple M4 Pro at 2880×1800 the top tier cost about 17 ms a frame with 4× MSAA and about 12 ms with 2×.
 - **Auto quality also counts dropped frames.** A machine that almost keeps up has a fine median and a stutter (every fifth frame late). More than 15% of frames late, in two measuring windows in a row, now steps down a tier.
-- Known: pale ground under a high sun is very bright (near white). The look was tuned with the sun at 50° from overhead; straight overhead gives about a third more light. Left as is until it is seen in play.
+
+Tuned after flying it (2026-11-13). The day side read as too bright in the game:
+- **Exposure 1.02 → 0.8**, with the shade held where it was (sky fill 1.45 → 1.75, ambient 0.12 → 0.14, sun 3.9 → 3.4). Sunlit surfaces are about a fifth darker; shadows are no darker.
+- **`skyGain: 0.65`** (new look setting): the daytime sky backdrop, haze and atmosphere shell are drawn at about two thirds of the planet's sky colour. Filmic tone mapping lifts mid tones, so at full strength the sky came out pale grey and was most of the brightness.
+- The bench planets approved on the look lab change only slightly (a little less bright; shadows a touch softer in contrast).
 
 Still to do in 1b:
 - Night side: lit windows, lamp posts and fireflies instead of flat dark.
