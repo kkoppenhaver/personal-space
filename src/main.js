@@ -4,6 +4,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from './game/Tuning.js';
 import { Contrail } from './game/Contrail.js';
 import { Motes, moteKindFor } from './world/Motes.js';
+import { nightLighting } from './world/NightLights.js';
 import { WATER_TIME } from './world/Water.js';
 import { GameLoop } from './game/GameLoop.js';
 import { Input } from './game/Input.js';
@@ -991,6 +992,12 @@ async function main() {
       for (const ref of galaxy.allPlanets()) {
         if (ref.planet.reveal) ref.planet.tickReveal(dt, planePos, camera, ref.atmosphere);
       }
+      // Night side (1b): each planet's lights follow its own star; fireflies hug the ground;
+      // the sky's fill light dims after dark where the player is.
+      const sunPos0 = activeSystem?.sun?.position;
+      for (const ref of galaxy.allPlanets()) ref.planet.night?.update(ref.system.sun?.position);
+      motes.setGround(activePlanet);
+      rig.setNight(sunPos0 && activePlanet ? nightLighting(planePos, activePlanet.center, sunPos0, activeAtmosphere.density(planePos)) : {});
       // Key light from the active system's sun onto the active planet.
       const sunPos = activeSystem?.sun?.position;
       aimRig(camera);
