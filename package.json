@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "look:sheet": "LOOK_SHEET=1 playwright test looklab",
     "postinstall": "node tools/copy-decoders.js",
     "build:catalog": "node tools/embed-catalog.js"
   },

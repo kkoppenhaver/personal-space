@@ -28,11 +28,8 @@
 
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { Planet } from '../world/Planet.js';
-import { getAssetById } from '../world/assets/Catalog.js';
-import { load as loadGLB } from '../world/AssetCache.js';
-import { normalizeShape, normalizePattern } from '../../shared/planet-dice.js';
 import { GRADE } from '../world/ColorSystem.js';
+import { buildLabPlanet, LAB_RADIUS } from './labPlanet.js';
 
 const DEFAULTS = {
   hero: 'kenney:space:hangar_largeA',           // the prod float case
@@ -47,10 +44,7 @@ export async function runPlacementLab() {
   }
 
   const params = new URLSearchParams(location.search);
-  const seed = (parseInt(params.get('seed') || '42', 10) || 42) >>> 0;
-  const biome = params.get('biome') || 'forest';
   if (params.get('flat') === '1') GRADE.enabled = false;
-  const density = params.get('density') || 'medium';
 
   // isDebugOn() reads this global; set it before applyVisuals mounts.
   globalThis.__GAME = globalThis.__GAME || {};
@@ -76,79 +70,13 @@ export async function runPlacementLab() {
   await RAPIER.init();
   const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
 
-  const radius = 60;
+  const radius = LAB_RADIUS;
   const shot = params.has('shot');
-  const planet = new Planet({
-    rapier: RAPIER, world, seed, radius, center: new THREE.Vector3(),
-    shape: normalizeShape(params.get('shape')),
-    pattern: normalizePattern(params.get('pattern')),
+  const { planet, info } = await buildLabPlanet(params, {
+    rapier: RAPIER, world, renderer, defaults: DEFAULTS, serial: shot, tag: 'placementLab',
   });
   scene.add(planet.group);
-
-  // Forced concept (Phase 14b): sea/amp/slots/motif/subjects/embed/tier
-  // params build a synthetic concept so the reference planets are
-  // reproducible without a worker. e.g.
-  //   ?placementLab=1&sea=0&amp=0.8&slots=3&motif=shared-heading&subjects=landmarks&embed=0.4&tier=singular
-  if (['sea', 'amp', 'slots', 'motif', 'embed'].some((k) => params.has(k))) {
-    if (params.has('tier')) planet.tier = params.get('tier');
-    planet.applyConcept({
-      teaser: 'forced lab concept',
-      premise: 'forced lab concept',
-      question: 'is the placement right?',
-      biome,
-      terrain: {
-        sea_level: parseFloat(params.get('sea') ?? '0.42'),
-        amplitude: parseFloat(params.get('amp') ?? '1.0'),
-      },
-      landmark_slots: parseInt(params.get('slots') ?? '4', 10),
-      hero_on_water: params.has('heroWater'),
-      creature_budget: parseFloat(params.get('creatures_budget') ?? '0.35'),
-      density,
-      motif: { kind: params.get('motif') ?? 'none', subjects: params.get('subjects') ?? 'surface' },
-      ...(params.has('embed') ? { embed_bias: parseFloat(params.get('embed')) } : {}),
-      asset_keywords: [],
-    });
-  }
-
-  const ids = (key) => (params.get(key) ?? DEFAULTS[key] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  const heroAsset = getAssetById(params.get('hero') || DEFAULTS.hero);
-  const landmarkAssets = ids('landmarks').map(getAssetById);
-  const surfaceAssets = ids('surface').map(getAssetById);
-  const creatureAssets = ids('creatures').map(getAssetById).filter(Boolean);
-  for (const [k, v] of [['hero', heroAsset], ['landmarks', landmarkAssets], ['surface', surfaceAssets]]) {
-    const missing = (Array.isArray(v) ? v : [v]).filter((x) => !x).length;
-    if (missing) console.warn(`[placementLab] ${missing} unknown ${k} id(s) — check the catalog`);
-  }
-
-  if (shot) {
-    // Parse every GLB serially in a fixed order first. applyVisuals loads in
-    // parallel, so geometry/material ids otherwise follow network completion
-    // order — and three's render sort uses material.id, which flips depth
-    // ties at intersections (a few dozen pixels differ run to run).
-    for (const a of [heroAsset, ...landmarkAssets, ...surfaceAssets, ...creatureAssets]) {
-      if (a?.url) await loadGLB(a.url, renderer).catch(() => {});
-    }
-  }
-
-  await planet.applyVisuals({
-    palette: planet.palette,
-    biome,
-    heroAsset,
-    landmarkAssets: landmarkAssets.filter(Boolean),
-    surfaceAssets: surfaceAssets.filter(Boolean),
-    creatureAssets,
-    density,
-    renderer,
-  });
-  // No atmosphere in the lab — snap the reveal solid.
-  planet.forceRevealComplete();
-  console.log('[placementLab] mounted', {
-    seed, biome, density,
-    hero: heroAsset?.id,
-    landmarks: landmarkAssets.filter(Boolean).map((a) => a.id),
-    surface: surfaceAssets.filter(Boolean).map((a) => a.id),
-    slots: planet.landmarks.map((s) => `${s.slotId}:${s.kind}`),
-  });
+  console.log('[placementLab] mounted', info);
 
   // ── Minimal orbit controls (drag + scroll) ──────────────────────────
   let theta = 0.6, phi = 1.05, dist = radius * 2.6;
