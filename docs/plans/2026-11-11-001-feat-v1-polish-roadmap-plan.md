@@ -13,7 +13,7 @@ scope: whole project (supersedes plan.md "Phase 3+ vision roadmap" and master-pl
 | Phase | Status | PR | Notes |
 |---|---|---|---|
 | 0. Foundations | ✅ Done | [#33](https://github.com/kkoppenhaver/personal-space/pull/33), [#34](https://github.com/kkoppenhaver/personal-space/pull/34) | **Live 2026-11-12** (client via Pages; worker version `5a78740c` at 100%; D1 migration 0003 applied). 0a: #32 squash-merged, #30/#31 closed. 0b: session-gated, rate-limited LLM routes; $3.70/day breaker; `llm_usage` ledger; `/concept` derives its own context via `/shared`; tool output validated before caching, one retry, strict concept schema (the real-model check caught 1 malformed concept in 15). 0c: lazy concepts (3 requests at start, was 45); concept + pick on Haiku 5.5. 0d: 95 unit tests, browser smoke test, seed gallery, CI; logbook lost-update fix. Measured about $0.10 per four-planet session (was about $0.29). #34: aim-to-chart only counts in open space (an orbiting plane was charting systems nobody aimed at). |
-| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) shipped 2026-11-12. Art direction picked 2026-11-12: sunlit low-poly, with soft shadows. 1b step 2 (the look in the game) in review.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
+| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37), [#38](https://github.com/kkoppenhaver/personal-space/pull/38) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) shipped 2026-11-12. Art direction picked 2026-11-12: sunlit low-poly, with soft shadows. 1b step 2 (the look in the game) in review.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
 | 2. Loop | ⌛ Pending | — | |
 | 3. Sound | ⌛ Pending | — | |
 | 4. Brain | ⌛ Pending | — | |
@@ -155,7 +155,7 @@ What was built, and where it differs from the first draft of this plan:
 
 **1b. Light, shadow, tone (1 to 2 PRs).**
 
-*Step 1, the look lab, shipped 2026-11-12 ([#37](https://github.com/kkoppenhaver/personal-space/pull/37)); sunlit low-poly was picked from it. Step 2 puts that look into the game: in review.*
+*Step 1, the look lab, shipped 2026-11-12 ([#37](https://github.com/kkoppenhaver/personal-space/pull/37)); sunlit low-poly was picked from it. Step 2 puts that look into the game: in review ([#38](https://github.com/kkoppenhaver/personal-space/pull/38)).*
 
 Step 1 (the bench):
 - **`?lookLab=1`** drew the five reference planets in four looks: the game as it was, paper diorama, **sunlit low-poly (picked)**, inked storybook. The sunlit draft had sharp, dark shadows; they were softened the same day (edge about three times softer, more sky fill, a little sun still reaching shadowed ground).
