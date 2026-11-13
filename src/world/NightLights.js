@@ -63,13 +63,14 @@ export function nightAt(pos, center, sunPos) {
  *   sun   how much of the sun to take away. A directional light has no
  *         horizon: once the star has set here, walls facing it would still
  *         be lit from below the ground. Only inside the atmosphere
- *         (`density`), so from space the day side keeps its sun.
+ *         (scaled by `density`, fully from 0.67 up), so
+ *         from space the day side keeps its sun.
  */
 export function nightLighting(pos, center, sunPos, density = 1) {
   const fill = nightAt(pos, center, sunPos);
   const elev = _v.dot(_w);   // set by nightAt
   const set = 1 - THREE.MathUtils.smoothstep(elev, -0.2, -0.03);
-  return { fill, sun: set * Math.min(1, Math.max(0, density)) };
+  return { fill, sun: set * Math.min(1, Math.max(0, density * 1.5)) };
 }
 
 // ── 1. Material patch ────────────────────────────────────────────────
