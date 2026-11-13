@@ -24,6 +24,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 import { applyMaterialSet } from './MaterialSet.js';
 import { prepareAuthoredColor } from './AuthoredColor.js';
+import { prepareNightGlow } from './NightGlow.js';
 
 let _loader = null;
 const _cache = new Map();   // url → Promise<GLTF>
@@ -112,7 +113,11 @@ export async function loadInstance(url, matSet, renderer, assetMeta) {
   // Dynamic assets (Poly Pizza, Phase 7) keep their authored materials —
   // they're textured/vertex-colored one-offs, not kit pieces that need the
   // planet's cohesion recolor.
-  if (matSet && !assetMeta?.preserveMaterials) applyMaterialSet(root, matSet, assetMeta || {});
+  if (matSet && !assetMeta?.preserveMaterials) {
+    applyMaterialSet(root, matSet, assetMeta || {});
+    // Night side (1b): which parts light up (windows, bulbs, crystals).
+    prepareNightGlow(root, assetMeta || {});
+  }
   // Recompute bounding spheres so frustum culling under floating-origin is
   // correct (GLB-supplied bounds are valid pre-clone but become stale on
   // any per-mesh transform we apply downstream).

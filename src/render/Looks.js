@@ -65,6 +65,37 @@ export const LOOKS = {
       contrast: 1.0,
       vignette: 0.14,
     },
+    // Night side (src/world/NightLights.js, NightGlow.js): lit windows,
+    // glowing lamps and their pools on the ground, fireflies. Colours are
+    // linear; intensities are HDR values, so anything over the bloom
+    // threshold (2) glows on tiers with bloom. Nothing here touches the
+    // day side: every light is scaled by how far below the horizon the sun
+    // is at that spot.
+    night: {
+      // Sun elevation (sine) where lights start coming on, and where all
+      // are on: about 7 degrees above the horizon to 4 below.
+      dusk: [0.12, -0.08],
+      // The sky's fill light (lights.hemi) at full night, as a fraction of
+      // itself: moonlit, not the daytime teal. Eases in over a wider band
+      // than the lights (Rig.setNight).
+      skyFill: 0.3,
+      // Warm windows, under the bloom threshold: they read as lit rooms and
+      // do not glow. Lamps are over it and get a soft halo. `lit` is the
+      // share of windows that are on.
+      windows: { color: 0xff9a4a, intensity: 2.2, lit: 0.7 },
+      lamps: { color: 0xffc37a, intensity: 5.0 },
+      // Faint: a lit crystal reads as a glint of its own colour, no glow.
+      crystals: { intensity: 0.3 },
+      // Additive light on the ground. `lampReach` sizes a lamp's pool by
+      // the bulb's height; buildings spill a little around their footprint.
+      pools: { color: 0xffa65a, lamp: 0.35, building: 0.12, lampReach: 1.7 },
+      // One warm speck per light, a few pixels at least, so a settlement
+      // still reads from orbit. Sizes in metres.
+      glints: { color: 0xffa452, lamp: 3.0, lampSize: 1.1, building: 1.8, buildingSize: 3.0 },
+      // Fireflies (Motes.js): HDR brightness, and the height above the
+      // ground (m) they keep under.
+      fireflies: { boost: 2.6, band: 9 },
+    },
   },
 };
 

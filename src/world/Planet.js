@@ -20,6 +20,7 @@ import { loadInstance } from './AssetCache.js';
 import { isDebugOn, attachInstanceHelpers, detachInstanceHelpers } from './DebugPlacement.js';
 import { patchReveal } from './RevealMaterial.js';
 import { setShadowFlags } from '../render/Shadows.js';
+import { mountNightLights } from './NightLights.js';
 
 // Seeds whose asset reveal has completed at least once. A planet streamed
 // out and back in mounts solid (no re-fade on every home-system flyby).
@@ -661,6 +662,9 @@ export class Planet {
     // Shadow depth materials follow the reveal uniforms just patched.
     if (replacingLandmarks) setShadowFlags(this.landmarkGroup, { cast: this.castsShadows });
     if (newFeaturesGroup) setShadowFlags(this.featuresGroup, { cast: this.castsShadows });
+    // Night side (1b): windows, lamps, pools (after the reveal patch).
+    this.night?.dispose();
+    this.night = mountNightLights(this);
 
     rv._resolveMounted();
     if (revealedSeeds.has(this.seed) || _reducedMotion) {
@@ -770,6 +774,8 @@ export class Planet {
     // seed is only in revealedSeeds if the fade actually completed, so a
     // genuine re-approach re-reveals and a completed one snaps solid.
     this.reveal = null;
+    this.night?.dispose();
+    this.night = null;
   }
 
   /**

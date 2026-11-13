@@ -13,7 +13,7 @@ scope: whole project (supersedes plan.md "Phase 3+ vision roadmap" and master-pl
 | Phase | Status | PR | Notes |
 |---|---|---|---|
 | 0. Foundations | ✅ Done | [#33](https://github.com/kkoppenhaver/personal-space/pull/33), [#34](https://github.com/kkoppenhaver/personal-space/pull/34) | **Live 2026-11-12** (client via Pages; worker version `5a78740c` at 100%; D1 migration 0003 applied). 0a: #32 squash-merged, #30/#31 closed. 0b: session-gated, rate-limited LLM routes; $3.70/day breaker; `llm_usage` ledger; `/concept` derives its own context via `/shared`; tool output validated before caching, one retry, strict concept schema (the real-model check caught 1 malformed concept in 15). 0c: lazy concepts (3 requests at start, was 45); concept + pick on Haiku 5.5. 0d: 95 unit tests, browser smoke test, seed gallery, CI; logbook lost-update fix. Measured about $0.10 per four-planet session (was about $0.29). #34: aim-to-chart only counts in open space (an orbiting plane was charting systems nobody aimed at). |
-| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37), [#38](https://github.com/kkoppenhaver/personal-space/pull/38) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) shipped 2026-11-12. Art direction picked 2026-11-12: sunlit low-poly, with soft shadows. 1b step 2 (the look in the game) shipped 2026-11-13. Next in 1b: night-side lights.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
+| 1. Look | 🔄 In progress | [#35](https://github.com/kkoppenhaver/personal-space/pull/35), [#37](https://github.com/kkoppenhaver/personal-space/pull/37), [#38](https://github.com/kkoppenhaver/personal-space/pull/38) | **1a (true colours) shipped 2026-11-12. 1b step 1 (look lab) shipped 2026-11-12. Art direction picked 2026-11-12: sunlit low-poly, with soft shadows. 1b step 2 (the look in the game) shipped 2026-11-13. 1b night-side lights in review. 1c (sky) and 1d (ground) in progress.** All 572 bundled models re-baked to carry their authored colours as vertex colours (bundle 6.7 MB → 2.7 MB, 959 → 572 draw primitives); the renderer grades those colours toward the planet palette. See the 1a notes below. 1b to 1f pending. |
 | 2. Loop | ⌛ Pending | — | |
 | 3. Sound | ⌛ Pending | — | |
 | 4. Brain | ⌛ Pending | — | |
@@ -180,8 +180,17 @@ Tuned after flying it (2026-11-13). The day side read as too bright in the game:
 - **`skyGain: 0.65`** (new look setting): the daytime sky backdrop, haze and atmosphere shell are drawn at about two thirds of the planet's sky colour. Filmic tone mapping lifts mid tones, so at full strength the sky came out pale grey and was most of the brightness.
 - The bench planets approved on the look lab change only slightly (a little less bright; shadows a touch softer in contrast).
 
+Night side (in review: [#41](https://github.com/kkoppenhaver/personal-space/pull/41)), what was built:
+- **Lit windows.** 6 of the 48 building models have their window panes as separate dark parts; those panes glow, and about a third stay dark. On the other 42 the shader draws a grid of window rectangles on wall faces (near-vertical, between 14% and 86% of the model's height, two to five storeys whatever the model's size). All at runtime: a bake-time mask would have found windows on only those 6.
+- **Lamps** (lightposts, light-trees, base lights; found by catalog id): their bright warm parts glow above the bloom threshold, and each puts a soft pool of warm light on the ground. Pools are one merged additive mesh per planet, not real lights; overlapping pools are dimmed so a lamp-lined path does not burn into one strip.
+- **Crystals** glow faintly. Every light also gets a small warm glint that still shows from orbit.
+- **Fireflies** stay within 9 m of the ground at night.
+- **Dusk:** lights come on per fragment from the planet's own sun (elevation +7° to −4°), staggered window by window, and only after the model has revealed.
+- **Night lighting:** where the player is at night, the sky fill dims to 30% (`night.skyFill`), and inside the atmosphere a set sun is switched off (a directional light has no horizon, so walls facing a set sun stayed lit). Without this the lights did not read.
+- Settings live in `Looks.js` under `night`. On `low` (no bloom) lamps still read through their glints.
+- Not covered: planets with no models, and Poly Pizza models (they keep their own materials).
+
 Still to do in 1b:
-- Night side: lit windows, lamp posts and fireflies instead of flat dark.
 - Remove the `now` look once nobody needs the A/B.
 - Known: a display locked at 30 Hz reads as slow to auto and lands on low (override in the pause menu).
 

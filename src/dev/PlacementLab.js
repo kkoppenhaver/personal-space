@@ -39,8 +39,10 @@ import { buildLabPlanet, LAB_RADIUS } from './labPlanet.js';
 import { getLook } from '../render/Looks.js';
 import { createRig } from '../render/Rig.js';
 import { createPost } from '../render/Post.js';
+import { nightLighting } from '../world/NightLights.js';
 
 // The sun direction the bench has always used (the game's old fixed key light).
+// `sun=x,y,z` overrides it (night-side checks: put the sun behind the planet).
 const SUN_DIR = new THREE.Vector3(220, 180, 120).normalize();
 
 const DEFAULTS = {
@@ -57,6 +59,8 @@ export async function runPlacementLab() {
 
   const params = new URLSearchParams(location.search);
   if (params.get('flat') === '1') GRADE.enabled = false;
+  const sunParam = (params.get('sun') || '').split(',').map(Number);
+  if (sunParam.length === 3 && sunParam.every(Number.isFinite)) SUN_DIR.fromArray(sunParam).normalize();
 
   // isDebugOn() reads this global; set it before applyVisuals mounts.
   globalThis.__GAME = globalThis.__GAME || {};
@@ -126,14 +130,29 @@ export async function runPlacementLab() {
   resize();
 
   const _up = new THREE.Vector3();
+  const _sunPos = new THREE.Vector3();
+  let fixedView = null;   // __LAB.view(): a free camera instead of the orbit
   function draw(t = 0) {
     if (auto) theta = t * 0.0001;
-    camera.position.set(
-      dist * Math.sin(phi) * Math.cos(theta),
-      dist * Math.cos(phi),
-      dist * Math.sin(phi) * Math.sin(theta)
-    );
-    camera.lookAt(0, 0, 0);
+    if (fixedView) {
+      camera.position.copy(fixedView.pos);
+      camera.up.copy(fixedView.pos).normalize();
+      camera.lookAt(fixedView.target);
+    } else {
+      camera.position.set(
+        dist * Math.sin(phi) * Math.cos(theta),
+        dist * Math.cos(phi),
+        dist * Math.sin(phi) * Math.sin(theta)
+      );
+      camera.up.set(0, 1, 0);
+      camera.lookAt(0, 0, 0);
+    }
+    // Night lights follow the bench sun (a far point along SUN_DIR).
+    _sunPos.copy(SUN_DIR).multiplyScalar(1e5);
+    planet.night?.update(_sunPos);
+    // No atmosphere on the bench: count close to the ground as inside one.
+    const alt = camera.position.length() - radius;
+    rig.setNight(nightLighting(camera.position, planet.group.position, _sunPos, 1 - THREE.MathUtils.smoothstep(alt, 30, 90)));
     // Sky "up" toward the camera: the face of the planet in view is lit
     // by the sky, as the game's hemisphere follows the plane's up.
     rig.aim({ center: planet.group.position, radius, sunDir: SUN_DIR, up: _up.copy(camera.position).normalize() });
@@ -153,6 +172,13 @@ export async function runPlacementLab() {
   }
 
   globalThis.__LAB = { planet, camera, scene, renderer, rig, post, THREE, draw,
+    /** Free camera at `pos` looking at `target` (planet-local = world here); null = orbit. */
+    view(pos, target) {
+      auto = false;
+      fixedView = pos ? { pos: new THREE.Vector3().copy(pos), target: new THREE.Vector3().copy(target) } : null;
+      draw();
+    },
+    setSun(v) { SUN_DIR.copy(v).normalize(); draw(); },
     lookAtSlot(slotId, zoom = 2.2) {
       const slot = planet.landmarks.find((s) => s.slotId === slotId) || planet.landmarks[0];
       if (!slot) return null;

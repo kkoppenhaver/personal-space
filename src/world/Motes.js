@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { GAME_LOOK } from '../render/Looks.js';
+
+const FIREFLIES = GAME_LOOK.night?.fireflies || { boost: 1, band: 0 };
 
 // Ambient motes (Phase 15c — life). A few hundred drifting points in a box
 // around the camera while inside an atmosphere: pollen, snow, embers,
@@ -64,6 +67,12 @@ export class Motes {
       uTwinkle: { value: 0 },
       uDrift: { value: 0.5 },
       uPixelRatio: { value: Math.min(devicePixelRatio, 2) },
+      // Fireflies (1b night side): brighter than the bloom threshold, and
+      // only near the ground (uBand metres; 0 = everywhere).
+      uBoost: { value: 1 },
+      uBand: { value: 0 },
+      uPlanet: { value: new THREE.Vector3() },
+      uGroundR: { value: 0 },
     };
     this.material = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
@@ -72,7 +81,8 @@ export class Motes {
       vertexShader: /* glsl */`
         attribute float aSeed;
         uniform float uTime, uSize, uDrift, uPixelRatio, uTwinkle;
-        uniform vec3 uCenter, uOffset;
+        uniform vec3 uCenter, uOffset, uPlanet;
+        uniform float uBand, uGroundR;
         varying float vFade;
         varying float vTw;
         const float BOX = ${BOX.toFixed(1)};
@@ -81,18 +91,29 @@ export class Motes {
           vec3 p = mod(position + uOffset - uCenter + BOX * 0.5, BOX) - BOX * 0.5;
           float t = uTime * (0.3 + aSeed * 0.5) + aSeed * 40.0;
           p += uDrift * vec3(sin(t), sin(t * 1.3 + 2.0), cos(t * 0.9));
+          float band = 1.0;
+          if (uBand > 0.0) {
+            // Fireflies: fold every point's height above the ground into
+            // the band near it (keeps them low without thinning them out),
+            // fading at the band's top and bottom so a fold never pops.
+            vec3 up = normalize(uCenter + p - uPlanet);
+            float h = length(uCenter + p - uPlanet) - uGroundR;
+            float hf = mod(h, uBand);
+            p += up * (hf - h);
+            band = smoothstep(0.0, uBand * 0.2, hf) * smoothstep(uBand, uBand * 0.6, hf);
+          }
           vec4 mv = modelViewMatrix * vec4(uCenter + p, 1.0);
           gl_Position = projectionMatrix * mv;
           float dist = -mv.z;
           // Fade at the box edge (no popping on wrap) and right at the lens.
-          vFade = smoothstep(BOX * 0.5, BOX * 0.3, length(p)) * smoothstep(0.8, 3.0, dist);
+          vFade = smoothstep(BOX * 0.5, BOX * 0.3, length(p)) * smoothstep(0.8, 3.0, dist) * band;
           vTw = 1.0 - uTwinkle * (0.5 + 0.5 * sin(uTime * (2.0 + aSeed * 3.0) + aSeed * 90.0));
           gl_PointSize = uSize * uPixelRatio * (10.0 / max(dist, 0.5)) * (0.6 + aSeed * 0.8);
         }
       `,
       fragmentShader: /* glsl */`
         uniform vec3 uColor;
-        uniform float uOpacity;
+        uniform float uOpacity, uBoost;
         varying float vFade;
         varying float vTw;
         void main() {
@@ -100,7 +121,7 @@ export class Motes {
           float d = length(c);
           if (d > 0.5) discard;
           float a = smoothstep(0.5, 0.1, d) * uOpacity * vFade * vTw;
-          gl_FragColor = vec4(uColor, a);
+          gl_FragColor = vec4(uColor * uBoost, a);
           // Tone mapping applies only when drawn straight to the screen (the "low"
           // quality tier); through the composer OutputPass does it (Post.js).
           #include <tonemapping_fragment>
@@ -124,8 +145,25 @@ export class Motes {
     this.uniforms.uSize.value = k.size;
     this.uniforms.uTwinkle.value = k.twinkle;
     this.uniforms.uDrift.value = k.drift;
+    const ff = kind === 'fireflies';
+    this.uniforms.uBoost.value = ff ? FIREFLIES.boost : 1;
+    this.uniforms.uBand.value = ff ? FIREFLIES.band : 0;
     this.material.blending = k.blend;
     this.material.needsUpdate = true;
+  }
+
+  /**
+   * The planet under the camera, so fireflies keep near its ground.
+   * Read every frame (planet.center moves with floating-origin rebases).
+   * @param {{ center: THREE.Vector3, sample?: Function, radius: number }|null} planet
+   */
+  setGround(planet) {
+    if (!planet) return;
+    const u = this.uniforms;
+    u.uPlanet.value.copy(planet.center);
+    if (!this._camPos) return;
+    const d = this._camPos.clone().sub(planet.center).normalize();
+    u.uGroundR.value = planet.sample ? planet.sample(d.x, d.y, d.z) : planet.radius;
   }
 
   /**
@@ -141,6 +179,7 @@ export class Motes {
     const u = this.uniforms;
     u.uTime.value += dt;
     u.uCenter.value.copy(camera.position);
+    this._camPos = camera.position;
     if (this.spec) u.uOffset.value.addScaledVector(radialUp, this.spec.rise * dt);
     // Keep the offset bounded (float precision); BOX-periodic so no jump.
     const o = u.uOffset.value;

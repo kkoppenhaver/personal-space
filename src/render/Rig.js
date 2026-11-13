@@ -32,6 +32,10 @@ export function createRig(scene, renderer) {
   let look = null;
   let shadowsAllowed = true;
   let depth = TUNED_DEPTH;
+  let night = 0;     // 0 = day, 1 = full night where the camera is (setNight)
+  let sunCut = 0;    // share of the sun taken away after it has set here
+  // The sky fill fades to look.night.skyFill of itself after dark.
+  const nightFill = () => 1 - night * (1 - (look?.night?.skyFill ?? 1));
 
   function markLitMaterials() {
     // Shadows on/off changes every lit program.
@@ -64,12 +68,12 @@ export function createRig(scene, renderer) {
       const L = look.lights;
       lookSun.set(L.sun.color);
       sun.color.copy(lookSun);
-      sun.intensity = L.sun.intensity;
+      sun.intensity = L.sun.intensity * (1 - sunCut);
       fill.visible = !!L.fill;
       if (L.fill) { fill.color.set(L.fill.color); fill.intensity = L.fill.intensity; }
       hemi.color.set(L.hemi.sky);
       hemi.groundColor.set(L.hemi.ground);
-      hemi.intensity = L.hemi.intensity;
+      hemi.intensity = L.hemi.intensity * nightFill();
       ambient.color.set(L.ambient.color);
       ambient.intensity = L.ambient.intensity;
       syncShadow();
@@ -79,6 +83,22 @@ export function createRig(scene, renderer) {
      * Tint the sun toward a star's colour. `amount` 0 = the look's sun.
      * (The game's systems have coloured suns; benches have none.)
      */
+    /**
+     * Night where the player is (NightLights.nightLighting): `fill` 0 day …
+     * 1 night dims the sky's fill light so the night side is dark enough for
+     * lit windows and lamps to read (look.night.skyFill); `sun` 0…1 takes
+     * the sun away once it has set there (a directional light has no
+     * horizon, so walls facing a set sun would stay lit).
+     * @param {{ fill?: number, sun?: number }} n
+     */
+    setNight({ fill = 0, sun: cut = 0 } = {}) {
+      night = Math.min(1, Math.max(0, fill));
+      sunCut = Math.min(1, Math.max(0, cut));
+      if (!look) return;
+      hemi.intensity = look.lights.hemi.intensity * nightFill();
+      sun.intensity = look.lights.sun.intensity * (1 - sunCut);
+    },
+
     tintSun(color, amount) {
       sun.color.copy(lookSun).lerp(color, amount);
     },
