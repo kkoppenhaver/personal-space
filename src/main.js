@@ -1012,6 +1012,7 @@ async function main() {
       for (const ref of galaxy.allPlanets()) {
         if (!ref.system.sun) continue;
         ref.atmosphere.setSun(ref.system.sun.position, ref.system.sunColor);
+        ref.clouds?.update(dt, ref.planet === activePlanet, ref.system.sun.position, ref.system.sunColor);
         if (ref.planet.water?.mesh.visible) {
           _waterSun.copy(ref.system.sun.position).sub(ref.planet.center).normalize();
           ref.planet.water.setSun(_waterSun, ref.system.sunColor);

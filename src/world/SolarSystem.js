@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { dealShape, dealPattern } from './TerrainShapes.js';
 import { Planet } from './Planet.js';
 import { Atmosphere } from './Atmosphere.js';
+import { Clouds } from './Clouds.js';
+import { rollRegister } from '../../shared/planet-dice.js';
 import { TUNING } from '../game/Tuning.js';
 import { mulberry32, hashSeeds } from './Seed.js';
 
@@ -44,6 +46,7 @@ export class SolarSystem {
     this.group = new THREE.Group();
     this.planets = [];
     this.atmospheres = [];
+    this.clouds = [];
     this._planetByColliderHandle = new Map();
 
     const rand = mulberry32(this.seed);
@@ -97,6 +100,8 @@ export class SolarSystem {
         shape: dealShape(this.seed, i), pattern: dealPattern(this.seed, i),
       });
       const atmosphere = new Atmosphere({ planet, radius: radius + TUNING.ATM_TOP });
+      // One cloud shell, its form from the planet's register (roadmap 1c).
+      const clouds = new Clouds({ planet, seed: planetSeed, register: rollRegister(this.seed, i) });
 
       // Disable per-mesh frustum culling under each planet. Tiny landmark and
       // landing-pad geometries can have bounding spheres that briefly fall
@@ -109,8 +114,10 @@ export class SolarSystem {
 
       this.planets.push(planet);
       this.atmospheres.push(atmosphere);
+      this.clouds.push(clouds);
       this.group.add(planet.group);
       this.group.add(atmosphere.mesh);
+      this.group.add(clouds.mesh);
 
       const entry = { planet, atmosphere, index: i };
       for (const h of planet.colliderHandles()) this._planetByColliderHandle.set(h, entry);
@@ -192,6 +199,7 @@ export class SolarSystem {
     for (let i = 0; i < this.planets.length; i++) {
       this.planets[i].translate(delta);
       this.atmospheres[i].translate(delta);
+      this.clouds[i].translate(delta);
     }
     this.sun.position.add(delta);
   }
@@ -206,6 +214,7 @@ export class SolarSystem {
       if (typeof planet.dispose === 'function') planet.dispose();
       this.world.removeRigidBody(planet.body);
     }
+    for (const c of this.clouds) c.dispose();
     if (this.group.parent) this.group.parent.remove(this.group);
     this.group.traverse((child) => {
       if (child.geometry) child.geometry.dispose();
@@ -216,6 +225,7 @@ export class SolarSystem {
     });
     this.planets.length = 0;
     this.atmospheres.length = 0;
+    this.clouds.length = 0;
     this._planetByColliderHandle.clear();
   }
 
